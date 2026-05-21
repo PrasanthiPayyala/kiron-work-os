@@ -27,3 +27,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase CLI (local binary)
+supabase.exe
+supabase-go.exe
+supabase_windows_amd64.tar.gz
+supabase_*.tar.gz
+supabase_*.zip
+
+# Supabase CLI runtime cache (contains project-ref and other local state)
+supabase/.temp/
+
+# Claude Code local settings (may contain secrets in permission rules)
+.claude/settings.local.json
