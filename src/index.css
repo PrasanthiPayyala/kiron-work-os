@@ -1,0 +1,175 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Kiron Work OS — Calm enterprise design system
+   White / cream base, sunset orange + deep green accents.
+   All colors HSL.
+*/
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --background: 40 33% 98%;            /* warm cream white */
+    --foreground: 220 25% 14%;           /* near-black ink */
+
+    --surface: 0 0% 100%;                /* pure white card */
+    --surface-muted: 36 25% 95%;         /* cream chip */
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 14%;
+
+    /* Brand: Sunset orange */
+    --primary: 18 88% 55%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 22 95% 96%;
+    --primary-ring: 18 88% 55%;
+
+    /* Accent: Forest green (calm, founder-friendly) */
+    --accent: 152 48% 36%;
+    --accent-foreground: 0 0% 100%;
+    --accent-soft: 150 45% 94%;
+
+    /* Secondary neutrals */
+    --secondary: 36 18% 94%;
+    --secondary-foreground: 220 20% 22%;
+
+    --muted: 36 16% 95%;
+    --muted-foreground: 220 10% 46%;
+
+    --destructive: 0 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 30 50% 12%;
+
+    --info: 210 80% 50%;
+    --info-foreground: 0 0% 100%;
+
+    --success: 152 55% 38%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 30 14% 89%;
+    --input: 30 14% 89%;
+    --ring: 18 88% 55%;
+
+    --radius: 0.625rem;
+
+    /* Sidebar */
+    --sidebar-background: 36 28% 97%;
+    --sidebar-foreground: 220 20% 22%;
+    --sidebar-primary: 18 88% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 36 25% 92%;
+    --sidebar-accent-foreground: 220 25% 14%;
+    --sidebar-border: 30 14% 88%;
+    --sidebar-ring: 18 88% 55%;
+
+    /* Status palette for tasks/projects */
+    --status-draft: 220 8% 60%;
+    --status-created: 210 60% 50%;
+    --status-assigned: 220 60% 55%;
+    --status-accepted: 195 65% 45%;
+    --status-progress: 35 90% 55%;
+    --status-review: 280 50% 55%;
+    --status-approval: 260 60% 55%;
+    --status-done: 152 55% 38%;
+    --status-blocked: 0 72% 52%;
+    --status-hold: 30 25% 50%;
+    --status-rework: 18 88% 55%;
+    --status-escalated: 350 80% 50%;
+    --status-cancelled: 220 8% 50%;
+
+    /* Gradients */
+    --gradient-warm: linear-gradient(135deg, hsl(22 95% 96%), hsl(36 50% 96%));
+    --gradient-brand: linear-gradient(135deg, hsl(18 88% 58%), hsl(28 92% 60%));
+    --gradient-calm: linear-gradient(135deg, hsl(150 45% 94%), hsl(180 30% 95%));
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px hsl(220 25% 14% / 0.04);
+    --shadow-md: 0 4px 12px -2px hsl(220 25% 14% / 0.06), 0 2px 4px -2px hsl(220 25% 14% / 0.04);
+    --shadow-lg: 0 12px 32px -8px hsl(220 25% 14% / 0.10);
+  }
+
+  .dark {
+    --background: 220 22% 9%;
+    --foreground: 36 25% 95%;
+    --surface: 220 20% 12%;
+    --surface-muted: 220 18% 14%;
+    --card: 220 20% 12%;
+    --card-foreground: 36 25% 95%;
+    --popover: 220 20% 12%;
+    --popover-foreground: 36 25% 95%;
+    --primary: 18 88% 58%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 18 40% 18%;
+    --accent: 152 48% 42%;
+    --accent-foreground: 0 0% 100%;
+    --accent-soft: 152 30% 18%;
+    --secondary: 220 18% 16%;
+    --secondary-foreground: 36 25% 95%;
+    --muted: 220 18% 16%;
+    --muted-foreground: 220 10% 62%;
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --warning: 38 90% 55%;
+    --warning-foreground: 30 50% 12%;
+    --success: 152 55% 45%;
+    --success-foreground: 0 0% 100%;
+    --border: 220 16% 20%;
+    --input: 220 16% 20%;
+    --ring: 18 88% 58%;
+    --sidebar-background: 220 22% 10%;
+    --sidebar-foreground: 36 20% 90%;
+    --sidebar-primary: 18 88% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 18% 14%;
+    --sidebar-accent-foreground: 36 25% 95%;
+    --sidebar-border: 220 16% 18%;
+    --sidebar-ring: 18 88% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Manrope', system-ui, sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Sora', system-ui, sans-serif;
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer utilities {
+  .font-display { font-family: 'Sora', system-ui, sans-serif; }
+  .font-body { font-family: 'Manrope', system-ui, sans-serif; }
+
+  .gradient-brand { background: var(--gradient-brand); }
+  .gradient-warm { background: var(--gradient-warm); }
+  .gradient-calm { background: var(--gradient-calm); }
+
+  .shadow-card { box-shadow: var(--shadow-sm); }
+  .shadow-elevated { box-shadow: var(--shadow-md); }
+  .shadow-pop { box-shadow: var(--shadow-lg); }
+
+  /* Scrollbar — quiet */
+  .scrollbar-quiet::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scrollbar-quiet::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 8px;
+  }
+  .scrollbar-quiet::-webkit-scrollbar-track { background: transparent; }
+}
