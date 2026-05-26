@@ -1,10 +1,22 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth, roleNavAccess, type NavKey } from "@/lib/auth";
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 
 export function ProtectedRoute({ children, require }: { children: ReactNode; require?: NavKey }) {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const location = useLocation();
+
+  // Auth is still hydrating from localStorage (page refresh / app cold start).
+  // Showing a brief splash here prevents a flash redirect to /login that
+  // would otherwise drop the user's destination.
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;

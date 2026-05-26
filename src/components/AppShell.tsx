@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Briefcase, FolderKanban, ListChecks, CalendarCheck, Plane,
   MessageSquare, ShieldCheck, BarChart3, Users, Crown, Settings, Mail,
-  Search, Bell, Plus, ChevronLeft, ChevronRight, LogOut, ChevronDown,
+  Search, Bell, Plus, ChevronLeft, ChevronRight, LogOut, ChevronDown, X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { useUnreadMailCount } from "@/hooks/useUnreadMailCount";
+import { usePwaInstall, useOnlineStatus, useServiceWorkerUpdate } from "@/lib/pwa";
+import { Download, Wifi, WifiOff, RefreshCw } from "lucide-react";
 
 const navItems: { key: NavKey; label: string; to: string; icon: typeof LayoutDashboard }[] = [
   { key: "dashboard",      label: "Dashboard",      to: "/dashboard",       icon: LayoutDashboard },
@@ -53,6 +55,10 @@ export default function AppShell() {
   const myNotifs = notifications.filter((n) => n.userId === user.id);
   const unreadNotifs = myNotifs.filter((n) => !n.read).length;
   const unreadMail = useUnreadMailCount();
+  const online = useOnlineStatus();
+  const { canInstall, install } = usePwaInstall();
+  const { needRefresh, update } = useServiceWorkerUpdate();
+  const [updateDismissed, setUpdateDismissed] = useState(false);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background font-body">
@@ -89,6 +95,8 @@ export default function AppShell() {
             {visibleNav.map((item) => {
               const Icon = item.icon;
               const active = location.pathname === item.to || (item.to !== "/dashboard" && location.pathname.startsWith(item.to));
+              const needsNetwork = item.key === "mail" || item.key === "chat";
+              const dimmed = needsNetwork && !online;
               return (
                 <li key={item.key}>
                   <NavLink
@@ -99,12 +107,14 @@ export default function AppShell() {
                         ? "bg-primary-soft text-primary"
                         : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                       collapsed && "justify-center px-0",
+                      dimmed && "opacity-50",
                     )}
-                    title={collapsed ? item.label : undefined}
+                    title={collapsed ? item.label : dimmed ? `${item.label} — needs internet` : undefined}
                   >
                     <Icon className={cn("h-[18px] w-[18px] shrink-0", active && "text-primary")} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
-                    {!collapsed && item.key === "mail" && unreadMail > 0 && (
+                    {!collapsed && dimmed && <WifiOff className="ml-auto h-3 w-3 text-muted-foreground" />}
+                    {!collapsed && !dimmed && item.key === "mail" && unreadMail > 0 && (
                       <span className="ml-auto rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{unreadMail}</span>
                     )}
                   </NavLink>
@@ -156,6 +166,22 @@ export default function AppShell() {
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {needRefresh && !updateDismissed && (
+          <div className="flex items-center gap-3 border-b border-primary/30 bg-primary-soft px-4 py-2 text-sm">
+            <RefreshCw className="h-4 w-4 text-primary" />
+            <span className="flex-1">A new version of Kiron is ready.</span>
+            {update && (
+              <Button size="sm" onClick={() => update()}>Reload</Button>
+            )}
+            <button
+              onClick={() => setUpdateDismissed(true)}
+              className="rounded-md p-1 text-muted-foreground hover:bg-surface"
+              aria-label="Dismiss update"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         {/* Topbar */}
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface px-4 md:px-6">
           <div className="relative hidden max-w-md flex-1 md:block">
@@ -172,6 +198,31 @@ export default function AppShell() {
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Active</span>
                 <CompanyBadge companyId={company.id} size="xs" />
               </div>
+            )}
+
+            <span
+              className={cn(
+                "hidden items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium md:inline-flex",
+                online
+                  ? "border-success/30 bg-success/10 text-success"
+                  : "border-warning/30 bg-warning/10 text-warning",
+              )}
+              title={online ? "Online — changes save immediately" : "Offline — changes queue until reconnected"}
+            >
+              {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+              {online ? "Online" : "Offline"}
+            </span>
+
+            {canInstall && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={install}
+                className="hidden h-9 gap-1.5 sm:flex"
+                title="Install Kiron as a desktop app"
+              >
+                <Download className="h-4 w-4" /> Install
+              </Button>
             )}
 
             <Button variant="outline" size="sm" className="hidden h-9 gap-1.5 sm:flex">
@@ -205,17 +256,26 @@ export default function AppShell() {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  <span>Notifications</span>
+                  {unreadNotifs > 0 && (
+                    <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{unreadNotifs}</span>
+                  )}
+                </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {myNotifs.length === 0 && (
                   <p className="px-2 py-3 text-sm text-muted-foreground">You're all caught up.</p>
                 )}
-                {myNotifs.map((n) => (
+                {myNotifs.slice(0, 6).map((n) => (
                   <DropdownMenuItem key={n.id} onClick={() => n.link && navigate(n.link)} className="flex flex-col items-start gap-0.5">
                     <span className="text-sm font-medium">{n.title}</span>
                     {n.body && <span className="text-xs text-muted-foreground">{n.body}</span>}
                   </DropdownMenuItem>
                 ))}
+                {myNotifs.length > 0 && <DropdownMenuSeparator />}
+                <DropdownMenuItem onClick={() => navigate("/notifications")} className="justify-center text-xs font-medium text-primary">
+                  View all notifications
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

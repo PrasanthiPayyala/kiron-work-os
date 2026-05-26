@@ -29,6 +29,7 @@ import Interns from "./pages/Interns";
 import FounderOffice from "./pages/FounderOffice";
 import Settings from "./pages/Settings";
 import Mail from "./pages/Mail";
+import Notifications from "./pages/Notifications";
 
 const queryClient = new QueryClient();
 
@@ -62,6 +63,7 @@ const App = () => (
                 <Route path="/attendance" element={<Attendance />} />
                 <Route path="/leave" element={<Leave />} />
                 <Route path="/chat" element={<Chat />} />
+                <Route path="/notifications" element={<Notifications />} />
                 <Route path="/approvals" element={<Approvals />} />
                 <Route
                   path="/reports"

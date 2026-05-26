@@ -8,7 +8,7 @@ State: React Query + DataStoreProvider (src/lib/dataStore.tsx)
 
 ## Key files
 - src/lib/auth.tsx — AuthProvider, useAuth(), roleNavAccess, NavKey, can
-- src/lib/dataStore.tsx — shared cache, useDataStore(), 5s chat polling at lines 137-146
+- src/lib/dataStore.tsx — shared cache, useDataStore(), realtime messages channel at lines 137-152
 - src/lib/mappers.ts — DB row to domain type transforms
 - src/components/AppShell.tsx — sidebar, topbar, nested routing
 - src/components/ProtectedRoute.tsx — auth + capability gating via roleNavAccess
@@ -18,7 +18,7 @@ Public: / (Index), /login (Login), * (NotFound)
 Protected (require ProtectedRoute + AppShell):
 /dashboard, /my-work, /projects, /projects/:id, /tasks
 /mail (require="mail"), /attendance, /leave, /chat
-/approvals, /reports (require="reports" — BUG: missing from all roles)
+/approvals, /reports (require="reports"), /notifications
 /people, /people/interns, /people/:id
 /founder-office (require="founder_office"), /settings (require="settings")
 
@@ -29,10 +29,6 @@ manager, hr_admin, employee, intern
 ## NavKey capabilities
 dashboard, my_work, projects, tasks, attendance, leave, chat,
 approvals, reports, people, founder_office, settings, mail
-
-## Known bug
-"reports" NavKey is missing from roleNavAccess for all 8 roles in
-auth.tsx:91 — /reports always redirects to /dashboard
 
 ## DataStoreProvider — what it hydrates at login
 14 parallel queries: companies, departments, profiles, user_roles,
@@ -54,13 +50,16 @@ Server format: mail.yourdomain.com
 Username: full email address
 
 ## Remaining build order
-1. Password reset flow
-2. Fix reports NavKey bug
-3. Realtime chat (replace polling in dataStore.tsx lines 137-146)
-4. Mail module activation (cPanel IMAP)
-5. Attendance UX hardening
-6. Approvals realtime + polish
-7. Notifications center page
-8. SLA breach cron edge function
-9. Email to task flow
-10. My Work quick edit drawer
+(empty — schedule the `sla-breach-check` edge function in Supabase to activate it; verify manually in the dashboard)
+
+## Shipped (was on the build order)
+- Password reset flow (ResetPassword.tsx, UpdatePassword.tsx)
+- Reports NavKey wired for super_admin, founder, founder_office_coordinator, manager, hr_admin
+- Realtime chat — supabase.channel on `messages` INSERTs (migration 20260521000000_realtime_messages.sql)
+- Mail module — 12 edge functions + Mail.tsx + settings/MailAccounts.tsx
+- Email-to-task flow — MessageDetail → Tasks.tsx dialog + `email_links` insert
+- Notifications center — /notifications page + topbar "View all" + realtime channel on `notifications`
+- Approvals — realtime channel on `approvals`, filters (scope/kind/search), decision dialog with note, scope guard on Approve buttons
+- My Work quick edit drawer — sheet with status/priority/due/assignee + comment, writes to `tasks` and `task_activity`
+- SLA breach cron — `supabase/functions/sla-breach-check/index.ts` (15-min cadence recommended); backfills `sla_due_at`, warns 4h before due, inserts overdue notifications
+- Attendance UX hardening — duplicate check-in/out guards, WFH/half-day select, live duration, weekend shading, approved-leave hint, avg-hours stat

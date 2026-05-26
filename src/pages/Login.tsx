@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,14 @@ import { toast } from "@/hooks/use-toast";
 import { ArrowRight, Building2, ShieldCheck, MessageSquare, CalendarCheck2, Loader2 } from "lucide-react";
 
 export default function Login() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+
+  // If a session is already alive (refresh / PWA cold start), skip the form.
+  useEffect(() => {
+    if (!authLoading && user) navigate("/dashboard", { replace: true });
+  }, [authLoading, user, navigate]);
 
   const [signInEmail, setSignInEmail] = useState("prasanthi@kirongroup.in");
   const [signInPassword, setSignInPassword] = useState("kiron@2025");
