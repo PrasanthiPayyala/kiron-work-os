@@ -236,8 +236,17 @@ export interface Conversation {
   memberIds: ID[];
   lastMessageAt?: ISODate;
   lastMessagePreview?: string;
+  /** Set from the current user's conversation_members.last_read_at on hydrate. */
+  lastReadAt?: ISODate;
   unreadCount?: number;
   pinned?: boolean;
+}
+
+export interface MessageAttachmentMeta {
+  id: ID;
+  fileName: string;
+  fileSize?: number | null;
+  mimeType?: string | null;
 }
 
 export interface ConversationMember {
@@ -254,7 +263,8 @@ export interface Message {
   createdAt: ISODate;
   mentions?: ID[];
   taskRefId?: ID;
-  attachments?: Attachment[];
+  /** Lightweight metadata returned alongside message rows; download via api.downloadFile(id). */
+  attachments?: MessageAttachmentMeta[];
 }
 
 // ---------- Misc ----------

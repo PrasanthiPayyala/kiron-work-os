@@ -4,7 +4,7 @@ import { ApprovalStateBadge } from "@/components/StatusBadges";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useDataStore } from "@/lib/dataStore";
 import { useAuth } from "@/lib/auth";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { ShieldCheck, Search } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ const decisionLabel: Record<Decision, string> = {
 };
 
 export default function Approvals() {
-  const { approvals, getUser } = useDataStore();
+  const { approvals, getUser, refresh } = useDataStore();
   const { user } = useAuth();
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<"all" | ApprovalKind>("all");
@@ -64,18 +64,18 @@ export default function Approvals() {
     const { approval, decision } = active;
     setPending((p) => ({ ...p, [approval.id]: true }));
 
-    const patch: { status: ApprovalState; decided_at: string; approver_id: string; comments?: string } = {
-      status: decision,
-      decided_at: new Date().toISOString(),
-      approver_id: user.id,
-    };
-    if (note.trim()) patch.comments = note.trim();
-
-    const { error } = await supabase.from("approvals").update(patch).eq("id", approval.id);
-    setPending((p) => ({ ...p, [approval.id]: false }));
-
-    if (error) toast.error(error.message);
-    else toast.success(`${decisionLabel[decision]}d`);
+    try {
+      await api.decideApproval(approval.id, {
+        status: decision,
+        comments: note.trim() || null,
+      });
+      toast.success(`${decisionLabel[decision]}d`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to record decision");
+    } finally {
+      setPending((p) => ({ ...p, [approval.id]: false }));
+    }
 
     setActive(null);
     setNote("");

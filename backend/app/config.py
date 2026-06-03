@@ -1,0 +1,33 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/kiron"
+    jwt_secret: str = "dev-secret-change-me"
+    jwt_access_ttl_min: int = 30
+    jwt_refresh_ttl_days: int = 14
+    cors_origins: str = "http://localhost:8080,http://localhost:5173"
+
+    # Public URL of the frontend, used to build the password reset link.
+    app_base_url: str = "http://localhost:8080"
+
+    # Outgoing SMTP for password reset emails. If smtp_host is blank the
+    # backend logs the reset link to stdout instead of trying to send (useful
+    # in dev / before SMTP is configured).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_ssl: bool = False
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "Kiron Work OS <no-reply@kirongroup.in>"
+
+    password_reset_ttl_min: int = 60
+
+    @property
+    def cors_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+
+settings = Settings()

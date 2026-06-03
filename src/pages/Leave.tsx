@@ -3,7 +3,7 @@ import { StatCard } from "@/components/StatCard";
 import { LeaveStatusBadge } from "@/components/StatusBadges";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useDataStore } from "@/lib/dataStore";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { Plane, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -32,23 +32,28 @@ export default function Leave() {
 
   const submit = async () => {
     if (!user || !from || !to) { toast.error("From and To dates required"); return; }
-    const { error } = await supabase.from("leave_requests").insert({
-      user_id: user.id,
-      leave_type: LEAVE_TYPE_DB[type] as any,
-      start_date: from, end_date: to,
-      days, reason, status: "pending",
-    });
-    if (error) toast.error(error.message);
-    else { toast.success("Leave submitted"); setFrom(""); setTo(""); setReason(""); refresh(); }
+    try {
+      await api.applyLeave({
+        leave_type: LEAVE_TYPE_DB[type],
+        start_date: from, end_date: to,
+        days, reason,
+      });
+      toast.success("Leave submitted");
+      setFrom(""); setTo(""); setReason(""); refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to submit leave");
+    }
   };
 
   const decide = async (id: string, status: "approved" | "rejected") => {
     if (!user) return;
-    const { error } = await supabase.from("leave_requests").update({
-      status, hr_approver_id: user.id, decided_at: new Date().toISOString(),
-    }).eq("id", id);
-    if (error) toast.error(error.message);
-    else { toast.success(`Leave ${status}`); refresh(); }
+    try {
+      await api.updateLeave(id, { status });
+      toast.success(`Leave ${status}`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to update leave");
+    }
   };
 
   return (

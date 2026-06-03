@@ -19,7 +19,7 @@ export default function Login() {
   }, [authLoading, user, navigate]);
 
   const [signInEmail, setSignInEmail] = useState("prasanthi@kirongroup.in");
-  const [signInPassword, setSignInPassword] = useState("kiron@2025");
+  const [signInPassword, setSignInPassword] = useState("Kiron@2025");
 
   const [signUpName, setSignUpName] = useState("");
   const [signUpEmail, setSignUpEmail] = useState("");
@@ -95,7 +95,7 @@ export default function Login() {
                     </Link>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Demo: any seeded user with password <code className="rounded bg-muted px-1 py-0.5 text-[11px]">kiron@2025</code>
+                    Demo: any seeded user with password <code className="rounded bg-muted px-1 py-0.5 text-[11px]">Kiron@2025</code>
                   </p>
                 </form>
               </TabsContent>

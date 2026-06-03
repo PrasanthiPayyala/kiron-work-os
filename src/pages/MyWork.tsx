@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Briefcase, Loader2, Pencil } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { taskStatusOut } from "@/lib/mappers";
 import { toast } from "sonner";
 import type { Task, TaskStatus, Priority } from "@/types";
@@ -110,20 +110,24 @@ export default function MyWork() {
 
     let taskErr: { message: string } | null = null;
     if (Object.keys(patch).length) {
-      const { error } = await supabase.from("tasks").update(patch).eq("id", active.id);
-      taskErr = error;
+      try {
+        await api.updateTask(active.id, patch);
+      } catch (e) {
+        taskErr = { message: e instanceof ApiError ? e.message : "Update failed" };
+      }
     }
 
     let noteErr: { message: string } | null = null;
     if (!taskErr && draft.note.trim()) {
-      const { error } = await supabase.from("task_activity").insert({
-        task_id: active.id,
-        actor_user_id: user.id,
-        activity_type: "comment",
-        message: draft.note.trim(),
-        note: draft.note.trim(),
-      });
-      noteErr = error;
+      try {
+        await api.addTaskActivity(active.id, {
+          activity_type: "comment",
+          message: draft.note.trim(),
+          note: draft.note.trim(),
+        });
+      } catch (e) {
+        noteErr = { message: e instanceof ApiError ? e.message : "Comment failed" };
+      }
     }
 
     setSaving(false);

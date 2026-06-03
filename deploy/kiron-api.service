@@ -1,0 +1,29 @@
+# systemd unit for the Kiron FastAPI backend.
+# Install:  sudo cp deploy/kiron-api.service /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now kiron-api
+#
+# Assumes the repo is cloned at /opt/kiron and a venv exists at
+# /opt/kiron/backend/.venv (see DEPLOY.md). Adjust paths if you deploy elsewhere.
+
+[Unit]
+Description=Kiron API (FastAPI/uvicorn)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=exec
+User=kiron
+Group=kiron
+WorkingDirectory=/opt/kiron/backend
+EnvironmentFile=/etc/kiron/backend.env
+# Bind to loopback only — nginx is the public entrypoint and proxies /api here.
+ExecStart=/opt/kiron/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8787 --workers 2
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

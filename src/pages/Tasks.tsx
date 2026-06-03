@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
+import { api } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AttachmentList } from "@/components/attachments/AttachmentList";
@@ -63,35 +64,33 @@ export default function Tasks() {
     if (!draft.title.trim()) return toast.error("Title is required");
     setCreating(true);
     try {
-      // Fetch the message to get account_id (needed for email_links)
-      const { data: msg, error: msgErr } = await supabase
-        .from("email_messages")
-        .select("account_id")
-        .eq("id", fromEmail.messageId)
-        .maybeSingle();
-      if (msgErr) throw msgErr;
-      const { data: task, error: taskErr } = await supabase
-        .from("tasks")
-        .insert({
-          title: draft.title,
-          description: draft.description || null,
-          priority: draft.priority,
-          status: "created",
-          company_id: user.homeCompanyId,
-          created_by: user.id,
-          assignee_id: user.id,
-        })
-        .select("id")
-        .single();
-      if (taskErr) throw taskErr;
-      if (msg?.account_id && task?.id) {
-        await supabase.from("email_links").insert({
-          message_id: fromEmail.messageId,
-          account_id: msg.account_id,
-          entity_type: "task",
-          entity_id: task.id,
-          linked_by: user.id,
-        });
+      const task = await api.createTask({
+        title: draft.title,
+        description: draft.description || null,
+        priority: draft.priority,
+        status: "created",
+        company_id: user.homeCompanyId,
+        assignee_id: user.id,
+      });
+      // Linking the source email lives in the mail module (later phase). Best-effort
+      // so task creation still succeeds before mail is migrated off Supabase.
+      try {
+        const { data: msg } = await supabase
+          .from("email_messages")
+          .select("account_id")
+          .eq("id", fromEmail.messageId)
+          .maybeSingle();
+        if (msg?.account_id && task?.id) {
+          await supabase.from("email_links").insert({
+            message_id: fromEmail.messageId,
+            account_id: msg.account_id,
+            entity_type: "task",
+            entity_id: task.id as string,
+            linked_by: user.id,
+          });
+        }
+      } catch {
+        /* mail not migrated yet */
       }
       toast.success("Task created from email");
       setFromEmail(null);

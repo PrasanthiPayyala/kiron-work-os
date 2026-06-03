@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 import type { Notification } from "@/types";
 
@@ -105,25 +105,26 @@ export default function Notifications() {
 
   const markRead = async (n: Notification) => {
     if (n.read) return;
-    const { error } = await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("id", n.id);
-    if (error) toast.error(error.message);
-    else refresh();
+    try {
+      await api.markNotificationRead(n.id);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to mark as read");
+    }
   };
 
   const markAllRead = async () => {
     if (!user || counts.unread === 0) return;
     setBusy(true);
-    const { error } = await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("user_id", user.id)
-      .eq("is_read", false);
-    setBusy(false);
-    if (error) toast.error(error.message);
-    else { toast.success(`Marked ${counts.unread} as read`); refresh(); }
+    try {
+      await api.markAllNotificationsRead();
+      toast.success(`Marked ${counts.unread} as read`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to mark all as read");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const open = async (n: Notification) => {

@@ -38,29 +38,12 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
         navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api/, /^\/auth/],
+        // /api is the backend (proxied by nginx); never serve it the SPA shell.
+        // Offline DATA is served from IndexedDB (see src/lib/offline), not the
+        // SW HTTP cache, so we deliberately do NOT cache /api responses here —
+        // that would risk serving stale rows over the live store.
+        navigateFallbackDenylist: [/^\/api/],
         runtimeCaching: [
-          {
-            // Supabase REST/RPC reads — cache last response so view shells render offline.
-            urlPattern: /^https:\/\/[a-z0-9]+\.supabase\.co\/rest\/v1\/.*$/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-rest",
-              networkTimeoutSeconds: 4,
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-          {
-            // Supabase Storage objects (avatars, attachments).
-            urlPattern: /^https:\/\/[a-z0-9]+\.supabase\.co\/storage\/v1\/object\/.*$/i,
-            handler: "CacheFirst",
-            options: {
-              cacheName: "supabase-storage",
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
           {
             urlPattern: ({ request }) => request.destination === "image" || request.destination === "font",
             handler: "CacheFirst",

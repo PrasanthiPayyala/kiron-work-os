@@ -3,7 +3,7 @@ import { StatCard } from "@/components/StatCard";
 import { AttendanceBadge } from "@/components/StatusBadges";
 import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -72,32 +72,35 @@ export default function Attendance() {
     setBusy("checkin");
     const status: AttendanceStatus = todayMode === "wfh" ? "wfh" : todayMode;
     const dbStatus = status === "wfh" ? "work_from_home" : status;
-    const { error } = await supabase.from("attendance_logs").insert({
-      user_id: user.id,
-      work_date: today,
-      check_in_at: new Date().toISOString(),
-      status: dbStatus,
-      source: "self_checkin",
-    });
-    setBusy(null);
-    if (error) toast.error(error.message);
-    else { toast.success(status === "wfh" ? "Checked in (WFH)" : "Checked in"); refresh(); }
+    try {
+      await api.checkIn({
+        work_date: today,
+        check_in_at: new Date().toISOString(),
+        status: dbStatus,
+        source: "self_checkin",
+      });
+      toast.success(status === "wfh" ? "Checked in (WFH)" : "Checked in");
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Check-in failed");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const handleCheckOut = async () => {
     if (!user || !todayLog) return;
     if (todayLog.checkOut) return toast.info("Already checked out");
     setBusy("checkout");
-    const { error } = await supabase
-      .from("attendance_logs")
-      .update({ check_out_at: new Date().toISOString() })
-      .eq("id", todayLog.id);
-    setBusy(null);
-    if (error) toast.error(error.message);
-    else {
+    try {
+      await api.updateAttendance(todayLog.id, { check_out_at: new Date().toISOString() });
       const mins = minutesBetween(todayLog.checkIn, new Date().toTimeString().slice(0, 5));
       toast.success(`Checked out — ${formatHM(mins)} today`);
       refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Check-out failed");
+    } finally {
+      setBusy(null);
     }
   };
 

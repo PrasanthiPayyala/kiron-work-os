@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { pickPrimaryRole, mapProfile } from "@/lib/mappers";
+import { setCurrentUserId, drainQueue } from "@/lib/offline/mutationQueue";
+import { startWs, stopWs } from "@/lib/ws";
 import type { User, Role } from "@/types";
 
 type AuthContextValue = {
@@ -19,55 +21,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const hydrate = async (uid: string) => {
-      const [{ data: profile }, { data: roles }] = await Promise.all([
-        supabase.from("profiles").select("*").eq("id", uid).maybeSingle(),
-        supabase.from("user_roles").select("role").eq("user_id", uid),
-      ]);
-      const roleList = (roles ?? []).map((r: any) => r.role as Role);
+  const hydrate = async () => {
+    try {
+      const { profile, roles } = await api.me();
+      const roleList = (roles ?? []) as Role[];
       const primary = pickPrimaryRole(roleList.length ? roleList : ["employee"]);
-      if (profile) setUser(mapProfile(profile, primary));
+      const mapped = mapProfile(profile, primary);
+      setUser(mapped);
       setRole(primary);
+      // Offline queue needs the user id to build optimistic rows; replay any
+      // writes that were captured before this session reconnected.
+      setCurrentUserId(mapped.id);
+      void drainQueue();
+      startWs();
+    } catch {
+      setUser(null);
+      setRole(null);
+    } finally {
       setLoading(false);
-    };
+    }
+  };
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        // defer to avoid deadlock
-        setTimeout(() => hydrate(session.user.id), 0);
-      } else {
-        setUser(null);
-        setRole(null);
-        setLoading(false);
-      }
-    });
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) hydrate(session.user.id);
-      else setLoading(false);
-    });
-
-    return () => sub.subscription.unsubscribe();
+  useEffect(() => {
+    if (api.hasSession()) hydrate();
+    else setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return error ? { error: error.message } : {};
+    try {
+      await api.login(email, password);
+      await hydrate();
+      return {};
+    } catch (e) {
+      return { error: e instanceof ApiError ? e.message : "Login failed" };
+    }
   };
 
-  const signUp = async (email: string, password: string, fullName: string) => {
-    const { error } = await supabase.auth.signUp({
-      email, password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/`,
-        data: { full_name: fullName },
-      },
-    });
-    return error ? { error: error.message } : {};
+  const signUp = async (_email: string, _password: string, _fullName: string) => {
+    // Self-service signup is not part of the POC; accounts are seeded/HR-managed.
+    return { error: "Signup is disabled — contact your administrator." };
   };
 
-  const signOut = async () => { await supabase.auth.signOut(); };
+  const signOut = async () => {
+    await api.logout();
+    setUser(null);
+    setRole(null);
+    setCurrentUserId(null);
+    stopWs();
+  };
 
   return (
     <AuthContext.Provider value={{ user, role, loading, signIn, signUp, signOut }}>

@@ -209,7 +209,11 @@ export function mapLeave(r: DbLeave): LeaveRequest {
   };
 }
 
-export function mapConversation(r: DbConversation, memberIds: string[] = []): Conversation {
+export function mapConversation(
+  r: DbConversation,
+  memberIds: string[] = [],
+  lastReadAt?: string | null,
+): Conversation {
   const kindMap: Record<string, Conversation["kind"]> = {
     direct: "dm", company_group: "company_group", team_group: "team_group",
     project_group: "project_group", announcement: "announcement",
@@ -223,20 +227,30 @@ export function mapConversation(r: DbConversation, memberIds: string[] = []): Co
     memberIds,
     lastMessageAt: r.last_message_at ?? undefined,
     lastMessagePreview: r.last_message_preview ?? undefined,
-    unreadCount: 0,
+    lastReadAt: lastReadAt ?? undefined,
+    unreadCount: 0, // recomputed client-side from messages vs lastReadAt
     pinned: r.pinned ?? false,
   };
 }
 
 export function mapMessage(r: DbMessage): Message {
+  const attachments = Array.isArray(r.attachments)
+    ? r.attachments.map((a: any) => ({
+        id: a.id,
+        fileName: a.file_name,
+        fileSize: a.file_size ?? null,
+        mimeType: a.mime_type ?? null,
+      }))
+    : undefined;
   return {
     id: r.id,
     conversationId: r.conversation_id,
     senderId: r.sender_id,
     body: r.body,
-    createdAt: r.created_at?.slice(0, 16).replace("T", " ") ?? "",
+    createdAt: r.created_at ?? "",
     mentions: r.mentions ?? [],
     taskRefId: r.task_ref_id ?? undefined,
+    attachments,
   };
 }
 

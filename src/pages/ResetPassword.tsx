@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,15 +15,18 @@ export default function ResetPassword() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + "/update-password",
-    });
-    setLoading(false);
-    if (error) {
-      toast({ title: "Reset failed", description: error.message, variant: "destructive" });
-      return;
+    try {
+      await api.forgotPassword(email);
+      setSent(true);
+    } catch (err) {
+      toast({
+        title: "Reset failed",
+        description: err instanceof ApiError ? err.message : "Could not send the reset email.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
-    setSent(true);
   };
 
   return (

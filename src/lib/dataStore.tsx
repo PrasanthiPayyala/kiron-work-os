@@ -7,14 +7,17 @@
 // conversations, members, messages). Mutations call Supabase directly and
 // invalidate the relevant slices via the exposed `refresh` function.
 
-import { createContext, useContext, useEffect, useMemo, useState, useCallback, type ReactNode } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from "react";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import {
   mapCompany, mapDepartment, mapProfile, mapProject, mapTask, mapApproval,
   mapAttendance, mapLeave, mapConversation, mapMessage, mapNotification,
   pickPrimaryRole,
 } from "@/lib/mappers";
 import { offlineDB, replaceTable, setMeta, getMeta, clearAllData } from "@/lib/offline/db";
+import { drainQueue } from "@/lib/offline/mutationQueue";
+import { onRealtime } from "@/lib/ws";
 import type {
   Company, Department, User, Project, Task, Approval,
   AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role,
@@ -62,8 +65,9 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     userRoles: { user_id: string; role: string }[];
     projects: any[]; projectMembers: { project_id: string; user_id: string }[];
     tasks: any[]; approvals: any[]; attendance: any[]; leaves: any[];
-    conversations: any[]; convMembers: { conversation_id: string; user_id: string }[];
+    conversations: any[]; convMembers: { conversation_id: string; user_id: string; last_read_at?: string | null }[];
     messages: any[]; notifications: any[];
+    currentUserId?: string;
   }): Store => {
     const rolesByUser: Record<string, Role[]> = {};
     for (const row of raw.userRoles) {
@@ -74,8 +78,12 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       (projMembers[m.project_id] ||= []).push(m.user_id);
     }
     const convMembers: Record<string, string[]> = {};
+    const myLastReadByConv: Record<string, string | null> = {};
     for (const m of raw.convMembers) {
       (convMembers[m.conversation_id] ||= []).push(m.user_id);
+      if (raw.currentUserId && m.user_id === raw.currentUserId) {
+        myLastReadByConv[m.conversation_id] = m.last_read_at ?? null;
+      }
     }
     return {
       companies: raw.companies.map(mapCompany),
@@ -88,7 +96,9 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       approvals: raw.approvals.map(mapApproval),
       attendance: raw.attendance.map(mapAttendance),
       leaveRequests: raw.leaves.map(mapLeave),
-      conversations: raw.conversations.map((c) => mapConversation(c, convMembers[c.id] ?? [])),
+      conversations: raw.conversations.map((c) =>
+        mapConversation(c, convMembers[c.id] ?? [], myLastReadByConv[c.id]),
+      ),
       messages: raw.messages.map(mapMessage),
       notifications: raw.notifications.map(mapNotification),
       rolesByUser,
@@ -124,48 +134,34 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       messages, notifications, conversations,
       userRoles: userRoles.map(({ user_id, role }) => ({ user_id, role })),
       projectMembers: projectMembers.map(({ project_id, user_id }) => ({ project_id, user_id })),
-      convMembers: convMembers.map(({ conversation_id, user_id }) => ({ conversation_id, user_id })),
+      convMembers: convMembers.map((m: any) => ({
+        conversation_id: m.conversation_id, user_id: m.user_id, last_read_at: m.last_read_at,
+      })),
       attendance, leaves,
+      currentUserId: (await getMeta("currentUserId")) ?? undefined,
     });
   }, [buildStore]);
 
-  // Fetch from Supabase + write through to IndexedDB. Throws on network error.
+  // Fetch from the API (single /bootstrap call) + write through to IndexedDB.
+  // Throws on network error so the caller can fall back to the cached snapshot.
   const fetchFromNetwork = useCallback(async (): Promise<Store> => {
-    const [
-      companiesR, deptsR, profilesR, rolesR, projectsR, projMembersR,
-      tasksR, approvalsR, attR, leaveR, convsR, convMembersR, msgsR, notifsR,
-    ] = await Promise.all([
-      supabase.from("companies").select("*"),
-      supabase.from("departments").select("*"),
-      supabase.from("profiles").select("*"),
-      supabase.from("user_roles").select("user_id, role"),
-      supabase.from("projects").select("*"),
-      supabase.from("project_members").select("project_id, user_id"),
-      supabase.from("tasks").select("*"),
-      supabase.from("approvals").select("*"),
-      supabase.from("attendance_logs").select("*"),
-      supabase.from("leave_requests").select("*"),
-      supabase.from("conversations").select("*"),
-      supabase.from("conversation_members").select("conversation_id, user_id"),
-      supabase.from("messages").select("*").order("created_at", { ascending: true }),
-      supabase.from("notifications").select("*"),
-    ]);
+    const b = await api.bootstrap();
 
     const raw = {
-      companies: companiesR.data ?? [],
-      departments: deptsR.data ?? [],
-      profiles: profilesR.data ?? [],
-      userRoles: (rolesR.data ?? []) as { user_id: string; role: string }[],
-      projects: projectsR.data ?? [],
-      projectMembers: (projMembersR.data ?? []) as { project_id: string; user_id: string }[],
-      tasks: tasksR.data ?? [],
-      approvals: approvalsR.data ?? [],
-      attendance: attR.data ?? [],
-      leaves: leaveR.data ?? [],
-      conversations: convsR.data ?? [],
-      convMembers: (convMembersR.data ?? []) as { conversation_id: string; user_id: string }[],
-      messages: msgsR.data ?? [],
-      notifications: notifsR.data ?? [],
+      companies: b.companies,
+      departments: b.departments,
+      profiles: b.profiles,
+      userRoles: b.user_roles,
+      projects: b.projects,
+      projectMembers: b.project_members,
+      tasks: b.tasks,
+      approvals: b.approvals,
+      attendance: b.attendance_logs,
+      leaves: b.leave_requests,
+      conversations: b.conversations,
+      convMembers: b.conversation_members,
+      messages: b.messages,
+      notifications: b.notifications,
     };
 
     // Mirror to IndexedDB. Fire-and-forget so reads aren't blocked on disk.
@@ -202,7 +198,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       }
     })();
 
-    return buildStore(raw);
+    return buildStore({ ...raw, currentUserId: (await getMeta("currentUserId")) ?? undefined });
   }, [buildStore]);
 
   const load = useCallback(async () => {
@@ -232,149 +228,78 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [hydrateFromCache, fetchFromNetwork]);
 
+  // Drive loading off the auth session (AuthProvider wraps this provider).
+  // Realtime channels were removed with the Supabase migration — they return
+  // in a later phase as a WebSocket subscription.
+  const { user: authUser, loading: authLoading } = useAuth();
+  const wasAuthed = useRef(false);
+
   useEffect(() => {
-    let mounted = true;
+    if (authLoading) return; // wait until auth resolves before deciding
+    if (authUser) {
+      wasAuthed.current = true;
+      // Persist the user id so cache-only hydrates (offline cold start) can
+      // still compute per-user state (unread badges, optimistic rows). Await
+      // the write before load() so hydrateFromCache sees it on this very call.
+      void (async () => {
+        await setMeta("currentUserId", authUser.id);
+        await load();
+      })();
+    } else {
+      setStore(empty);
+      setLoading(false);
+      // Wipe the offline cache on logout so the next user can't see this data.
+      if (wasAuthed.current) void clearAllData();
+      wasAuthed.current = false;
+    }
 
-    const init = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (mounted && session) await load();
-      else if (mounted) setLoading(false);
+    // On reconnect: replay any queued offline writes, then refresh. drainQueue
+    // dispatches `kiron:queue-drained` after a successful replay, which also
+    // triggers a reload so the UI reflects authoritative server state.
+    const onOnline = () => {
+      if (!authUser) return;
+      void drainQueue().then(() => load());
     };
-
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
-        // defer to avoid deadlock with the listener
-        setTimeout(() => { load(); }, 0);
-      } else {
-        setStore(empty);
-        setLoading(false);
-        // Wipe the offline cache so the next user can't see this user's data.
-        if (event === "SIGNED_OUT") {
-          void clearAllData();
-        }
-      }
-    });
-
-    // Refresh from network when we come back online.
-    const onOnline = () => { void load(); };
+    const onDrained = () => { if (authUser) void load(); };
     window.addEventListener("online", onOnline);
-
-    init();
+    window.addEventListener("kiron:queue-drained", onDrained);
     return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("kiron:queue-drained", onDrained);
     };
-  }, [load]);
+  }, [authLoading, authUser?.id, load]);
 
-  // Realtime chat: subscribe to INSERTs on `messages` while a session exists.
+  // ----- Realtime: apply WS events directly to the in-memory store -----
+  // Chat / notifications / approvals stream in without a refresh. Each event
+  // carries the full server row, so we can splice it in (or replace by id).
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-
-    const start = () => {
-      if (channel) return;
-      channel = supabase
-        .channel("realtime-messages")
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "messages" },
-          (payload) => {
-            const msg = mapMessage(payload.new as Parameters<typeof mapMessage>[0]);
-            setStore((prev) => ({ ...prev, messages: [...prev.messages, msg] }));
-          }
-        )
-        .subscribe();
-    };
-
-    const stop = () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-        channel = null;
+    if (!authUser) return;
+    const off = onRealtime((ev) => {
+      if (ev.type === "message.new") {
+        const msg = mapMessage(ev.data as Parameters<typeof mapMessage>[0]);
+        setStore((prev) => {
+          // Avoid double-append if the sender's own POST already merged it.
+          if (prev.messages.some((m) => m.id === msg.id)) return prev;
+          return { ...prev, messages: [...prev.messages, msg] };
+        });
+      } else if (ev.type === "notification.new") {
+        const n = mapNotification(ev.data as Parameters<typeof mapNotification>[0]);
+        setStore((prev) => {
+          if (prev.notifications.some((x) => x.id === n.id)) return prev;
+          return { ...prev, notifications: [n, ...prev.notifications] };
+        });
+      } else if (ev.type === "approval.changed") {
+        const a = mapApproval(ev.data as Parameters<typeof mapApproval>[0]);
+        setStore((prev) => {
+          const idx = prev.approvals.findIndex((x) => x.id === a.id);
+          const next = [...prev.approvals];
+          if (idx === -1) next.unshift(a); else next[idx] = a;
+          return { ...prev, approvals: next };
+        });
       }
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) start();
     });
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) start();
-      else stop();
-    });
-
-    return () => {
-      sub.subscription.unsubscribe();
-      stop();
-    };
-  }, []);
-
-  // Realtime notifications + approvals: bell badge and approvals page stay live.
-  useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-
-    const start = () => {
-      if (channel) return;
-      channel = supabase
-        .channel("realtime-notif-approvals")
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "notifications" },
-          (payload) => {
-            setStore((prev) => {
-              const next = [...prev.notifications];
-              if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
-                const m = mapNotification(payload.new as Parameters<typeof mapNotification>[0]);
-                const idx = next.findIndex((n) => n.id === m.id);
-                if (idx === -1) next.unshift(m); else next[idx] = m;
-              } else if (payload.eventType === "DELETE") {
-                const id = (payload.old as { id?: string })?.id;
-                if (id) return { ...prev, notifications: next.filter((n) => n.id !== id) };
-              }
-              return { ...prev, notifications: next };
-            });
-          },
-        )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "approvals" },
-          (payload) => {
-            setStore((prev) => {
-              const next = [...prev.approvals];
-              if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
-                const m = mapApproval(payload.new as Parameters<typeof mapApproval>[0]);
-                const idx = next.findIndex((a) => a.id === m.id);
-                if (idx === -1) next.unshift(m); else next[idx] = m;
-              } else if (payload.eventType === "DELETE") {
-                const id = (payload.old as { id?: string })?.id;
-                if (id) return { ...prev, approvals: next.filter((a) => a.id !== id) };
-              }
-              return { ...prev, approvals: next };
-            });
-          },
-        )
-        .subscribe();
-    };
-
-    const stop = () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-        channel = null;
-      }
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) start();
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) start();
-      else stop();
-    });
-
-    return () => {
-      sub.subscription.unsubscribe();
-      stop();
-    };
-  }, []);
+    return off;
+  }, [authUser?.id]);
 
   const value = useMemo<Ctx>(() => ({
     ...store,

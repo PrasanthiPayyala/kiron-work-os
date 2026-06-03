@@ -40,6 +40,19 @@ export interface SyncMeta {
   value: string;
 }
 
+// A write that was made while offline (or that failed with a network error),
+// waiting to be replayed against the API. `kind` maps to an executor in
+// mutationQueue.ts; `args` are the original method arguments (JSON-safe).
+export interface QueuedMutation {
+  id: string;
+  kind: string;
+  args: unknown[];
+  status: "pending" | "failed";
+  createdAt: string;
+  attempts: number;
+  lastError?: string;
+}
+
 export class KironOfflineDB extends Dexie {
   companies!: Table<KeyedRow, string>;
   departments!: Table<KeyedRow, string>;
@@ -56,6 +69,7 @@ export class KironOfflineDB extends Dexie {
   messages!: Table<KeyedRow, string>;
   notifications!: Table<KeyedRow, string>;
   sync_meta!: Table<SyncMeta, string>;
+  mutations!: Table<QueuedMutation, string>;
 
   constructor() {
     super("kiron-offline");
@@ -75,6 +89,10 @@ export class KironOfflineDB extends Dexie {
       messages: "id, conversation_id, created_at",
       notifications: "id, user_id, is_read, created_at",
       sync_meta: "key",
+    });
+    // v2 adds the offline write queue.
+    this.version(2).stores({
+      mutations: "id, status, createdAt",
     });
   }
 }
@@ -103,7 +121,11 @@ export async function replaceTable<T extends KeyedRow | UserRoleRow | ProjectMem
   });
 }
 
-/** Wipe everything except sync_meta. Used on sign-out. */
+/**
+ * Wipe cached data and the pending write queue. Used on sign-out so the next
+ * user can't see this user's data or accidentally replay their queued writes
+ * under a different identity.
+ */
 export async function clearAllData() {
   await offlineDB.transaction(
     "rw",
@@ -113,6 +135,7 @@ export async function clearAllData() {
       offlineDB.tasks, offlineDB.approvals, offlineDB.attendance_logs,
       offlineDB.leave_requests, offlineDB.conversations,
       offlineDB.conversation_members, offlineDB.messages, offlineDB.notifications,
+      offlineDB.mutations,
     ],
     async () => {
       await Promise.all([
@@ -130,6 +153,7 @@ export async function clearAllData() {
         offlineDB.conversation_members.clear(),
         offlineDB.messages.clear(),
         offlineDB.notifications.clear(),
+        offlineDB.mutations.clear(),
       ]);
     },
   );
