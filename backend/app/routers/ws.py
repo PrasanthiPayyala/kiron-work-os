@@ -99,19 +99,15 @@ async def approval_changed(approval_row: dict) -> None:
     await hub.send_to_users(targets, {"type": "approval.changed", "data": approval_row})
 
 
-# Synchronous wrappers so REST handlers (which are sync def, not async) can
-# fire-and-forget broadcasts without blocking the response.
-
-def fire_message_new(message_row: dict, conversation_id: str) -> None:
-    asyncio.create_task(message_new(message_row, conversation_id))
-
-
-def fire_notification_new(notification_row: dict) -> None:
-    asyncio.create_task(notification_new(notification_row))
-
-
-def fire_approval_changed(approval_row: dict) -> None:
-    asyncio.create_task(approval_changed(approval_row))
+# The fire_* helpers below were a previous attempt to schedule broadcasts
+# from sync FastAPI endpoints via asyncio.create_task. That raises
+# RuntimeError when called from FastAPI's threadpool ("no running event
+# loop"), and the bare except swallowed it so broadcasts silently never
+# fired. The right pattern is FastAPI's BackgroundTasks dependency — it
+# runs the coroutine on the main event loop after the response is sent.
+# Endpoints should now call e.g.
+#     background.add_task(ws_router.message_new, payload, conversation_id)
+# rather than the old fire_*().
 
 
 # ---------- the socket endpoint ----------

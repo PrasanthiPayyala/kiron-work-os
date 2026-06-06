@@ -9,7 +9,7 @@ File flow:
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -42,6 +42,7 @@ def _is_member(db: Session, conv_id: str, uid: str) -> bool:
 @router.post("", status_code=status.HTTP_201_CREATED)
 def send(
     body: MessageCreate,
+    background: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -91,11 +92,10 @@ def send(
     saved = db.execute(text("SELECT * FROM messages WHERE id = :id"), {"id": new_id}).mappings().first()
     payload = {**row(saved), "attachments": attachments_meta}
 
-    # Fire-and-forget WebSocket fan-out to every conversation member.
-    try:
-        ws_router.fire_message_new(payload, body.conversation_id)
-    except RuntimeError:
-        # No running event loop (e.g. unit tests) — skip broadcast.
-        pass
+    # Schedule the WebSocket fan-out as a background task. FastAPI runs it on
+    # the main event loop AFTER returning the response, so the sender's POST
+    # isn't blocked and the broadcast actually fires (the older
+    # asyncio.create_task path silently failed from the threadpool).
+    background.add_task(ws_router.message_new, payload, body.conversation_id)
 
     return payload

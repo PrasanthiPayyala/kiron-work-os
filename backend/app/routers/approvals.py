@@ -1,6 +1,6 @@
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -27,7 +27,13 @@ def _get(db: Session, approval_id: str) -> dict:
 
 
 @router.patch("/{approval_id}")
-def decide(approval_id: str, body: Decision, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def decide(
+    approval_id: str,
+    body: Decision,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     approval = _get(db, approval_id)
     if not can_decide_approval(approval, user.id, user.roles):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to decide this approval")
@@ -41,8 +47,7 @@ def decide(approval_id: str, body: Decision, user: CurrentUser = Depends(get_cur
     )
     db.commit()
     updated = _get(db, approval_id)
-    try:
-        ws_router.fire_approval_changed(updated)
-    except RuntimeError:
-        pass
+    # Schedule on the main loop via FastAPI BackgroundTasks (asyncio.create_task
+    # from a sync endpoint silently fails — see ws_router for the history).
+    background.add_task(ws_router.approval_changed, updated)
     return updated
