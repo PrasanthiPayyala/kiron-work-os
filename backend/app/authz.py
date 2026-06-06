@@ -12,6 +12,8 @@ HR_ROLES = {"super_admin", "founder", "hr_admin"}
 TASK_CREATE_ROLES = {"super_admin", "founder", "manager", "founder_office_coordinator", "hr_admin"}
 # Who may decide an approval regardless of being the named approver.
 APPROVAL_DECIDE_ROLES = {"super_admin", "founder"}
+# Who may create, edit, deactivate, or reactivate user accounts.
+USER_MANAGE_ROLES = {"super_admin", "hr_admin"}
 
 
 def has_any_role(roles: set[str], allowed: set[str]) -> bool:
@@ -78,3 +80,10 @@ def can_manage_project(project: dict, uid: str, roles: set[str]) -> bool:
         project.get("created_by"),
         project.get("approver_id"),
     }
+
+
+# ---------- Users ----------
+
+def can_manage_users(roles: set[str]) -> bool:
+    """Create new accounts, edit profile fields, set roles, deactivate."""
+    return has_any_role(roles, USER_MANAGE_ROLES)

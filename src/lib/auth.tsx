@@ -3,7 +3,7 @@ import { api, ApiError } from "@/lib/api";
 import { pickPrimaryRole, mapProfile } from "@/lib/mappers";
 import { setCurrentUserId, drainQueue } from "@/lib/offline/mutationQueue";
 import { startWs, stopWs } from "@/lib/ws";
-import type { User, Role } from "@/types";
+import type { User, Role, EmploymentType } from "@/types";
 
 type AuthContextValue = {
   user: User | null;
@@ -108,6 +108,9 @@ export const can = {
   reassignTasks: (r: Role) => ["super_admin","founder","founder_office_coordinator","manager","hr_admin"].includes(r),
   createProjects: (r: Role) => r !== "intern",
   approveContent: (r: Role) => ["manager","founder","super_admin","founder_office_coordinator"].includes(r),
+  // Create / edit / deactivate user accounts. Mirrors the backend's
+  // USER_MANAGE_ROLES gate so the UI can hide controls the API would reject.
+  manageUsers: (r: Role) => r === "super_admin" || r === "hr_admin",
 };
 
 export const useCurrentCompany = () => {
@@ -128,4 +131,15 @@ export const roleLabel = (r: Role): string => {
     hr_admin: "HR Admin",
   };
   return map[r];
+};
+
+export const employmentLabel = (t: EmploymentType): string => {
+  const map: Record<EmploymentType, string> = {
+    intern: "Intern",
+    contract: "Contract",
+    full_time: "Full-time",
+    temporary: "Temporary",
+    part_time: "Part-time",
+  };
+  return map[t] ?? "Full-time";
 };

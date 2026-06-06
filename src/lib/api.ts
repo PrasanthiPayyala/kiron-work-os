@@ -238,6 +238,35 @@ export const api = {
   removeProjectMember(projectId: string, userId: string): Promise<void> {
     return request(`/projects/${projectId}/members/${userId}`, { method: "DELETE" });
   },
+
+  // ---------- Users (admin: super_admin / hr_admin) ----------
+  createUser(payload: {
+    full_name: string;
+    email: string;
+    password: string;
+    home_company_id: string;
+    department_id?: string | null;
+    designation?: string;
+    employment_type: string;
+    role: string;
+    reporting_manager_id?: string | null;
+    reviewer_id?: string | null;
+    doj?: string | null;
+  }): Promise<Record<string, unknown>> {
+    return request("/users", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateUser(id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  setUserRoles(id: string, roles: string[]): Promise<{ user_id: string; roles: string[] }> {
+    return request(`/users/${id}/roles`, { method: "PUT", body: JSON.stringify({ roles }) });
+  },
+  deactivateUser(id: string): Promise<Record<string, unknown>> {
+    return request(`/users/${id}/deactivate`, { method: "POST" });
+  },
+  reactivateUser(id: string): Promise<Record<string, unknown>> {
+    return request(`/users/${id}/reactivate`, { method: "POST" });
+  },
   checkIn: withOffline("checkIn", raw.checkIn),
   updateAttendance: withOffline("updateAttendance", raw.updateAttendance),
   applyLeave: withOffline("applyLeave", raw.applyLeave),

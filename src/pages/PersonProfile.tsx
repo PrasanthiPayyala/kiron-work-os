@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useDataStore } from "@/lib/dataStore";
-import { roleLabel } from "@/lib/auth";
+import { roleLabel, employmentLabel } from "@/lib/auth";
 import { PageHeader } from "@/components/PageHeader";
 import { UserAvatar } from "@/components/UserAvatar";
 import { CompanyBadge } from "@/components/CompanyBadge";
@@ -24,11 +24,17 @@ export default function PersonProfile() {
         <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface p-5 shadow-card">
           <UserAvatar userId={u.id} size="xl" />
           <div className="flex-1">
-            <h2 className="font-display text-lg font-semibold">{u.name}</h2>
+            <h2 className="font-display text-lg font-semibold">
+              {u.name}
+              {!u.isActive && <span className="ml-2 rounded-md bg-surface-muted px-2 py-0.5 align-middle text-xs font-medium text-muted-foreground">Deactivated</span>}
+            </h2>
             <p className="text-sm text-muted-foreground">{u.email}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <CompanyBadge companyId={u.homeCompanyId} />
-              <span className="rounded-md bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent">Score {u.productivityScore}%</span>
+              <span className="rounded-md border border-border bg-surface-muted px-2 py-0.5 text-xs font-medium">{employmentLabel(u.employmentType)}</span>
+              {u.productivityScore != null && (
+                <span className="rounded-md bg-accent-soft px-2 py-0.5 text-xs font-semibold text-accent">Score {u.productivityScore}%</span>
+              )}
               <span className="rounded-md border border-border bg-surface-muted px-2 py-0.5 text-xs">Joined {u.joinedAt}</span>
             </div>
           </div>

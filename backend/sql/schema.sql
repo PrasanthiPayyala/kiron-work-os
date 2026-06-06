@@ -35,6 +35,7 @@ create type public.notification_type as enum (
   'recurring_upcoming','mention','announcement','general'
 );
 create type public.channel_type as enum ('direct','company_group','team_group','project_group','announcement');
+create type public.employment_type as enum ('intern','contract','full_time','temporary','part_time');
 
 -- ============================================================ AUTH
 create table public.users (
@@ -85,6 +86,8 @@ create table public.profiles (
   productivity_score numeric(5,2),
   email_default_account_id uuid,
   is_active boolean not null default true,
+  employment_type public.employment_type not null default 'full_time',
+  tokens_invalid_after timestamptz,
   created_at timestamptz not null default now()
 );
 

@@ -46,7 +46,13 @@ def make_refresh_token(user_id: str) -> str:
 
 
 def decode_token(token: str, expected_type: str) -> str | None:
-    """Return the subject (user id) if the token is valid and of the expected type."""
+    """Return the subject (user id) if the token is valid and of the expected type.
+
+    Does NOT check profiles.is_active / status / tokens_invalid_after — those
+    live in Postgres and are enforced by the caller (auth.login and
+    deps.get_current_user). Keeping this function DB-free lets the WS endpoint
+    decode a token from a query string without holding a session.
+    """
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGO])
     except jwt.PyJWTError:
@@ -54,3 +60,18 @@ def decode_token(token: str, expected_type: str) -> str | None:
     if payload.get("type") != expected_type:
         return None
     return payload.get("sub")
+
+
+def token_iat(token: str) -> dt.datetime | None:
+    """Best-effort: pull the iat (issued-at) from a JWT, without raising.
+
+    Used to invalidate tokens minted before the user was deactivated.
+    """
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGO])
+    except jwt.PyJWTError:
+        return None
+    raw = payload.get("iat")
+    if raw is None:
+        return None
+    return dt.datetime.fromtimestamp(int(raw), tz=dt.timezone.utc)

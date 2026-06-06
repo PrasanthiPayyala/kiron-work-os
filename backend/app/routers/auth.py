@@ -15,6 +15,7 @@ from ..security import (
     make_access_token,
     make_refresh_token,
     decode_token,
+    token_iat,
     hash_password,
     verify_password,
 )
@@ -41,14 +42,30 @@ class AccessOut(BaseModel):
     access_token: str
 
 
+# profiles.status values that should prevent sign-in even with a valid password.
+DISABLED_PROFILE_STATUSES = {"exited", "inactive"}
+
+
 @router.post("/login", response_model=TokenOut)
 def login(body: LoginIn, db: Session = Depends(get_db)):
     row = db.execute(
-        text("SELECT id, password_hash FROM users WHERE lower(email) = lower(:email)"),
+        text(
+            "SELECT u.id, u.password_hash, p.is_active, p.status "
+            "FROM users u "
+            "LEFT JOIN profiles p ON p.id = u.id "
+            "WHERE lower(u.email) = lower(:email)"
+        ),
         {"email": body.email},
     ).mappings().first()
     if not row or not verify_password(body.password, row["password_hash"]):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+    # Disabled accounts get a distinct message so HR/admins can debug, but the
+    # 401 status is preserved so we don't reveal "this email exists".
+    if row["is_active"] is False or (row["status"] in DISABLED_PROFILE_STATUSES):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "This account has been deactivated. Contact your administrator.",
+        )
     uid = str(row["id"])
     return TokenOut(
         access_token=make_access_token(uid),
@@ -58,10 +75,28 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
 
 @router.post("/refresh", response_model=AccessOut)
-def refresh(body: RefreshIn):
+def refresh(body: RefreshIn, db: Session = Depends(get_db)):
     uid = decode_token(body.refresh_token, "refresh")
     if not uid:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid refresh token")
+    # Same gating as login — a deactivated user must not be able to mint new
+    # access tokens via a stale refresh token. Also honours tokens_invalid_after
+    # so admins can force a re-login even before deactivating.
+    prof = db.execute(
+        text("SELECT is_active, status, tokens_invalid_after FROM profiles WHERE id = :id"),
+        {"id": uid},
+    ).mappings().first()
+    if not prof:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    if prof["is_active"] is False or prof["status"] in DISABLED_PROFILE_STATUSES:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been deactivated.")
+    cutoff = prof["tokens_invalid_after"]
+    if cutoff is not None:
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
+        iat = token_iat(body.refresh_token)
+        if iat is not None and iat < cutoff:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session was invalidated.")
     return AccessOut(access_token=make_access_token(uid))
 
 

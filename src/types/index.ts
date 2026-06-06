@@ -31,6 +31,8 @@ export type Role =
   | "intern"
   | "hr_admin";
 
+export type EmploymentType = "intern" | "contract" | "full_time" | "temporary" | "part_time";
+
 export interface User {
   id: ID;
   name: string;
@@ -45,6 +47,8 @@ export interface User {
   initials: string;
   skills?: string[];
   status: "active" | "on_leave" | "inactive";
+  employmentType: EmploymentType;
+  isActive: boolean;
   productivityScore?: number; // 0-100
   joinedAt: ISODate;
 }

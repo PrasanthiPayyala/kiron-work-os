@@ -1,6 +1,7 @@
 .venv/
 .env
 .pgdata/
+.pglog.txt
 .pgpw.txt
 .uploads/
 __pycache__/

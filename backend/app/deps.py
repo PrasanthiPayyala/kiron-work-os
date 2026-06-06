@@ -1,3 +1,4 @@
+import datetime as dt
 from dataclasses import dataclass, field
 
 from fastapi import Depends, Header, HTTPException, status
@@ -5,8 +6,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .security import decode_token
+from .security import decode_token, token_iat
 from .util import row
+
+DISABLED_PROFILE_STATUSES = {"exited", "inactive"}
 
 
 @dataclass
@@ -32,6 +35,26 @@ def get_current_user(
     ).mappings().first()
     if not profile:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+
+    # Disabled accounts: refuse the token even if it's not yet expired. This
+    # closes the gap between a deactivation and the access-token TTL (default
+    # 60 min) — an admin disabling someone today shouldn't have to wait an
+    # hour for the existing session to die.
+    if profile["is_active"] is False or profile["status"] in DISABLED_PROFILE_STATUSES:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "This account has been deactivated.",
+        )
+    cutoff: dt.datetime | None = profile["tokens_invalid_after"]
+    if cutoff is not None:
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
+        iat = token_iat(token)
+        if iat is not None and iat < cutoff:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "Session was invalidated. Please sign in again.",
+            )
 
     roles = {
         r[0]

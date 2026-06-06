@@ -5,7 +5,7 @@ import type {
   Company, Department, User, Project, Task, Approval,
   AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role,
   TaskStatus, AttendanceStatus, LeaveStatus, ApprovalState, ApprovalKind,
-  Visibility, Priority,
+  Visibility, Priority, EmploymentType,
 } from "@/types";
 
 type DbProfile = any;
@@ -84,10 +84,17 @@ export function mapDepartment(r: DbDept): Department {
   return { id: r.id, name: r.name, companyId: r.company_id ?? "" };
 }
 
+const VALID_EMPLOYMENT: EmploymentType[] = ["intern", "contract", "full_time", "temporary", "part_time"];
+
 export function mapProfile(r: DbProfile, role: Role = "employee"): User {
   const status = r.status === "on_leave" ? "on_leave"
     : r.status === "exited" || r.status === "inactive" ? "inactive"
     : "active";
+  // Fall back to full_time for legacy rows that pre-date the migration; this
+  // matches the DB-side DEFAULT and keeps the UI rendering clean.
+  const employmentType: EmploymentType = VALID_EMPLOYMENT.includes(r.employment_type)
+    ? r.employment_type
+    : "full_time";
   return {
     id: r.id,
     name: r.full_name,
@@ -102,6 +109,8 @@ export function mapProfile(r: DbProfile, role: Role = "employee"): User {
     initials: r.initials ?? r.full_name.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase(),
     skills: r.skills ?? [],
     status,
+    employmentType,
+    isActive: r.is_active !== false,
     productivityScore: r.productivity_score ?? undefined,
     joinedAt: r.doj ?? r.created_at?.slice(0, 10) ?? "2024-01-01",
   };
