@@ -2,6 +2,7 @@
 .env
 .pgdata/
 .pgpw.txt
+.uploads/
 __pycache__/
 *.pyc
 .pytest_cache/

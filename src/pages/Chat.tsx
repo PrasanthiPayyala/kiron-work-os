@@ -116,9 +116,11 @@ export default function Chat() {
       });
       setDraft("");
       setPending([]);
-      // The WS broadcast will land for other tabs; we also refresh so this
-      // tab's bootstrap-based store includes the new row immediately.
-      refresh();
+      // The sender's own browser also receives the WS broadcast (it's a
+      // member of the conversation), so the message lands in the store
+      // with attachments inline. Calling refresh() here would race with that
+      // and could overwrite the WS-added row with a bootstrap snapshot taken
+      // before the row was committed.
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to send");
     } finally {

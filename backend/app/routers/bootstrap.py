@@ -111,6 +111,28 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "SELECT * FROM messages WHERE conversation_id = ANY(:ids) ORDER BY created_at ASC",
         {"ids": list(visible_conv_ids)} if visible_conv_ids else {"ids": []},
     )
+    # Pull attachments for the visible messages in one round-trip so chat
+    # bubbles render with file chips on reload + when WS broadcasts are missed
+    # (recipient tab closed / network blip, no replay). Same shape mapMessage
+    # already understands.
+    if messages:
+        msg_ids = [m["id"] for m in messages]
+        att_rows = _rows(
+            db,
+            "SELECT id, entity_id, file_name, file_size, mime_type "
+            "FROM attachments WHERE entity_type = 'message' AND entity_id = ANY(:ids)",
+            {"ids": msg_ids},
+        )
+        by_msg: dict[str, list[dict]] = {}
+        for a in att_rows:
+            by_msg.setdefault(a["entity_id"], []).append({
+                "id": a["id"],
+                "file_name": a["file_name"],
+                "file_size": a["file_size"],
+                "mime_type": a["mime_type"],
+            })
+        for m in messages:
+            m["attachments"] = by_msg.get(m["id"], [])
 
     # --- notifications (self only) ---
     notifications = _rows(db, "SELECT * FROM notifications WHERE user_id = :uid", {"uid": uid})
