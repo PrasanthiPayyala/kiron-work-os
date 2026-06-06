@@ -310,6 +310,17 @@ export const api = {
     return res.json();
   },
 
+  /** List attachments for a task/project/message. Newest first. */
+  listFiles(entityType: "task" | "project" | "message", entityId: string): Promise<FileRow[]> {
+    const q = new URLSearchParams({ entity_type: entityType, entity_id: entityId });
+    return request(`/files?${q.toString()}`);
+  },
+
+  /** Delete an attachment (uploader or elevated role only). */
+  deleteFile(attachmentId: string): Promise<void> {
+    return request(`/files/${attachmentId}`, { method: "DELETE" });
+  },
+
   /** Build an authenticated GET URL for downloading an attachment. Browsers
    * can't set Authorization on `<a download>` links, so callers fetch + blob. */
   async downloadFile(attachmentId: string, filename?: string): Promise<void> {
@@ -336,6 +347,15 @@ export interface AttachmentRow {
   file_name: string;
   file_size: number | null;
   mime_type: string | null;
+}
+
+/** The full row returned by GET /files — adds metadata the AttachmentList renders. */
+export interface FileRow extends AttachmentRow {
+  entity_type: string | null;
+  entity_id: string | null;
+  file_url: string;
+  uploaded_by: string | null;
+  created_at: string;
 }
 
 export interface MessagePayload {

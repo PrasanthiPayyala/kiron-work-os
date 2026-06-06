@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # Public URL of the frontend, used to build the password reset link.
     app_base_url: str = "http://localhost:8080"
 
+    # Where the files router writes uploaded bytes on disk.
+    files_dir: str = "/var/lib/kiron/files"
+
     # Outgoing SMTP for password reset emails. If smtp_host is blank the
     # backend logs the reset link to stdout instead of trying to send (useful
     # in dev / before SMTP is configured).

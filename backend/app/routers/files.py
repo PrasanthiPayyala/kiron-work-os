@@ -11,17 +11,18 @@ Storage layout on disk: ``$FILES_DIR/<attachment_id>/<original-filename>``.
 The original filename is preserved (after sanitising) so the browser can save
 it with a sensible name; FILES_DIR is set in /etc/kiron/backend.env.
 """
-import os
 import re
 import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from ..authz import can_view_task, has_any_role, GLOBAL_ROLES
+from ..config import settings
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
@@ -30,7 +31,9 @@ router = APIRouter(prefix="/files", tags=["files"])
 
 # Per-file size cap. nginx also enforces client_max_body_size 25m by default.
 MAX_BYTES = 25 * 1024 * 1024
-FILES_DIR = Path(os.environ.get("FILES_DIR", "/var/lib/kiron/files"))
+# Resolved through pydantic-settings so the value in backend/.env is honoured
+# in dev. systemd's EnvironmentFile also exports it for production.
+FILES_DIR = Path(settings.files_dir)
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._\-]+")
 
 
@@ -154,3 +157,111 @@ def download(
         media_type=att.get("mime_type") or "application/octet-stream",
         filename=att.get("file_name") or attachment_id,
     )
+
+
+# ---------- List by entity ----------
+
+def _can_see_entity(db: Session, user: CurrentUser, entity_type: str, entity_id: str) -> bool:
+    """Mirror the per-entity ACL used by the download endpoint.
+
+    For task/project: caller is involved (assignee/reviewer/creator/manager OR a
+    project member) or has a global role.
+    """
+    if has_any_role(user.roles, GLOBAL_ROLES):
+        return True
+    if entity_type == "task":
+        # Pull the row and use the existing authz helper so the rule stays
+        # consistent across endpoints.
+        task = db.execute(
+            text("SELECT id, assignee_id, reviewer_id, reporting_manager_id, created_by, project_id "
+                 "FROM tasks WHERE id = :id"),
+            {"id": entity_id},
+        ).mappings().first()
+        if not task:
+            return False
+        member_pids = {
+            r["project_id"] for r in db.execute(
+                text("SELECT project_id FROM project_members WHERE user_id = :u"),
+                {"u": user.id},
+            ).mappings().all()
+        }
+        return can_view_task(dict(task), user.id, user.roles, member_pids)
+    if entity_type == "project":
+        # Owner / creator / approver / project member can read.
+        proj = db.execute(
+            text("SELECT id, owner_id, created_by, approver_id FROM projects WHERE id = :id"),
+            {"id": entity_id},
+        ).mappings().first()
+        if not proj:
+            return False
+        if user.id in {proj.get("owner_id"), proj.get("created_by"), proj.get("approver_id")}:
+            return True
+        is_member = db.execute(
+            text("SELECT 1 FROM project_members WHERE project_id = :p AND user_id = :u"),
+            {"p": entity_id, "u": user.id},
+        ).first()
+        return is_member is not None
+    return False
+
+
+@router.get("")
+def list_files(
+    entity_type: str = Query(..., description="task | project | message"),
+    entity_id: str = Query(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List attachments for an entity. Returns newest first."""
+    if not _can_see_entity(db, user, entity_type, entity_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to read these files")
+    rows = db.execute(
+        text(
+            "SELECT id, entity_type, entity_id, file_name, file_url, file_size, "
+            "       mime_type, uploaded_by, created_at "
+            "FROM attachments "
+            "WHERE entity_type = :et AND entity_id = :eid "
+            "ORDER BY created_at DESC"
+        ),
+        {"et": entity_type, "eid": entity_id},
+    ).mappings().all()
+    return [row(r) for r in rows]
+
+
+# ---------- Delete ----------
+
+@router.delete("/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_file(
+    attachment_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete an attachment row + best-effort cleanup of the file on disk.
+
+    Allowed for the uploader or an elevated role. The disk file is removed
+    after the DB row so the worst-case is an orphan bytes-only file (which we
+    can sweep later) rather than a row pointing at deleted bytes.
+    """
+    att = db.execute(
+        text("SELECT * FROM attachments WHERE id = :id"), {"id": attachment_id}
+    ).mappings().first()
+    if not att:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Attachment not found")
+    if str(att["uploaded_by"]) != user.id and not has_any_role(user.roles, GLOBAL_ROLES):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the uploader can delete this file")
+
+    db.execute(text("DELETE FROM attachments WHERE id = :id"), {"id": attachment_id})
+    db.commit()
+
+    storage = att.get("storage_path")
+    if storage:
+        try:
+            p = Path(storage)
+            if p.is_file():
+                p.unlink()
+            # Also drop the per-attachment folder if it's now empty.
+            if p.parent.is_dir() and not any(p.parent.iterdir()):
+                p.parent.rmdir()
+        except OSError:
+            # Don't fail the delete on disk cleanup hiccups; row is already gone.
+            pass
+    return None

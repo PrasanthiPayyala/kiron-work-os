@@ -1,22 +1,14 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+// Lists attachments for a task or project, reading from the self-hosted
+// `/files` endpoint. The uploader (above the list) writes to the same endpoint
+// and pings `load()` on success so the new file appears immediately.
+
+import { useCallback, useEffect, useState } from "react";
+import { api, ApiError, type FileRow } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { Paperclip, Download, Trash2, FileText, Image as ImageIcon, FileArchive, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { useAuth } from "@/lib/auth";
 import { AttachmentUploader } from "./AttachmentUploader";
-
-interface Attachment {
-  id: string;
-  entity_type: string;
-  entity_id: string;
-  file_name: string;
-  file_url: string;
-  file_size: number | null;
-  mime_type: string | null;
-  uploaded_by: string | null;
-  created_at: string;
-}
 
 interface Props {
   entityType: "task" | "project";
@@ -24,8 +16,6 @@ interface Props {
   /** Allow upload (default true) */
   canUpload?: boolean;
 }
-
-const BUCKET = "task-project-attachments";
 
 function iconFor(mime: string | null, name: string) {
   const m = (mime ?? "").toLowerCase();
@@ -43,54 +33,48 @@ function formatSize(s: number | null) {
 }
 
 export function AttachmentList({ entityType, entityId, canUpload = true }: Props) {
-  const { user } = useAuth();
-  const [items, setItems] = useState<Attachment[]>([]);
+  const { user, role } = useAuth();
+  const [items, setItems] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const load = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("attachments")
-      .select("*")
-      .eq("entity_type", entityType)
-      .eq("entity_id", entityId)
-      .order("created_at", { ascending: false });
-    setLoading(false);
-    if (error) {
-      toast.error("Failed to load attachments");
-      return;
-    }
-    setItems((data ?? []) as Attachment[]);
-  };
+  const isElevated = role === "super_admin" || role === "founder";
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const rows = await api.listFiles(entityType, entityId);
+      setItems(rows);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Failed to load attachments");
+    } finally {
+      setLoading(false);
+    }
   }, [entityType, entityId]);
 
-  const handleDownload = async (a: Attachment) => {
-    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(a.file_url, 60);
-    if (error || !data?.signedUrl) {
-      toast.error("Could not get download link");
-      return;
+  useEffect(() => { void load(); }, [load]);
+
+  const handleDownload = async (a: FileRow) => {
+    try {
+      await api.downloadFile(a.id, a.file_name);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not download file");
     }
-    window.open(data.signedUrl, "_blank");
   };
 
-  const handleDelete = async (a: Attachment) => {
+  const handleDelete = async (a: FileRow) => {
     if (!confirm(`Delete "${a.file_name}"?`)) return;
     setDeleting(a.id);
-    const { error: sErr } = await supabase.storage.from(BUCKET).remove([a.file_url]);
-    if (sErr) {
+    try {
+      await api.deleteFile(a.id);
+      toast.success("Attachment removed");
+      // Optimistic: drop from local state without a round-trip.
+      setItems((prev) => prev.filter((x) => x.id !== a.id));
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Delete failed");
+    } finally {
       setDeleting(null);
-      return toast.error("Storage delete failed", { description: sErr.message });
     }
-    const { error: dErr } = await supabase.from("attachments").delete().eq("id", a.id);
-    setDeleting(null);
-    if (dErr) return toast.error("Delete failed", { description: dErr.message });
-    toast.success("Attachment removed");
-    load();
   };
 
   return (
@@ -112,6 +96,7 @@ export function AttachmentList({ entityType, entityId, canUpload = true }: Props
         <ul className="space-y-1.5">
           {items.map((a) => {
             const Icon = iconFor(a.mime_type, a.file_name);
+            const canDelete = user?.id === a.uploaded_by || isElevated;
             return (
               <li
                 key={a.id}
@@ -129,7 +114,7 @@ export function AttachmentList({ entityType, entityId, canUpload = true }: Props
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleDownload(a)}>
                   <Download className="h-3.5 w-3.5" />
                 </Button>
-                {(user?.id === a.uploaded_by) && (
+                {canDelete && (
                   <Button
                     size="icon"
                     variant="ghost"

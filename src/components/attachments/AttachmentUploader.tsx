@@ -1,12 +1,14 @@
+// Uploads files for a task or project via the self-hosted `/files` endpoint.
+// Preserves the original component's props so consumers (Tasks.tsx,
+// ProjectDetail.tsx via AttachmentList) work without code changes.
+
 import { useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Upload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "@/lib/auth";
 
-const BUCKET = "task-project-attachments";
-const MAX_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_SIZE = 25 * 1024 * 1024; // 25MB — matches the cap enforced in the files router.
 
 interface Props {
   entityType: "task" | "project";
@@ -15,14 +17,13 @@ interface Props {
 }
 
 export function AttachmentUploader({ entityType, entityId, onUploaded }: Props) {
-  const { user } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
   const onPick = () => inputRef.current?.click();
 
   const onFiles = async (files: FileList | null) => {
-    if (!files || !files.length || !user) return;
+    if (!files || !files.length) return;
     setUploading(true);
     let okCount = 0;
     for (const file of Array.from(files)) {
@@ -30,30 +31,14 @@ export function AttachmentUploader({ entityType, entityId, onUploaded }: Props) 
         toast.error(`${file.name}: file exceeds 25MB`);
         continue;
       }
-      const safe = file.name.replace(/[^\w.\-]+/g, "_");
-      const path = `${entityType}/${entityId}/${Date.now()}-${safe}`;
-      const { error: upErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, file, { upsert: false, contentType: file.type || undefined });
-      if (upErr) {
-        toast.error(`${file.name}: upload failed`, { description: upErr.message });
-        continue;
+      try {
+        await api.uploadFile(file, { type: entityType, id: entityId });
+        okCount++;
+      } catch (e) {
+        toast.error(`${file.name}: upload failed`, {
+          description: e instanceof ApiError ? e.message : undefined,
+        });
       }
-      const { error: insErr } = await supabase.from("attachments").insert({
-        entity_type: entityType,
-        entity_id: entityId,
-        file_name: file.name,
-        file_url: path,
-        file_size: file.size,
-        mime_type: file.type || null,
-        uploaded_by: user.id,
-      });
-      if (insErr) {
-        toast.error(`${file.name}: record failed`, { description: insErr.message });
-        await supabase.storage.from(BUCKET).remove([path]);
-        continue;
-      }
-      okCount++;
     }
     setUploading(false);
     if (okCount) {
