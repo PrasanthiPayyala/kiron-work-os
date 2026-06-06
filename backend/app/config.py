@@ -25,6 +25,12 @@ class Settings(BaseSettings):
 
     password_reset_ttl_min: int = 60
 
+    # SLA breach scheduler (see app/scheduler.py). Disable in tests by setting
+    # SLA_CHECK_ENABLED=false in .env.
+    sla_check_enabled: bool = True
+    sla_check_interval_min: int = 15
+    sla_warn_window_hours: int = 4
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

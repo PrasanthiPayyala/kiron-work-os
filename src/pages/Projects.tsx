@@ -5,20 +5,35 @@ import { CompanyBadge } from "@/components/CompanyBadge";
 import { ProjectStatusBadge, RiskBadge } from "@/components/StatusBadges";
 import { UserAvatar, UserAvatarStack } from "@/components/UserAvatar";
 import { useDataStore } from "@/lib/dataStore";
-import { FolderKanban, LayoutGrid, Table as TableIcon, Plus } from "lucide-react";
+import { useAuth, can } from "@/lib/auth";
+import { api, ApiError } from "@/lib/api";
+import {
+  FolderKanban, LayoutGrid, Table as TableIcon, Plus, Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 export default function Projects() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const { projects, companies, getUser } = useDataStore();
+  const { user, role } = useAuth();
+  const { projects, companies, users, getUser, refresh } = useDataStore();
   const [view, setView] = useState<"cards" | "table">("cards");
   const [company, setCompany] = useState<string>(params.get("company") ?? "all");
   const [status, setStatus] = useState<string>("all");
   const [risk, setRisk] = useState<string>("all");
   const [q, setQ] = useState("");
+  const [newOpen, setNewOpen] = useState(false);
+
+  const canCreate = role ? can.createProjects(role) : false;
 
   const filtered = useMemo(() => projects.filter((p) =>
     (company === "all" || p.companyId === company) &&
@@ -34,7 +49,11 @@ export default function Projects() {
         description="All projects across Kiron Group entities."
         icon={<FolderKanban className="h-5 w-5" />}
         actions={
-          <Button size="sm"><Plus className="h-4 w-4 mr-1.5" /> New project</Button>
+          canCreate && (
+            <Button size="sm" onClick={() => setNewOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" /> New project
+            </Button>
+          )
         }
       />
 
@@ -75,6 +94,18 @@ export default function Projects() {
           </div>
         </div>
 
+        {filtered.length === 0 && (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface p-12 text-center">
+            <FolderKanban className="h-10 w-10 text-muted-foreground/40" />
+            <p className="mt-3 text-sm font-medium">No projects match your filters.</p>
+            {canCreate && (
+              <Button size="sm" className="mt-3" onClick={() => setNewOpen(true)}>
+                <Plus className="h-4 w-4 mr-1.5" /> Create the first one
+              </Button>
+            )}
+          </div>
+        )}
+
         {view === "cards" ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {filtered.map((p) => {
@@ -95,7 +126,7 @@ export default function Projects() {
                   </div>
                   <div className="mt-3 flex items-center justify-between">
                     <ProjectStatusBadge status={p.status} />
-                    <span className="text-xs text-muted-foreground">Due {p.dueDate}</span>
+                    <span className="text-xs text-muted-foreground">Due {p.dueDate || "—"}</span>
                   </div>
                   <div className="mt-3">
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -109,7 +140,7 @@ export default function Projects() {
                   <div className="mt-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <UserAvatar userId={owner?.id} size="xs" />
-                      <span className="text-xs text-muted-foreground">{owner?.name}</span>
+                      <span className="text-xs text-muted-foreground">{owner?.name ?? "—"}</span>
                     </div>
                     <UserAvatarStack userIds={p.memberIds} max={3} size="xs" />
                   </div>
@@ -138,9 +169,9 @@ export default function Projects() {
                     <td className="px-4 py-2.5"><CompanyBadge companyId={p.companyId} size="xs" /></td>
                     <td className="px-4 py-2.5"><ProjectStatusBadge status={p.status} /></td>
                     <td className="px-4 py-2.5"><RiskBadge risk={p.risk} /></td>
-                    <td className="px-4 py-2.5"><div className="flex items-center gap-2"><UserAvatar userId={p.ownerId} size="xs" /><span className="text-xs">{getUser(p.ownerId)?.name}</span></div></td>
+                    <td className="px-4 py-2.5"><div className="flex items-center gap-2"><UserAvatar userId={p.ownerId} size="xs" /><span className="text-xs">{getUser(p.ownerId)?.name ?? "—"}</span></div></td>
                     <td className="px-4 py-2.5"><div className="flex items-center gap-2"><div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary" style={{ width: `${p.progress}%` }} /></div><span className="text-xs tabular-nums">{p.progress}%</span></div></td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{p.dueDate}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{p.dueDate || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -148,6 +179,208 @@ export default function Projects() {
           </div>
         )}
       </div>
+
+      <NewProjectDialog
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+        defaultCompanyId={user?.homeCompanyId ?? companies[0]?.id ?? ""}
+        onCreated={(id) => { refresh(); setNewOpen(false); navigate(`/projects/${id}`); }}
+      />
     </div>
+  );
+}
+
+// ---------- New project dialog ----------
+
+function NewProjectDialog({
+  open, onClose, defaultCompanyId, onCreated,
+}: { open: boolean; onClose: () => void; defaultCompanyId: string; onCreated: (id: string) => void }) {
+  const { user } = useAuth();
+  const { companies, users } = useDataStore();
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [companyId, setCompanyId] = useState(defaultCompanyId);
+  const [statusValue, setStatusValue] = useState("active");
+  const [risk, setRisk] = useState("medium");
+  const [progress, setProgress] = useState("0");
+  const [startDate, setStartDate] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [ownerId, setOwnerId] = useState(user?.id ?? "");
+  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
+  const [memberQuery, setMemberQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Reset state when the dialog opens, so subsequent uses start fresh.
+  useMemo(() => {
+    if (open) {
+      setTitle(""); setDescription("");
+      setCompanyId(defaultCompanyId);
+      setStatusValue("active"); setRisk("medium"); setProgress("0");
+      setStartDate(""); setDueDate("");
+      setOwnerId(user?.id ?? "");
+      setMemberIds(new Set()); setMemberQuery("");
+    }
+  }, [open, defaultCompanyId, user?.id]);
+
+  const candidates = useMemo(() => {
+    const haystack = memberQuery.toLowerCase();
+    return users
+      .filter((u) => u.homeCompanyId === companyId)
+      .filter((u) => !haystack || u.name.toLowerCase().includes(haystack) || u.email.toLowerCase().includes(haystack));
+  }, [users, companyId, memberQuery]);
+
+  const toggle = (id: string) => {
+    setMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const submit = async () => {
+    if (!title.trim()) return toast.error("Title is required");
+    if (!companyId) return toast.error("Pick a company");
+    setBusy(true);
+    try {
+      const created = await api.createProject({
+        title: title.trim(),
+        description: description.trim() || null,
+        company_id: companyId,
+        owner_id: ownerId || null,
+        status: statusValue,
+        risk_level: risk,
+        progress: Math.max(0, Math.min(100, Number(progress) || 0)),
+        start_date: startDate || null,
+        due_date: dueDate || null,
+        member_ids: Array.from(memberIds),
+      });
+      toast.success("Project created");
+      onCreated(created.id as string);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't create project");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>New project</DialogTitle>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <Label className="text-xs">Title</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9" placeholder="e.g. Q3 launch playbook" autoFocus />
+          </div>
+          <div className="col-span-2">
+            <Label className="text-xs">Description</Label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm"
+              placeholder="One-line goal of the project"
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Company</Label>
+            <Select value={companyId} onValueChange={setCompanyId}>
+              <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.shortName}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Owner</Label>
+            <Select value={ownerId} onValueChange={setOwnerId}>
+              <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {users
+                  .filter((u) => u.homeCompanyId === companyId)
+                  .map((u) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Status</Label>
+            <Select value={statusValue} onValueChange={setStatusValue}>
+              <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="planning">Planning</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="on_hold">On hold</SelectItem>
+                <SelectItem value="at_risk">At risk</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Risk</Label>
+            <Select value={risk} onValueChange={setRisk}>
+              <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Start date</Label>
+            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 h-9" />
+          </div>
+          <div>
+            <Label className="text-xs">Due date</Label>
+            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="mt-1 h-9" />
+          </div>
+          <div className="col-span-2">
+            <Label className="text-xs">Initial members</Label>
+            <Input
+              value={memberQuery}
+              onChange={(e) => setMemberQuery(e.target.value)}
+              placeholder="Search teammates"
+              className="mt-1 h-9"
+            />
+            <ul className="mt-1.5 max-h-40 divide-y divide-border overflow-y-auto rounded-md border border-border">
+              {candidates.length === 0 && (
+                <li className="px-3 py-3 text-center text-xs text-muted-foreground">No one matches.</li>
+              )}
+              {candidates.map((u) => {
+                const checked = memberIds.has(u.id);
+                return (
+                  <li
+                    key={u.id}
+                    onClick={() => toggle(u.id)}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm",
+                      checked ? "bg-primary-soft" : "hover:bg-surface-muted",
+                    )}
+                  >
+                    <Checkbox checked={checked} onCheckedChange={() => toggle(u.id)} />
+                    <UserAvatar userId={u.id} size="xs" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{u.name}</p>
+                      <p className="truncate text-[11px] text-muted-foreground">{u.designation}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !title.trim()}>
+            {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -202,6 +202,42 @@ export const api = {
   createTask: withOffline("createTask", raw.createTask),
   updateTask: withOffline("updateTask", raw.updateTask),
   addTaskActivity: withOffline("addTaskActivity", raw.addTaskActivity),
+
+  // ---------- Projects (online-only; managers don't typically create projects offline) ----------
+  createProject(payload: {
+    title: string;
+    description?: string | null;
+    company_id: string;
+    department_id?: string | null;
+    owner_id?: string | null;
+    approver_id?: string | null;
+    status?: string;
+    risk_level?: string;
+    visibility?: string;
+    is_strategic?: boolean;
+    progress?: number;
+    start_date?: string | null;
+    due_date?: string | null;
+    tags?: string[];
+    member_ids?: string[];
+  }): Promise<Record<string, unknown>> {
+    return request("/projects", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateProject(id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteProject(id: string): Promise<void> {
+    return request(`/projects/${id}`, { method: "DELETE" });
+  },
+  addProjectMember(projectId: string, userId: string, memberRole = "member"): Promise<void> {
+    return request(`/projects/${projectId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId, member_role: memberRole }),
+    });
+  },
+  removeProjectMember(projectId: string, userId: string): Promise<void> {
+    return request(`/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+  },
   checkIn: withOffline("checkIn", raw.checkIn),
   updateAttendance: withOffline("updateAttendance", raw.updateAttendance),
   applyLeave: withOffline("applyLeave", raw.applyLeave),

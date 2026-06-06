@@ -60,3 +60,21 @@ def can_view_task(task: dict, uid: str, roles: set[str], member_project_ids: set
 def can_create_task(created_by: str | None, uid: str, roles: set[str]) -> bool:
     # tasks_insert_auth: created_by = self OR an elevated role.
     return created_by == uid or has_any_role(roles, TASK_CREATE_ROLES)
+
+
+# ---------- Projects ----------
+
+def can_create_project(roles: set[str]) -> bool:
+    # Mirrors src/lib/auth.tsx `can.createProjects`: anyone except intern.
+    return "intern" not in roles or has_any_role(roles, GLOBAL_ROLES)
+
+
+def can_manage_project(project: dict, uid: str, roles: set[str]) -> bool:
+    """Allowed to edit project fields, add/remove members, or delete."""
+    if has_any_role(roles, GLOBAL_ROLES):
+        return True
+    return uid in {
+        project.get("owner_id"),
+        project.get("created_by"),
+        project.get("approver_id"),
+    }

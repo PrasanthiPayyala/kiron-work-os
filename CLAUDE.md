@@ -50,7 +50,7 @@ Server format: mail.yourdomain.com
 Username: full email address
 
 ## Remaining build order
-(empty — schedule the `sla-breach-check` edge function in Supabase to activate it; verify manually in the dashboard)
+(empty — Supabase → FastAPI migration complete; mail module + task attachments are still Supabase-bound and need either a rebuild or feature-flag-off before team rollout)
 
 ## Shipped (was on the build order)
 - Password reset flow (ResetPassword.tsx, UpdatePassword.tsx)
@@ -61,5 +61,5 @@ Username: full email address
 - Notifications center — /notifications page + topbar "View all" + realtime channel on `notifications`
 - Approvals — realtime channel on `approvals`, filters (scope/kind/search), decision dialog with note, scope guard on Approve buttons
 - My Work quick edit drawer — sheet with status/priority/due/assignee + comment, writes to `tasks` and `task_activity`
-- SLA breach cron — `supabase/functions/sla-breach-check/index.ts` (15-min cadence recommended); backfills `sla_due_at`, warns 4h before due, inserts overdue notifications
+- SLA breach scheduler — `backend/app/scheduler.py` (APScheduler AsyncIOScheduler inside FastAPI, 15-min cadence, `pg_try_advisory_lock` for multi-worker safety); backfills `sla_due_at`, warns 4h before due, inserts overdue notifications + broadcasts over WS
 - Attendance UX hardening — duplicate check-in/out guards, WFH/half-day select, live duration, weekend shading, approved-leave hint, avg-hours stat
