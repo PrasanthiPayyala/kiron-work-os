@@ -1,14 +1,14 @@
 # Kiron Work OS — cPanel/WHM deployment
 
 For a VPS running WHM/cPanel on AlmaLinux / CloudLinux / CentOS, hosting at a
-subdomain (these instructions use `crm.innomaxsol.com`). The companion
+subdomain (these instructions use `work.innomaxsol.com`). The companion
 `DEPLOY.md` is for a plain Ubuntu VM and assumes you control nginx; this one
 keeps **cPanel's Apache as the front** so AutoSSL keeps managing the cert and
 nothing fights with cPanel.
 
 ```
 Browser ──HTTPS──> cPanel Apache (your VPS public IP)
-                        │ ServerName crm.innomaxsol.com
+                        │ ServerName work.innomaxsol.com
                         ├── /  (static React PWA from the subdomain docroot)
                         ├── /api/  ──ProxyPass──> 127.0.0.1:8787  (FastAPI)
                         └── /ws    ──ProxyPass──> ws://127.0.0.1:8787/ws
@@ -16,7 +16,7 @@ Browser ──HTTPS──> cPanel Apache (your VPS public IP)
                                                         └─> Postgres :5432 (localhost)
 ```
 
-Replace `crm.innomaxsol.com`, `innomax` (cPanel account), and the email
+Replace `work.innomaxsol.com`, `innomax` (cPanel account), and the email
 addresses with your own values throughout.
 
 ---
@@ -27,12 +27,12 @@ In WHM/cPanel UI (do this first, before any SSH work):
 
 1. **Create the subdomain.**
    Log in to cPanel as the account that owns `innomaxsol.com` →
-   **Domains → Create A New Domain** → `crm.innomaxsol.com`. cPanel creates
-   the document root (typically `/home/innomax/crm.innomaxsol.com/`) and an
+   **Domains → Create A New Domain** → `work.innomaxsol.com`. cPanel creates
+   the document root (typically `/home/innomax/work.innomaxsol.com/`) and an
    Apache vhost.
 
 2. **Issue / verify SSL.**
-   cPanel → **SSL/TLS Status** → ensure `crm.innomaxsol.com` shows AutoSSL
+   cPanel → **SSL/TLS Status** → ensure `work.innomaxsol.com` shows AutoSSL
    active. If not, click **Run AutoSSL**. Wait for the cert to be issued
    before doing anything else (Apache reloads automatically).
 
@@ -133,8 +133,8 @@ JWT_SECRET=                # generate:  openssl rand -hex 32
 JWT_ACCESS_TTL_MIN=30
 JWT_REFRESH_TTL_DAYS=14
 
-CORS_ORIGINS=https://crm.innomaxsol.com
-APP_BASE_URL=https://crm.innomaxsol.com
+CORS_ORIGINS=https://work.innomaxsol.com
+APP_BASE_URL=https://work.innomaxsol.com
 
 FILES_DIR=/var/lib/kiron/files
 
@@ -207,10 +207,10 @@ sudo chcon -Rt httpd_sys_rw_content_t /var/lib/kiron/files
 ## 6. Build + publish the frontend to the subdomain docroot
 
 The docroot is the path you saw in cPanel when you created the subdomain.
-Typically `/home/innomax/crm.innomaxsol.com/`. Set it explicitly:
+Typically `/home/innomax/work.innomaxsol.com/`. Set it explicitly:
 
 ```bash
-SUBDOMAIN_DOCROOT=/home/innomax/crm.innomaxsol.com
+SUBDOMAIN_DOCROOT=/home/innomax/work.innomaxsol.com
 sudo test -d "$SUBDOMAIN_DOCROOT" || echo "docroot not found — check the path in cPanel"
 ```
 
@@ -233,7 +233,7 @@ sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ "$SUBDOMAIN_DOCROO
 sudo chown -R innomax:innomax "$SUBDOMAIN_DOCROOT"
 ```
 
-Quick check — load `https://crm.innomaxsol.com` in a browser. You should
+Quick check — load `https://work.innomaxsol.com` in a browser. You should
 see the React app load BUT the login form will fail (no `/api` proxy yet).
 That's the next step.
 
@@ -253,8 +253,8 @@ In WHM:
 
 ```apache
 <VirtualHost *:443>
-    ServerName crm.innomaxsol.com
-    DocumentRoot /home/innomax/crm.innomaxsol.com
+    ServerName work.innomaxsol.com
+    DocumentRoot /home/innomax/work.innomaxsol.com
 
     # Required modules: mod_proxy, mod_proxy_http, mod_proxy_wstunnel,
     # mod_rewrite, mod_headers. All are standard on WHM EasyApache.
@@ -273,7 +273,7 @@ In WHM:
 
     # SPA fallback — any unknown path serves index.html so React Router
     # owns the URL bar.
-    <Directory /home/innomax/crm.innomaxsol.com>
+    <Directory /home/innomax/work.innomaxsol.com>
         Options -Indexes +FollowSymLinks
         AllowOverride All
         Require all granted
@@ -302,7 +302,7 @@ In WHM:
 
 Verify proxy works:
 ```bash
-curl -s https://crm.innomaxsol.com/api/health     # → {"status":"ok"}
+curl -s https://work.innomaxsol.com/api/health     # → {"status":"ok"}
 ```
 
 If you get `503 Service Unavailable` from Apache: SELinux is blocking the
@@ -312,7 +312,7 @@ proxy. Run `sudo setsebool -P httpd_can_network_connect 1` and retry.
 
 ## 8. Smoke test before sharing with the team
 
-1. Visit `https://crm.innomaxsol.com` → login screen renders.
+1. Visit `https://work.innomaxsol.com` → login screen renders.
 2. Sign in as `kiran@kirongroup.in` / `Kiron@2025` → dashboard loads.
 3. **Settings → Working hours** → confirm or edit Kiron Group's schedule.
 4. **Settings → Holidays → Bulk import** → paste the 2026 list (the format
@@ -341,8 +341,8 @@ sudo systemctl restart kiron-api
 
 # Frontend changed:
 sudo -u kiron npm ci && sudo -u kiron npm run build
-sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ /home/innomax/crm.innomaxsol.com/
-sudo chown -R innomax:innomax /home/innomax/crm.innomaxsol.com
+sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ /home/innomax/work.innomaxsol.com/
+sudo chown -R innomax:innomax /home/innomax/work.innomaxsol.com
 ```
 
 The PWA update banner appears in users' browsers automatically once the
