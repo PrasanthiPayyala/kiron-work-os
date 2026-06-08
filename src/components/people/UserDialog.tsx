@@ -187,7 +187,10 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      {/* max-h-[90vh] + flex-col so the body scrolls inside the dialog
+          (header + footer stay pinned). Without this, the long custom-schedule
+          block pushes Save/Cancel below the viewport. */}
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{mode === "create" ? "Add user" : "Edit user"}</DialogTitle>
           <DialogDescription>
@@ -197,7 +200,11 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-3 py-2">
+        {/* flex-1 + min-h-0 + overflow-y-auto is the standard recipe for a
+            scrollable middle row inside a fixed-height flex column. min-h-0
+            is the non-obvious bit — without it the body refuses to shrink
+            and overflow-y-auto is a no-op. */}
+        <div className="grid gap-3 py-2 overflow-y-auto flex-1 min-h-0">
           <div className="grid gap-1.5">
             <Label htmlFor="ud-name">Full name</Label>
             <Input id="ud-name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
