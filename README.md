@@ -111,11 +111,17 @@ holidays) live in `src/lib/auth.tsx`'s `can` object on the frontend and
 
 ## Production deployment
 
-See [`deploy/DEPLOY.md`](deploy/DEPLOY.md) for a six-step runbook covering
-nginx + systemd + Let's Encrypt on a single VM. The `deploy/` directory
-ships ready-to-use config: `kiron-api.service`, `nginx-kiron.conf`,
-`backend.env.example`, `setup-db.sh`, `setup-backend.sh`,
-`deploy-frontend.sh`.
+Two runbooks depending on the host:
+
+- [`deploy/DEPLOY.md`](deploy/DEPLOY.md) — plain Ubuntu VM with nginx +
+  systemd + Let's Encrypt. The simplest path if you control the box.
+- [`deploy/CPANEL.md`](deploy/CPANEL.md) — VPS running cPanel/WHM on
+  AlmaLinux / CloudLinux / CentOS, hosted at a subdomain. Uses cPanel's
+  Apache as the front (AutoSSL handles the cert) and proxies to FastAPI.
+
+The `deploy/` directory ships ready-to-use config: `kiron-api.service`,
+`nginx-kiron.conf`, `backend.env.example`, `setup-db.sh`,
+`setup-backend.sh`, `deploy-frontend.sh`.
 
 After any pull on the VM:
 
