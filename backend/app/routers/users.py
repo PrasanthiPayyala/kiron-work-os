@@ -158,6 +158,10 @@ class UserUpdate(BaseModel):
     work_days: Optional[list[int]] = None
     work_start: Optional[str] = None
     work_end: Optional[str] = None
+    # Per-employee Saturday-of-month override. NULL = inherit company. Same
+    # encoding as companies.saturday_weeks_working ([1,3,5] = 1st/3rd/5th
+    # Saturday work; 2nd & 4th off).
+    saturday_weeks_working: Optional[list[int]] = None
 
 
 @router.patch("/{user_id}")
@@ -182,8 +186,16 @@ def update_user(
     if body.work_start and body.work_end and body.work_start >= body.work_end:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             "work_start must be earlier than work_end")
+    if body.saturday_weeks_working is not None:
+        if any(w < 1 or w > 5 for w in body.saturday_weeks_working):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "saturday_weeks_working values must be 1..5")
 
     fields = body.model_dump(exclude_unset=True)
+    # Same convention as companies.py: empty array means "clear" — NULL the
+    # column so the profile inherits the company default again.
+    if fields.get("saturday_weeks_working") == []:
+        fields["saturday_weeks_working"] = None
     if not fields:
         return _profile_or_404(db, user_id)
 

@@ -21,11 +21,14 @@ export interface Holiday {
 
 /** Working-hours schedule shared by Company default and per-user override.
  * workDays is ISO day numbers: 1=Mon, 2=Tue, …, 7=Sun. workStart and workEnd
- * are "HH:MM" strings. */
+ * are "HH:MM" strings. saturdayWeeksWorking restricts which Saturday-of-month
+ * positions (1..5) are working when Sat (6) is in workDays — null means every
+ * Saturday works (back-compat); [1,3,5] means 2nd & 4th Sat are off. */
 export interface Schedule {
   workDays: number[];
   workStart: string;
   workEnd: string;
+  saturdayWeeksWorking: number[] | null;
 }
 
 export interface Company {
@@ -76,12 +79,14 @@ export interface User {
   employmentType: EmploymentType;
   isActive: boolean;
   mustChangePassword: boolean;
-  /** Per-employee schedule override. Any of the three fields can be null to
-   * inherit just that piece (e.g. same hours, custom days). */
+  /** Per-employee schedule override. Any field can be null to inherit just
+   * that piece (e.g. same hours, custom days). saturdayWeeksWorking is the
+   * Saturday-of-month restriction; null inherits the company value. */
   scheduleOverride?: {
     workDays: number[] | null;
     workStart: string | null;
     workEnd: string | null;
+    saturdayWeeksWorking: number[] | null;
   };
   productivityScore?: number; // 0-100
   joinedAt: ISODate;

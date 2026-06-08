@@ -3,7 +3,7 @@ import { StatCard } from "@/components/StatCard";
 import { AttendanceBadge } from "@/components/StatusBadges";
 import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
-import { getEffectiveSchedule } from "@/lib/mappers";
+import { getEffectiveSchedule, isNonWorkingDate } from "@/lib/mappers";
 import { api, ApiError } from "@/lib/api";
 import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,9 @@ export default function Attendance() {
 
   // Effective schedule for the signed-in user — falls back to their
   // company's default when no per-employee override is set.
-  const schedule = user ? getEffectiveSchedule(user, getCompany(user.homeCompanyId)) : { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30" };
+  const schedule = user
+    ? getEffectiveSchedule(user, getCompany(user.homeCompanyId))
+    : { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30", saturdayWeeksWorking: null };
 
   // Holidays that apply to this user — their company-specific rows + the
   // global (company_id NULL) ones. Indexed by date so the grid lookup is O(1).
@@ -136,7 +138,7 @@ export default function Attendance() {
     let status: string;
     if (log) status = log.status;
     else if (holiday && holiday.type === "gazetted") status = "holiday";
-    else if (isNonWorkingDay(d, schedule.workDays)) status = "weekly_off";
+    else if (isNonWorkingDate(d, schedule)) status = "weekly_off";
     else status = "absent";
     return { date: ds, status, holiday };
   });
@@ -308,10 +310,3 @@ export default function Attendance() {
   );
 }
 
-// Map JS getDay() (0=Sun..6=Sat) to our ISO numbering (1=Mon..7=Sun) and
-// check against the user's effective working-day set.
-function isNonWorkingDay(d: Date, workDays: number[]): boolean {
-  const js = d.getDay();
-  const iso = js === 0 ? 7 : js;
-  return !workDays.includes(iso);
-}

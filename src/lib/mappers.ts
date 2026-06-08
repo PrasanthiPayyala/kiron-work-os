@@ -5,7 +5,7 @@ import type {
   Company, Department, User, Project, Task, Approval,
   AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role,
   TaskStatus, AttendanceStatus, LeaveStatus, ApprovalState, ApprovalKind,
-  Visibility, Priority, EmploymentType, Holiday, HolidayType,
+  Visibility, Priority, EmploymentType, Holiday, HolidayType, Schedule,
 } from "@/types";
 
 type DbProfile = any;
@@ -85,6 +85,9 @@ export function mapCompany(r: DbCompany): Company {
       workDays: Array.isArray(r.work_days) && r.work_days.length ? r.work_days : [1,2,3,4,5,6],
       workStart: hhmm(r.work_start) || "09:30",
       workEnd: hhmm(r.work_end) || "18:30",
+      saturdayWeeksWorking: Array.isArray(r.saturday_weeks_working) && r.saturday_weeks_working.length
+        ? r.saturday_weeks_working
+        : null,
     },
   };
 }
@@ -127,6 +130,7 @@ export function mapProfile(r: DbProfile, role: Role = "employee"): User {
       workDays: Array.isArray(r.work_days) ? r.work_days : null,
       workStart: r.work_start ? hhmm(r.work_start) : null,
       workEnd: r.work_end ? hhmm(r.work_end) : null,
+      saturdayWeeksWorking: Array.isArray(r.saturday_weeks_working) ? r.saturday_weeks_working : null,
     },
     productivityScore: r.productivity_score ?? undefined,
     joinedAt: r.doj ?? r.created_at?.slice(0, 10) ?? "2024-01-01",
@@ -135,14 +139,46 @@ export function mapProfile(r: DbProfile, role: Role = "employee"): User {
 
 /** Merge a user's override on top of their company's default. Per-field
  * inheritance: a null override falls back to the company value. */
-export function getEffectiveSchedule(user: User, company?: Company): { workDays: number[]; workStart: string; workEnd: string } {
-  const base = company?.schedule ?? { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30" };
+export function getEffectiveSchedule(user: User, company?: Company): Schedule {
+  const base: Schedule = company?.schedule ?? {
+    workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30",
+    saturdayWeeksWorking: null,
+  };
   const o = user.scheduleOverride;
   return {
     workDays: o?.workDays && o.workDays.length ? o.workDays : base.workDays,
     workStart: o?.workStart || base.workStart,
     workEnd: o?.workEnd || base.workEnd,
+    // saturdayWeeksWorking: null means "inherit" at profile level, but at the
+    // effective level we want a single source of truth — fall through to the
+    // company value, which itself may be null ("all Saturdays work").
+    saturdayWeeksWorking: o?.saturdayWeeksWorking && o.saturdayWeeksWorking.length
+      ? o.saturdayWeeksWorking
+      : base.saturdayWeeksWorking,
   };
+}
+
+/** Which Saturday-of-month is `d`? Returns 1..5 based on date-of-month, so
+ * the 1st Saturday (date 1–7) is week 1, the 2nd (date 8–14) is week 2, etc.
+ * Matches the standard Indian-corporate reading of "2nd Saturday off". */
+export function saturdayWeekOfMonth(d: Date): number {
+  return Math.floor((d.getDate() - 1) / 7) + 1;
+}
+
+/** Decide whether a given calendar date is a non-working day under the given
+ * schedule. Handles:
+ *   1. Day-of-week not in workDays
+ *   2. Day-of-week is Saturday AND saturdayWeeksWorking restricts the
+ *      Saturday-of-month positions that are working
+ * Used by Attendance grid shading and downstream by Leave-day counting. */
+export function isNonWorkingDate(d: Date, schedule: Schedule): boolean {
+  const js = d.getDay();           // 0=Sun..6=Sat
+  const iso = js === 0 ? 7 : js;   // 1=Mon..7=Sun
+  if (!schedule.workDays.includes(iso)) return true;
+  if (iso === 6 && schedule.saturdayWeeksWorking) {
+    return !schedule.saturdayWeeksWorking.includes(saturdayWeekOfMonth(d));
+  }
+  return false;
 }
 
 export function mapProject(r: DbProject, memberIds: string[] = []): Project {

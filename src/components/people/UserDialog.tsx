@@ -62,6 +62,10 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
   const [workDays, setWorkDays] = useState<number[]>([1,2,3,4,5,6]);
   const [workStart, setWorkStart] = useState("09:30");
   const [workEnd, setWorkEnd] = useState("18:30");
+  // null = "every Saturday is a working day". The UI keeps the full 1..5 set
+  // visible so the user can simply uncheck the off-Saturdays; on save we
+  // collapse "all five" back to null.
+  const [satWeeks, setSatWeeks] = useState<number[]>([1,2,3,4,5]);
 
   // Default the override editor to the company's current schedule so toggling
   // "custom" doesn't drop the user straight onto unrelated values.
@@ -82,12 +86,13 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setReviewerId(user.reviewerId ?? "none");
       setDoj(user.joinedAt ?? "");
       const o = user.scheduleOverride;
-      const hasAny = !!(o && (o.workDays || o.workStart || o.workEnd));
+      const hasAny = !!(o && (o.workDays || o.workStart || o.workEnd || o.saturdayWeeksWorking));
       setCustomSchedule(hasAny);
       const co = companies.find((c) => c.id === user.homeCompanyId);
       setWorkDays(o?.workDays ?? co?.schedule.workDays ?? [1,2,3,4,5,6]);
       setWorkStart(o?.workStart ?? co?.schedule.workStart ?? "09:30");
       setWorkEnd(o?.workEnd ?? co?.schedule.workEnd ?? "18:30");
+      setSatWeeks(o?.saturdayWeeksWorking ?? co?.schedule.saturdayWeeksWorking ?? [1,2,3,4,5]);
     } else {
       setFullName("");
       setEmail("");
@@ -104,11 +109,15 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setWorkDays(firstCo?.schedule.workDays ?? [1,2,3,4,5,6]);
       setWorkStart(firstCo?.schedule.workStart ?? "09:30");
       setWorkEnd(firstCo?.schedule.workEnd ?? "18:30");
+      setSatWeeks(firstCo?.schedule.saturdayWeeksWorking ?? [1,2,3,4,5]);
     }
   }, [open, mode, user, companies]);
 
   const toggleDay = (iso: number) => {
     setWorkDays((cur) => cur.includes(iso) ? cur.filter((d) => d !== iso) : [...cur, iso].sort((a,b) => a-b));
+  };
+  const toggleSatWeek = (w: number) => {
+    setSatWeeks((cur) => cur.includes(w) ? cur.filter((x) => x !== w) : [...cur, w].sort((a,b) => a-b));
   };
 
   const submit = async () => {
@@ -153,6 +162,13 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
           work_days: customSchedule ? workDays : null,
           work_start: customSchedule ? workStart : null,
           work_end: customSchedule ? workEnd : null,
+          // Saturday-of-month override only meaningful when Sat is in
+          // workDays. "Every Saturday" (all 5 ticked) collapses to null.
+          saturday_weeks_working: !customSchedule
+            ? null
+            : workDays.includes(6) && satWeeks.length < 5
+              ? satWeeks
+              : null,
         });
         if (role !== user.role) {
           await api.setUserRoles(user.id, [role]);
@@ -317,6 +333,36 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
                     <Input type="time" value={workEnd} onChange={(e) => setWorkEnd(e.target.value)} />
                   </div>
                 </div>
+                {workDays.includes(6) && (
+                  <div>
+                    <Label className="text-xs">Working Saturdays</Label>
+                    <div className="mt-1.5 flex gap-1">
+                      {[
+                        { week: 1, label: "1st" },
+                        { week: 2, label: "2nd" },
+                        { week: 3, label: "3rd" },
+                        { week: 4, label: "4th" },
+                        { week: 5, label: "5th" },
+                      ].map(({ week, label }) => {
+                        const on = satWeeks.includes(week);
+                        return (
+                          <button
+                            key={week}
+                            type="button"
+                            onClick={() => toggleSatWeek(week)}
+                            className={`flex h-8 min-w-[2.25rem] items-center justify-center rounded-md border px-1.5 text-xs font-medium transition ${on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground hover:text-foreground"}`}
+                            title={`${label} Saturday of the month`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Uncheck the Saturdays this person has off (e.g. 2nd & 4th).
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>

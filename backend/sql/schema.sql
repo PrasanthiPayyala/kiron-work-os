@@ -62,6 +62,11 @@ create table public.companies (
   work_days int[] not null default '{1,2,3,4,5,6}',
   work_start time not null default '09:30',
   work_end time not null default '18:30',
+  -- Which Saturday-of-month positions are working (1..5). NULL = every
+  -- Saturday in work_days is a working day. '{1,3,5}' = 1st, 3rd, 5th
+  -- Saturday work; 2nd & 4th are off. No effect when 6 (Sat) isn't in
+  -- work_days. See migration 0008_saturday_pattern.
+  saturday_weeks_working int[],
   created_at timestamptz not null default now()
 );
 
@@ -99,6 +104,9 @@ create table public.profiles (
   work_days int[],
   work_start time,
   work_end time,
+  -- Per-employee Saturday-of-month override. NULL = inherit company. See
+  -- companies.saturday_weeks_working for the encoding.
+  saturday_weeks_working int[],
   created_at timestamptz not null default now()
 );
 

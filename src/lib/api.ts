@@ -282,6 +282,10 @@ export const api = {
     work_days?: number[] | null;
     work_start?: string | null;
     work_end?: string | null;
+    /** Saturday-of-month positions (1..5) that are working. null/[] = all
+     * Saturdays in work_days are working. [1,3,5] = 1st/3rd/5th work; 2nd
+     * and 4th are off. */
+    saturday_weeks_working?: number[] | null;
   }): Promise<Record<string, unknown>> {
     return request(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   },

@@ -25,11 +25,25 @@ const DAY_LABELS: { iso: number; short: string; full: string }[] = [
   { iso: 7, short: "S", full: "Sun" },
 ];
 
+const SAT_WEEK_LABELS = [
+  { week: 1, label: "1st" },
+  { week: 2, label: "2nd" },
+  { week: 3, label: "3rd" },
+  { week: 4, label: "4th" },
+  { week: 5, label: "5th" },
+];
+
 function CompanyScheduleCard({ company, canEdit, onSaved }: { company: Company; canEdit: boolean; onSaved: () => Promise<void> | void }) {
   const { toast } = useToast();
   const [days, setDays] = useState<number[]>(company.schedule.workDays);
   const [start, setStart] = useState(company.schedule.workStart);
   const [end, setEnd] = useState(company.schedule.workEnd);
+  // null in DB = every Saturday works. In UI we hold it as the full set of
+  // five positions when "all" is chosen, and a subset when alternates are
+  // off; on save we collapse "all five checked" back to null.
+  const [satWeeks, setSatWeeks] = useState<number[]>(
+    company.schedule.saturdayWeeksWorking ?? [1,2,3,4,5],
+  );
   const [saving, setSaving] = useState(false);
 
   // Re-hydrate if the store refreshes underneath us (e.g. another tab saved).
@@ -37,11 +51,17 @@ function CompanyScheduleCard({ company, canEdit, onSaved }: { company: Company; 
     setDays(company.schedule.workDays);
     setStart(company.schedule.workStart);
     setEnd(company.schedule.workEnd);
-  }, [company.id, company.schedule.workDays, company.schedule.workStart, company.schedule.workEnd]);
+    setSatWeeks(company.schedule.saturdayWeeksWorking ?? [1,2,3,4,5]);
+  }, [company.id, company.schedule.workDays, company.schedule.workStart, company.schedule.workEnd, company.schedule.saturdayWeeksWorking]);
 
   const toggle = (iso: number) => {
     setDays((cur) => cur.includes(iso) ? cur.filter((d) => d !== iso) : [...cur, iso].sort((a,b) => a-b));
   };
+  const toggleSatWeek = (w: number) => {
+    setSatWeeks((cur) => cur.includes(w) ? cur.filter((x) => x !== w) : [...cur, w].sort((a,b) => a-b));
+  };
+
+  const saturdayIncluded = days.includes(6);
 
   const save = async () => {
     if (!days.length) {
@@ -52,9 +72,20 @@ function CompanyScheduleCard({ company, canEdit, onSaved }: { company: Company; 
       toast({ title: "Start must be earlier than end", variant: "destructive" });
       return;
     }
+    if (saturdayIncluded && !satWeeks.length) {
+      toast({ title: "Pick at least one working Saturday", description: "Or remove Saturday from working days.", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
-      await api.updateCompany(company.id, { work_days: days, work_start: start, work_end: end });
+      // All five Saturdays checked = "every Saturday works", which we encode
+      // as null so existing-rows semantics (NULL = all) are preserved. Sat
+      // not in work_days at all = nothing to encode, send null.
+      const satOut = !saturdayIncluded || satWeeks.length === 5 ? null : satWeeks;
+      await api.updateCompany(company.id, {
+        work_days: days, work_start: start, work_end: end,
+        saturday_weeks_working: satOut,
+      });
       toast({ title: "Saved", description: `${company.shortName} schedule updated.` });
       await onSaved();
     } catch (e) {
@@ -105,6 +136,31 @@ function CompanyScheduleCard({ company, canEdit, onSaved }: { company: Company; 
             <Input type="time" value={end} disabled={!canEdit} onChange={(e) => setEnd(e.target.value)} />
           </div>
         </div>
+        {saturdayIncluded && (
+          <div>
+            <Label className="text-xs">Working Saturdays</Label>
+            <div className="mt-1.5 flex gap-1">
+              {SAT_WEEK_LABELS.map(({ week, label }) => {
+                const on = satWeeks.includes(week);
+                return (
+                  <button
+                    key={week}
+                    type="button"
+                    disabled={!canEdit}
+                    onClick={() => toggleSatWeek(week)}
+                    className={`flex h-8 min-w-[2.25rem] items-center justify-center rounded-md border px-1.5 text-xs font-medium transition ${on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground"} ${canEdit ? "hover:text-foreground" : "cursor-not-allowed opacity-60"}`}
+                    title={`${label} Saturday of the month`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Uncheck Saturdays that are off (e.g. uncheck 2nd & 4th).
+            </p>
+          </div>
+        )}
         {canEdit && (
           <div className="flex justify-end">
             <Button size="sm" onClick={save} disabled={saving}>
