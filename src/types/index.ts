@@ -5,6 +5,15 @@ export type ID = string;
 export type ISODate = string;
 
 // ---------- Companies / Departments ----------
+/** Working-hours schedule shared by Company default and per-user override.
+ * workDays is ISO day numbers: 1=Mon, 2=Tue, …, 7=Sun. workStart and workEnd
+ * are "HH:MM" strings. */
+export interface Schedule {
+  workDays: number[];
+  workStart: string;
+  workEnd: string;
+}
+
 export interface Company {
   id: ID;
   name: string;
@@ -12,6 +21,9 @@ export interface Company {
   initials: string;
   color: string; // hsl token reference, e.g. "var(--primary)"
   domain?: string;
+  /** Default schedule for everyone in the company. Profile overrides win
+   * (see User.scheduleOverride). */
+  schedule: Schedule;
 }
 
 export interface Department {
@@ -49,6 +61,14 @@ export interface User {
   status: "active" | "on_leave" | "inactive";
   employmentType: EmploymentType;
   isActive: boolean;
+  mustChangePassword: boolean;
+  /** Per-employee schedule override. Any of the three fields can be null to
+   * inherit just that piece (e.g. same hours, custom days). */
+  scheduleOverride?: {
+    workDays: number[] | null;
+    workStart: string | null;
+    workEnd: string | null;
+  };
   productivityScore?: number; // 0-100
   joinedAt: ISODate;
 }

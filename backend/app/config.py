@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     smtp_ssl: bool = False
     smtp_username: str = ""
     smtp_password: str = ""
-    smtp_from: str = "Kiron Work OS <no-reply@kirongroup.in>"
+    # Default uses the innomaxsol.com noreply mailbox. Override via SMTP_FROM
+    # in the production env if you want a different sender. cPanel typically
+    # expects the username to match the From address.
+    smtp_from: str = "Kiron Work OS <noreply@innomaxsol.com>"
 
     password_reset_ttl_min: int = 60
 

@@ -13,6 +13,7 @@ import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
 import ResetPassword from "./pages/ResetPassword";
 import UpdatePassword from "./pages/UpdatePassword";
+import ChangePassword from "./pages/ChangePassword";
 import Dashboard from "./pages/Dashboard";
 import MyWork from "./pages/MyWork";
 import Projects from "./pages/Projects";
@@ -46,6 +47,18 @@ const App = () => (
               <Route path="/login" element={<Login />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/update-password" element={<UpdatePassword />} />
+
+              {/* Authenticated forced password change — outside AppShell because
+                  we don't want the sidebar / topbar visible during the first-
+                  login screen. ProtectedRoute still enforces authentication. */}
+              <Route
+                path="/change-password"
+                element={
+                  <ProtectedRoute>
+                    <ChangePassword />
+                  </ProtectedRoute>
+                }
+              />
 
               <Route
                 element={

@@ -20,6 +20,17 @@ const ROLES: Role[] = [
   "manager","hr_admin","employee","intern",
 ];
 const EMPLOYMENT_TYPES: EmploymentType[] = ["full_time","part_time","contract","intern","temporary"];
+// ISO day numbers (1=Mon..7=Sun) with the single-letter labels we render on
+// the day-picker pills. Single-letter rather than "Mon" keeps the dialog narrow.
+const DAY_LABELS: { iso: number; short: string; full: string }[] = [
+  { iso: 1, short: "M", full: "Mon" },
+  { iso: 2, short: "T", full: "Tue" },
+  { iso: 3, short: "W", full: "Wed" },
+  { iso: 4, short: "T", full: "Thu" },
+  { iso: 5, short: "F", full: "Fri" },
+  { iso: 6, short: "S", full: "Sat" },
+  { iso: 7, short: "S", full: "Sun" },
+];
 
 type Props = {
   open: boolean;
@@ -45,6 +56,17 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
   const [doj, setDoj] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Working-schedule override (off by default — most employees follow the
+  // company default; HR opts a person in to a different schedule).
+  const [customSchedule, setCustomSchedule] = useState(false);
+  const [workDays, setWorkDays] = useState<number[]>([1,2,3,4,5,6]);
+  const [workStart, setWorkStart] = useState("09:30");
+  const [workEnd, setWorkEnd] = useState("18:30");
+
+  // Default the override editor to the company's current schedule so toggling
+  // "custom" doesn't drop the user straight onto unrelated values.
+  const selectedCompany = companies.find((c) => c.id === companyId);
+
   // Reset / hydrate every time the dialog opens.
   useEffect(() => {
     if (!open) return;
@@ -59,6 +81,13 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setManagerId(user.reportingManagerId ?? "none");
       setReviewerId(user.reviewerId ?? "none");
       setDoj(user.joinedAt ?? "");
+      const o = user.scheduleOverride;
+      const hasAny = !!(o && (o.workDays || o.workStart || o.workEnd));
+      setCustomSchedule(hasAny);
+      const co = companies.find((c) => c.id === user.homeCompanyId);
+      setWorkDays(o?.workDays ?? co?.schedule.workDays ?? [1,2,3,4,5,6]);
+      setWorkStart(o?.workStart ?? co?.schedule.workStart ?? "09:30");
+      setWorkEnd(o?.workEnd ?? co?.schedule.workEnd ?? "18:30");
     } else {
       setFullName("");
       setEmail("");
@@ -66,12 +95,21 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setDesignation("");
       setEmploymentType("full_time");
       setRole("employee");
-      setCompanyId(companies[0]?.id ?? "");
+      const firstCo = companies[0];
+      setCompanyId(firstCo?.id ?? "");
       setManagerId("none");
       setReviewerId("none");
       setDoj("");
+      setCustomSchedule(false);
+      setWorkDays(firstCo?.schedule.workDays ?? [1,2,3,4,5,6]);
+      setWorkStart(firstCo?.schedule.workStart ?? "09:30");
+      setWorkEnd(firstCo?.schedule.workEnd ?? "18:30");
     }
   }, [open, mode, user, companies]);
+
+  const toggleDay = (iso: number) => {
+    setWorkDays((cur) => cur.includes(iso) ? cur.filter((d) => d !== iso) : [...cur, iso].sort((a,b) => a-b));
+  };
 
   const submit = async () => {
     if (!fullName.trim() || !companyId) {
@@ -110,6 +148,11 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
           reporting_manager_id: managerId === "none" ? null : managerId,
           reviewer_id: reviewerId === "none" ? null : reviewerId,
           doj: doj || null,
+          // Custom schedule on -> persist explicit values. Off -> NULL them
+          // so the profile reverts to the company default.
+          work_days: customSchedule ? workDays : null,
+          work_start: customSchedule ? workStart : null,
+          work_end: customSchedule ? workEnd : null,
         });
         if (role !== user.role) {
           await api.setUserRoles(user.id, [role]);
@@ -221,6 +264,61 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
           <div className="grid gap-1.5">
             <Label htmlFor="ud-doj">Date of joining</Label>
             <Input id="ud-doj" type="date" value={doj} onChange={(e) => setDoj(e.target.value)} />
+          </div>
+
+          <div className="rounded-md border border-border bg-surface-muted/40 p-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5"
+                checked={customSchedule}
+                onChange={(e) => setCustomSchedule(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">Custom working schedule</span>
+                <span className="block text-xs text-muted-foreground">
+                  {customSchedule
+                    ? "Pick the working days + hours that apply to this person."
+                    : selectedCompany
+                      ? `Inherits ${selectedCompany.shortName}'s default (${selectedCompany.schedule.workStart}–${selectedCompany.schedule.workEnd}, ${selectedCompany.schedule.workDays.length} days/week).`
+                      : "Inherits the company default."}
+                </span>
+              </span>
+            </label>
+
+            {customSchedule && (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <Label className="text-xs">Working days</Label>
+                  <div className="mt-1.5 flex gap-1">
+                    {DAY_LABELS.map((d) => {
+                      const on = workDays.includes(d.iso);
+                      return (
+                        <button
+                          key={d.iso}
+                          type="button"
+                          onClick={() => toggleDay(d.iso)}
+                          className={`flex h-8 w-8 items-center justify-center rounded-md border text-xs font-medium transition ${on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground hover:text-foreground"}`}
+                          title={d.full}
+                        >
+                          {d.short}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs">Start</Label>
+                    <Input type="time" value={workStart} onChange={(e) => setWorkStart(e.target.value)} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs">End</Label>
+                    <Input type="time" value={workEnd} onChange={(e) => setWorkEnd(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

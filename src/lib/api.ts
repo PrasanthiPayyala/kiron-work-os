@@ -182,6 +182,15 @@ export const api = {
     });
   },
 
+  /** Authenticated password change. Used for the regular "change my password"
+   * action and the forced first-login flow (when profile.mustChangePassword is true). */
+  changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    return request("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+  },
+
   /** Consume a reset token + set a new password. On success returns a fresh
    * session so the user lands signed in. */
   async resetPassword(token: string, newPassword: string): Promise<LoginResponse> {
@@ -266,6 +275,15 @@ export const api = {
   },
   reactivateUser(id: string): Promise<Record<string, unknown>> {
     return request(`/users/${id}/reactivate`, { method: "POST" });
+  },
+
+  // ---------- Companies (config only — schedule / branding lives here) ----------
+  updateCompany(id: string, patch: {
+    work_days?: number[] | null;
+    work_start?: string | null;
+    work_end?: string | null;
+  }): Promise<Record<string, unknown>> {
+    return request(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   },
   checkIn: withOffline("checkIn", raw.checkIn),
   updateAttendance: withOffline("updateAttendance", raw.updateAttendance),

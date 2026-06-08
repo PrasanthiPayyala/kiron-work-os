@@ -12,6 +12,10 @@ type AuthContextValue = {
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
+  /** Re-pull /auth/me into the in-memory User. Use after an action that
+   * mutates profile fields the rest of the app reads (e.g. clearing
+   * mustChangePassword after the forced first-login change). */
+  refreshSession: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -71,8 +75,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     stopWs();
   };
 
+  const refreshSession = async () => {
+    if (api.hasSession()) await hydrate();
+  };
+
   return (
-    <AuthContext.Provider value={{ user, role, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, role, loading, signIn, signUp, signOut, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );
@@ -90,15 +98,20 @@ export type NavKey =
   | "leave" | "chat" | "approvals" | "reports" | "people"
   | "founder_office" | "settings" | "mail";
 
+// "mail" is intentionally absent from every role for v1 — the IMAP module is
+// still Supabase-bound and would throw if anyone clicked it. The Mail.tsx
+// route and edge functions stay in the repo so we can flip it back on once
+// the FastAPI rebuild lands; just re-add "mail" to whichever roles should
+// see it then.
 export const roleNavAccess: Record<Role, NavKey[]> = {
-  super_admin:                ["dashboard","my_work","projects","tasks","mail","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
-  founder:                    ["dashboard","my_work","projects","tasks","mail","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
-  founder_office_coordinator: ["dashboard","my_work","projects","tasks","mail","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
-  founder_office_support:     ["dashboard","my_work","projects","tasks","mail","attendance","leave","chat","approvals","people","founder_office"],
-  manager:                    ["dashboard","my_work","projects","tasks","mail","attendance","leave","chat","approvals","reports","people"],
-  employee:                   ["dashboard","my_work","projects","tasks","mail","attendance","leave","chat","approvals","people"],
+  super_admin:                ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
+  founder:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
+  founder_office_coordinator: ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
+  founder_office_support:     ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people","founder_office"],
+  manager:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people"],
+  employee:                   ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people"],
   intern:                     ["dashboard","my_work","projects","tasks","attendance","leave","chat","people"],
-  hr_admin:                   ["dashboard","mail","attendance","leave","approvals","reports","people","settings","chat"],
+  hr_admin:                   ["dashboard","attendance","leave","approvals","reports","people","settings","chat"],
 };
 
 export const can = {

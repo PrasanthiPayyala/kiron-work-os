@@ -110,15 +110,17 @@ def create_user(
     # Intern role default to status='intern' — matches the existing seed
     # convention. Everyone else lands on 'active'.
     profile_status = "intern" if body.role == "intern" else "active"
+    # must_change_password=true so the joiner picks a real password on first
+    # sign-in — the HR-typed temporary one shouldn't stick.
     db.execute(
         text(
             "INSERT INTO profiles ("
             " id, full_name, email, designation, home_company_id, department_id,"
             " reporting_manager_id, reviewer_id, initials, status, doj,"
-            " employment_type, is_active"
+            " employment_type, is_active, must_change_password"
             ") VALUES ("
             " :id, :name, :em, :des, :co, :dep, :mgr, :rev, :ini, :st, :doj,"
-            " :emp, true"
+            " :emp, true, true"
             ")"
         ),
         {
@@ -151,6 +153,11 @@ class UserUpdate(BaseModel):
     status: Optional[str] = None
     doj: Optional[str] = None
     skills: Optional[list[str]] = None
+    # Per-employee working-hours override. NULL clears the override and falls
+    # back to the company default. ISO day numbers (1=Mon..7=Sun).
+    work_days: Optional[list[int]] = None
+    work_start: Optional[str] = None
+    work_end: Optional[str] = None
 
 
 @router.patch("/{user_id}")
@@ -168,6 +175,13 @@ def update_user(
     if body.status is not None and body.status not in ALLOWED_STATUSES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"status must be one of {sorted(ALLOWED_STATUSES)}")
+    if body.work_days is not None and body.work_days:
+        if any(d < 1 or d > 7 for d in body.work_days):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "work_days uses ISO day numbers (1=Mon..7=Sun)")
+    if body.work_start and body.work_end and body.work_start >= body.work_end:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "work_start must be earlier than work_end")
 
     fields = body.model_dump(exclude_unset=True)
     if not fields:

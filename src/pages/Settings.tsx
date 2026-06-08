@@ -5,17 +5,27 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { MailAccountsSection } from "@/pages/settings/MailAccounts";
+import { WorkingHoursSection } from "@/pages/settings/WorkingHours";
+
+// Mail Accounts tab is hidden for v1 alongside the sidebar item — see
+// roleNavAccess in src/lib/auth.tsx. Re-add the trigger + TabsContent when
+// the mail module is rebuilt on FastAPI.
 
 export default function Settings() {
   const { companies, departments } = useDataStore();
   return (
     <div>
-      <PageHeader title="Settings" description="Workspace, companies, departments, roles, notifications." icon={<SettingsIcon className="h-5 w-5" />} />
+      <PageHeader title="Settings" description="Workspace, companies, departments, working hours, roles, notifications." icon={<SettingsIcon className="h-5 w-5" />} />
       <div className="p-6">
         <Tabs defaultValue="workspace">
           <TabsList>
-            <TabsTrigger value="workspace">Workspace</TabsTrigger><TabsTrigger value="companies">Companies</TabsTrigger><TabsTrigger value="departments">Departments</TabsTrigger><TabsTrigger value="mail">Mail Accounts</TabsTrigger><TabsTrigger value="roles">Roles</TabsTrigger><TabsTrigger value="notifications">Notifications</TabsTrigger><TabsTrigger value="appearance">Appearance</TabsTrigger>
+            <TabsTrigger value="workspace">Workspace</TabsTrigger>
+            <TabsTrigger value="companies">Companies</TabsTrigger>
+            <TabsTrigger value="departments">Departments</TabsTrigger>
+            <TabsTrigger value="hours">Working hours</TabsTrigger>
+            <TabsTrigger value="roles">Roles</TabsTrigger>
+            <TabsTrigger value="notifications">Notifications</TabsTrigger>
+            <TabsTrigger value="appearance">Appearance</TabsTrigger>
           </TabsList>
           <TabsContent value="workspace" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <h3 className="font-display text-sm font-semibold">Workspace</h3>
@@ -34,6 +44,9 @@ export default function Settings() {
                 <li key={d.id} className="flex items-center justify-between p-3.5"><span className="text-sm font-medium">{d.name}</span><CompanyBadge companyId={d.companyId} size="xs" /></li>
               ))}
             </ul>
+          </TabsContent>
+          <TabsContent value="hours" className="rounded-xl border border-border bg-surface p-5 shadow-card">
+            <WorkingHoursSection />
           </TabsContent>
           <TabsContent value="roles" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <ul className="space-y-2 text-sm">

@@ -3,6 +3,7 @@ import { StatCard } from "@/components/StatCard";
 import { AttendanceBadge } from "@/components/StatusBadges";
 import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
+import { getEffectiveSchedule } from "@/lib/mappers";
 import { api, ApiError } from "@/lib/api";
 import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -43,9 +44,13 @@ const minutesBetween = (start?: string, end?: string) => {
 
 export default function Attendance() {
   const { user } = useAuth();
-  const { attendance, users, leaveRequests, refresh } = useDataStore();
+  const { attendance, users, leaveRequests, getCompany, refresh } = useDataStore();
   const [busy, setBusy] = useState<"checkin" | "checkout" | null>(null);
   const [todayMode, setTodayMode] = useState<AttendanceStatus>("present");
+
+  // Effective schedule for the signed-in user — falls back to their
+  // company's default when no per-employee override is set.
+  const schedule = user ? getEffectiveSchedule(user, getCompany(user.homeCompanyId)) : { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30" };
 
   const today = todayISO();
   const myLogs = useMemo(() => attendance.filter((a) => a.userId === user?.id), [attendance, user]);
@@ -109,7 +114,7 @@ export default function Attendance() {
     d.setDate(d.getDate() - (29 - i));
     const ds = new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
     const log = myLogs.find((l) => l.date === ds);
-    return { date: ds, status: log?.status ?? (isWeekend(d) ? "weekly_off" : "absent") };
+    return { date: ds, status: log?.status ?? (isNonWorkingDay(d, schedule.workDays) ? "weekly_off" : "absent") };
   });
 
   const colorFor = (s: string) => {
@@ -247,7 +252,10 @@ export default function Attendance() {
   );
 }
 
-function isWeekend(d: Date) {
-  const day = d.getDay();
-  return day === 0 || day === 6;
+// Map JS getDay() (0=Sun..6=Sat) to our ISO numbering (1=Mon..7=Sun) and
+// check against the user's effective working-day set.
+function isNonWorkingDay(d: Date, workDays: number[]): boolean {
+  const js = d.getDay();
+  const iso = js === 0 ? 7 : js;
+  return !workDays.includes(iso);
 }

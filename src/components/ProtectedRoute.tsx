@@ -22,6 +22,12 @@ export function ProtectedRoute({ children, require }: { children: ReactNode; req
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // Force the first-login password change. We can't navigate them anywhere
+  // useful until they pick a real password, so trap every other route here.
+  if (user.mustChangePassword && location.pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
+  }
+
   if (require) {
     const allowed = roleNavAccess[user.role];
     if (!allowed.includes(require)) {

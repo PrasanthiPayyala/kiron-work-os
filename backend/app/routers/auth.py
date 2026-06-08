@@ -173,6 +173,46 @@ def forgot_password(body: ForgotPasswordIn, db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6)
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    body: ChangePasswordIn,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Authenticated password change. Used both for the regular 'change my
+    password' flow and for the forced first-login change (the frontend
+    redirects there whenever profiles.must_change_password is true).
+
+    We require the current password even for forced changes — that way the
+    person at the keyboard has demonstrated they know the HR-issued temporary
+    password (defends against a left-open session being hijacked into a
+    permanent new password by a walk-by attacker).
+    """
+    row = db.execute(
+        text("SELECT password_hash FROM users WHERE id = :id"), {"id": user.id},
+    ).mappings().first()
+    if not row or not verify_password(body.current_password, row["password_hash"]):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
+    if body.new_password == body.current_password:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Pick a new password — it can't be the same as the current one")
+    db.execute(
+        text("UPDATE users SET password_hash = :h WHERE id = :id"),
+        {"h": hash_password(body.new_password), "id": user.id},
+    )
+    db.execute(
+        text("UPDATE profiles SET must_change_password = false WHERE id = :id"),
+        {"id": user.id},
+    )
+    db.commit()
+    return None
+
+
 @router.post("/reset-password", response_model=TokenOut)
 def reset_password(body: ResetPasswordIn, db: Session = Depends(get_db)):
     """Consume a reset token, update the password, and issue fresh tokens so
@@ -196,6 +236,12 @@ def reset_password(body: ResetPasswordIn, db: Session = Depends(get_db)):
     db.execute(
         text("UPDATE users SET password_hash = :h WHERE id = :u"),
         {"h": new_hash, "u": str(row["user_id"])},
+    )
+    # Clear the force-change flag — they've just chosen a real password via the
+    # email link, so there's nothing left to force.
+    db.execute(
+        text("UPDATE profiles SET must_change_password = false WHERE id = :u"),
+        {"u": str(row["user_id"])},
     )
     db.execute(
         text("UPDATE password_reset_tokens SET used_at = now() WHERE id = :id"),

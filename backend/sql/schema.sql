@@ -56,6 +56,11 @@ create table public.companies (
   code text unique,
   logo_url text,
   is_active boolean not null default true,
+  -- Default working schedule for everyone in the company. ISO day numbers
+  -- (1=Mon … 7=Sun). Per-employee overrides live on profiles.
+  work_days int[] not null default '{1,2,3,4,5,6}',
+  work_start time not null default '09:30',
+  work_end time not null default '18:30',
   created_at timestamptz not null default now()
 );
 
@@ -88,6 +93,11 @@ create table public.profiles (
   is_active boolean not null default true,
   employment_type public.employment_type not null default 'full_time',
   tokens_invalid_after timestamptz,
+  must_change_password boolean not null default false,
+  -- Per-employee override of the company schedule. NULL = inherit.
+  work_days int[],
+  work_start time,
+  work_end time,
   created_at timestamptz not null default now()
 );
 

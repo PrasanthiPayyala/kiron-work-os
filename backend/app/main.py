@@ -15,6 +15,7 @@ from .routers import (
     auth,
     bootstrap,
     chat,
+    companies,
     conversations,
     files,
     leave,
@@ -59,6 +60,7 @@ app.include_router(conversations.router)
 app.include_router(files.router)
 app.include_router(notifications.router)
 app.include_router(projects.router)
+app.include_router(companies.router)
 app.include_router(users.router)
 app.include_router(ws.router)
 

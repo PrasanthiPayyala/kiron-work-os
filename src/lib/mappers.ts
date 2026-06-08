@@ -69,6 +69,10 @@ export const pickPrimaryRole = (roles: Role[]): Role => {
 };
 
 // ---------- Mappers ----------
+// Time columns come back from Postgres as "HH:MM:SS"; strip the seconds so
+// the UI can use a plain <input type="time" /> against the value.
+const hhmm = (t?: string | null): string => (t ? t.slice(0, 5) : "");
+
 export function mapCompany(r: DbCompany): Company {
   return {
     id: r.id,
@@ -77,6 +81,11 @@ export function mapCompany(r: DbCompany): Company {
     initials: r.initials ?? r.name.slice(0, 2).toUpperCase(),
     color: r.color ?? "210 50% 50%",
     domain: r.domain ?? undefined,
+    schedule: {
+      workDays: Array.isArray(r.work_days) && r.work_days.length ? r.work_days : [1,2,3,4,5,6],
+      workStart: hhmm(r.work_start) || "09:30",
+      workEnd: hhmm(r.work_end) || "18:30",
+    },
   };
 }
 
@@ -111,8 +120,28 @@ export function mapProfile(r: DbProfile, role: Role = "employee"): User {
     status,
     employmentType,
     isActive: r.is_active !== false,
+    mustChangePassword: r.must_change_password === true,
+    // Pass through the raw nullable override columns. The effective schedule
+    // is computed via getEffectiveSchedule() so callers stay declarative.
+    scheduleOverride: {
+      workDays: Array.isArray(r.work_days) ? r.work_days : null,
+      workStart: r.work_start ? hhmm(r.work_start) : null,
+      workEnd: r.work_end ? hhmm(r.work_end) : null,
+    },
     productivityScore: r.productivity_score ?? undefined,
     joinedAt: r.doj ?? r.created_at?.slice(0, 10) ?? "2024-01-01",
+  };
+}
+
+/** Merge a user's override on top of their company's default. Per-field
+ * inheritance: a null override falls back to the company value. */
+export function getEffectiveSchedule(user: User, company?: Company): { workDays: number[]; workStart: string; workEnd: string } {
+  const base = company?.schedule ?? { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30" };
+  const o = user.scheduleOverride;
+  return {
+    workDays: o?.workDays && o.workDays.length ? o.workDays : base.workDays,
+    workStart: o?.workStart || base.workStart,
+    workEnd: o?.workEnd || base.workEnd,
   };
 }
 
