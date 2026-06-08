@@ -16,7 +16,7 @@ Browser ──HTTPS──> cPanel Apache (your VPS public IP)
                                                         └─> Postgres :5432 (localhost)
 ```
 
-Replace `crm.innomaxsol.com`, `innomax` (cPanel account), and the email
+Replace `crm.innomaxsol.com`, `innomax` (cPanel account, here `crminnomaxsol`), and the email
 addresses with your own values throughout.
 
 ---
@@ -28,7 +28,7 @@ In WHM/cPanel UI (do this first, before any SSH work):
 1. **Create the subdomain.**
    Log in to cPanel as the account that owns `innomaxsol.com` →
    **Domains → Create A New Domain** → `crm.innomaxsol.com`. cPanel creates
-   the document root (typically `/home/innomax/crm.innomaxsol.com/`) and an
+   the document root (typically `/home/crminnomaxsol/public_html/`) and an
    Apache vhost.
 
 2. **Issue / verify SSL.**
@@ -207,10 +207,10 @@ sudo chcon -Rt httpd_sys_rw_content_t /var/lib/kiron/files
 ## 6. Build + publish the frontend to the subdomain docroot
 
 The docroot is the path you saw in cPanel when you created the subdomain.
-Typically `/home/innomax/crm.innomaxsol.com/`. Set it explicitly:
+Typically `/home/crminnomaxsol/public_html/`. Set it explicitly:
 
 ```bash
-SUBDOMAIN_DOCROOT=/home/innomax/crm.innomaxsol.com
+SUBDOMAIN_DOCROOT=/home/crminnomaxsol/public_html
 sudo test -d "$SUBDOMAIN_DOCROOT" || echo "docroot not found — check the path in cPanel"
 ```
 
@@ -257,7 +257,7 @@ cPanel's own URL rewrites.
 ```bash
 sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ "$SUBDOMAIN_DOCROOT/"
 # The cPanel user needs to own its docroot:
-sudo chown -R innomax:innomax "$SUBDOMAIN_DOCROOT"
+sudo chown -R crminnomaxsol:crminnomaxsol "$SUBDOMAIN_DOCROOT"
 ```
 
 Quick check — load `https://crm.innomaxsol.com` in a browser. You should
@@ -272,7 +272,7 @@ If something's wrong and you want the PHP app back:
 sudo rm -rf "$SUBDOMAIN_DOCROOT"
 sudo tar -xzf /var/backups/kiron/docroot-pre-deploy-<TS>.tar.gz \
     -C "$(dirname "$SUBDOMAIN_DOCROOT")"
-sudo chown -R innomax:innomax "$SUBDOMAIN_DOCROOT"
+sudo chown -R crminnomaxsol:crminnomaxsol "$SUBDOMAIN_DOCROOT"
 # Also disable our backend so it stops listening:
 sudo systemctl disable --now kiron-api
 ```
@@ -294,7 +294,7 @@ In WHM:
 ```apache
 <VirtualHost *:443>
     ServerName crm.innomaxsol.com
-    DocumentRoot /home/innomax/crm.innomaxsol.com
+    DocumentRoot /home/crminnomaxsol/public_html
 
     # Required modules: mod_proxy, mod_proxy_http, mod_proxy_wstunnel,
     # mod_rewrite, mod_headers. All are standard on WHM EasyApache.
@@ -313,7 +313,7 @@ In WHM:
 
     # SPA fallback — any unknown path serves index.html so React Router
     # owns the URL bar.
-    <Directory /home/innomax/crm.innomaxsol.com>
+    <Directory /home/crminnomaxsol/public_html>
         Options -Indexes +FollowSymLinks
         AllowOverride All
         Require all granted
@@ -381,8 +381,8 @@ sudo systemctl restart kiron-api
 
 # Frontend changed:
 sudo -u kiron npm ci && sudo -u kiron npm run build
-sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ /home/innomax/crm.innomaxsol.com/
-sudo chown -R innomax:innomax /home/innomax/crm.innomaxsol.com
+sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ /home/crminnomaxsol/public_html/
+sudo chown -R crminnomaxsol:crminnomaxsol /home/crminnomaxsol/public_html
 ```
 
 The PWA update banner appears in users' browsers automatically once the
