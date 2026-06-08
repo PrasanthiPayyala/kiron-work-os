@@ -38,11 +38,17 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
         navigateFallback: "/index.html",
-        // /api is the backend (proxied by nginx); never serve it the SPA shell.
+        // Paths the React SW must NOT hijack:
+        //   /api  → FastAPI backend (proxied by nginx/Apache).
+        //   /ws   → WebSocket upgrade endpoint.
+        //   /old/ → legacy PHP CRM (RISE) co-hosted under the same origin.
+        //           Without this, the SW serves the React /index.html shell for
+        //           every /old/* navigation, blanking the page after login.
         // Offline DATA is served from IndexedDB (see src/lib/offline), not the
         // SW HTTP cache, so we deliberately do NOT cache /api responses here —
         // that would risk serving stale rows over the live store.
-        navigateFallbackDenylist: [/^\/api/],
+        navigateFallbackDenylist: [/^\/api/, /^\/ws$/, /^\/old(\/|$)/],
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.destination === "image" || request.destination === "font",
