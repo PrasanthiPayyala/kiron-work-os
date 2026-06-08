@@ -5,7 +5,7 @@ import type {
   Company, Department, User, Project, Task, Approval,
   AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role,
   TaskStatus, AttendanceStatus, LeaveStatus, ApprovalState, ApprovalKind,
-  Visibility, Priority, EmploymentType,
+  Visibility, Priority, EmploymentType, Holiday, HolidayType,
 } from "@/types";
 
 type DbProfile = any;
@@ -289,6 +289,19 @@ export function mapMessage(r: DbMessage): Message {
     mentions: r.mentions ?? [],
     taskRefId: r.task_ref_id ?? undefined,
     attachments,
+  };
+}
+
+export function mapHoliday(r: any): Holiday {
+  return {
+    id: r.id,
+    companyId: r.company_id ?? null,
+    // Postgres date columns serialise as ISO strings; the time zone shouldn't
+    // appear here, but slice defensively in case it's a full timestamp.
+    date: typeof r.date === "string" ? r.date.slice(0, 10) : r.date,
+    name: r.name,
+    type: (r.type ?? "gazetted") as HolidayType,
+    notes: r.notes ?? undefined,
   };
 }
 

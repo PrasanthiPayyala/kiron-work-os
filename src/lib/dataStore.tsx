@@ -13,14 +13,14 @@ import { useAuth } from "@/lib/auth";
 import {
   mapCompany, mapDepartment, mapProfile, mapProject, mapTask, mapApproval,
   mapAttendance, mapLeave, mapConversation, mapMessage, mapNotification,
-  pickPrimaryRole,
+  mapHoliday, pickPrimaryRole,
 } from "@/lib/mappers";
 import { offlineDB, replaceTable, setMeta, getMeta, clearAllData } from "@/lib/offline/db";
 import { drainQueue } from "@/lib/offline/mutationQueue";
 import { onRealtime } from "@/lib/ws";
 import type {
   Company, Department, User, Project, Task, Approval,
-  AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role,
+  AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role, Holiday,
 } from "@/types";
 
 type Store = {
@@ -35,6 +35,7 @@ type Store = {
   conversations: Conversation[];
   messages: Message[];
   notifications: Notification[];
+  holidays: Holiday[];
   rolesByUser: Record<string, Role[]>;
 };
 
@@ -49,7 +50,7 @@ type Ctx = Store & {
 const empty: Store = {
   companies: [], departments: [], users: [], projects: [], tasks: [],
   approvals: [], attendance: [], leaveRequests: [], conversations: [],
-  messages: [], notifications: [], rolesByUser: {},
+  messages: [], notifications: [], holidays: [], rolesByUser: {},
 };
 
 const DataCtx = createContext<Ctx | null>(null);
@@ -66,7 +67,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     projects: any[]; projectMembers: { project_id: string; user_id: string }[];
     tasks: any[]; approvals: any[]; attendance: any[]; leaves: any[];
     conversations: any[]; convMembers: { conversation_id: string; user_id: string; last_read_at?: string | null }[];
-    messages: any[]; notifications: any[];
+    messages: any[]; notifications: any[]; holidays?: any[];
     currentUserId?: string;
   }): Store => {
     const rolesByUser: Record<string, Role[]> = {};
@@ -101,6 +102,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       ),
       messages: raw.messages.map(mapMessage),
       notifications: raw.notifications.map(mapNotification),
+      holidays: (raw.holidays ?? []).map(mapHoliday),
       rolesByUser,
     };
   }, []);
@@ -112,7 +114,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     const [
       companies, departments, profiles, userRoles, projects, projectMembers,
       tasks, approvals, attendance, leaves, conversations, convMembers,
-      messages, notifications,
+      messages, notifications, holidays,
     ] = await Promise.all([
       offlineDB.companies.toArray(),
       offlineDB.departments.toArray(),
@@ -128,10 +130,11 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       offlineDB.conversation_members.toArray(),
       offlineDB.messages.toArray(),
       offlineDB.notifications.toArray(),
+      offlineDB.holidays.toArray(),
     ]);
     return buildStore({
       companies, departments, profiles, projects, tasks, approvals,
-      messages, notifications, conversations,
+      messages, notifications, conversations, holidays,
       userRoles: userRoles.map(({ user_id, role }) => ({ user_id, role })),
       projectMembers: projectMembers.map(({ project_id, user_id }) => ({ project_id, user_id })),
       convMembers: convMembers.map((m: any) => ({
@@ -162,6 +165,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       convMembers: b.conversation_members,
       messages: b.messages,
       notifications: b.notifications,
+      holidays: b.holidays ?? [],
     };
 
     // Mirror to IndexedDB. Fire-and-forget so reads aren't blocked on disk.
@@ -191,6 +195,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
           ),
           replaceTable(offlineDB.messages, raw.messages),
           replaceTable(offlineDB.notifications, raw.notifications),
+          replaceTable(offlineDB.holidays, raw.holidays),
           setMeta("lastHydratedAt", new Date().toISOString()),
         ]);
       } catch (err) {

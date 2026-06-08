@@ -44,13 +44,26 @@ const minutesBetween = (start?: string, end?: string) => {
 
 export default function Attendance() {
   const { user } = useAuth();
-  const { attendance, users, leaveRequests, getCompany, refresh } = useDataStore();
+  const { attendance, users, leaveRequests, holidays, getCompany, refresh } = useDataStore();
   const [busy, setBusy] = useState<"checkin" | "checkout" | null>(null);
   const [todayMode, setTodayMode] = useState<AttendanceStatus>("present");
 
   // Effective schedule for the signed-in user — falls back to their
   // company's default when no per-employee override is set.
   const schedule = user ? getEffectiveSchedule(user, getCompany(user.homeCompanyId)) : { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30" };
+
+  // Holidays that apply to this user — their company-specific rows + the
+  // global (company_id NULL) ones. Indexed by date so the grid lookup is O(1).
+  const holidayByDate = useMemo(() => {
+    const m = new Map<string, typeof holidays[number]>();
+    for (const h of holidays) {
+      if (h.companyId && h.companyId !== user?.homeCompanyId) continue;
+      // Company-specific row beats the global row on the same date.
+      const existing = m.get(h.date);
+      if (!existing || (existing.companyId == null && h.companyId)) m.set(h.date, h);
+    }
+    return m;
+  }, [holidays, user?.homeCompanyId]);
 
   const today = todayISO();
   const myLogs = useMemo(() => attendance.filter((a) => a.userId === user?.id), [attendance, user]);
@@ -114,7 +127,18 @@ export default function Attendance() {
     d.setDate(d.getDate() - (29 - i));
     const ds = new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
     const log = myLogs.find((l) => l.date === ds);
-    return { date: ds, status: log?.status ?? (isNonWorkingDay(d, schedule.workDays) ? "weekly_off" : "absent") };
+    const holiday = holidayByDate.get(ds);
+    // Status precedence: real check-in > approved leave (the log already
+    // reflects that) > gazetted holiday > weekly off > absent. Optional and
+    // informational holidays don't change the cell — we only add the name
+    // to the tooltip so the calendar still tells the truth about who showed
+    // up. The user is free to take leave on those days if they want.
+    let status: string;
+    if (log) status = log.status;
+    else if (holiday && holiday.type === "gazetted") status = "holiday";
+    else if (isNonWorkingDay(d, schedule.workDays)) status = "weekly_off";
+    else status = "absent";
+    return { date: ds, status, holiday };
   });
 
   const colorFor = (s: string) => {
@@ -122,6 +146,7 @@ export default function Attendance() {
     if (s === "wfh") return "bg-accent/70";
     if (s === "half_day") return "bg-warning/70";
     if (s === "leave") return "bg-status-hold/70";
+    if (s === "holiday") return "bg-accent-soft";
     if (s === "weekly_off") return "bg-muted";
     return "bg-destructive/40";
   };
@@ -206,18 +231,49 @@ export default function Attendance() {
           <div className="rounded-xl border border-border bg-surface p-5 shadow-card lg:col-span-2">
             <h3 className="font-display text-sm font-semibold">Last 30 days</h3>
             <div className="mt-3 grid grid-cols-10 gap-1.5">
-              {grid.map((g) => (
-                <div key={g.date} title={`${g.date} · ${g.status}`} className={`aspect-square rounded ${colorFor(g.status)}`} />
-              ))}
+              {grid.map((g) => {
+                const tip = g.holiday
+                  ? `${g.date} · ${g.holiday.name}${g.holiday.type !== "gazetted" ? ` (${g.holiday.type})` : ""}`
+                  : `${g.date} · ${g.status}`;
+                return <div key={g.date} title={tip} className={`aspect-square rounded ${colorFor(g.status)}`} />;
+              })}
             </div>
             <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-success/70" /> Present</span>
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-accent/70" /> WFH</span>
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-warning/70" /> Half day</span>
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-status-hold/70" /> Leave</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-accent-soft" /> Holiday</span>
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-muted" /> Weekly off</span>
               <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-destructive/40" /> Absent</span>
             </div>
+
+            {/* Upcoming holidays for the user's company — six rows so it stays
+                compact. Pulls from the same in-memory store, no extra query. */}
+            {(() => {
+              const todayStr = today;
+              const upcoming = Array.from(holidayByDate.values())
+                .filter((h) => h.date >= todayStr)
+                .sort((a, b) => a.date.localeCompare(b.date))
+                .slice(0, 6);
+              if (!upcoming.length) return null;
+              return (
+                <div className="mt-4 border-t border-border pt-3">
+                  <p className="text-xs font-medium text-muted-foreground">Upcoming holidays</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {upcoming.map((h) => (
+                      <li key={h.id} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-medium">{h.name}</span>
+                        <span className="text-muted-foreground">
+                          {h.date}
+                          {h.type !== "gazetted" && <span className="ml-1.5 rounded-md bg-surface-muted px-1 py-0.5 text-[10px]">{h.type}</span>}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
           </div>
         </div>
 

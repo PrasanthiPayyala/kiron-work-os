@@ -6,6 +6,7 @@ import { CompanyBadge } from "@/components/CompanyBadge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { WorkingHoursSection } from "@/pages/settings/WorkingHours";
+import { HolidaysSection } from "@/pages/settings/Holidays";
 
 // Mail Accounts tab is hidden for v1 alongside the sidebar item — see
 // roleNavAccess in src/lib/auth.tsx. Re-add the trigger + TabsContent when
@@ -23,6 +24,7 @@ export default function Settings() {
             <TabsTrigger value="companies">Companies</TabsTrigger>
             <TabsTrigger value="departments">Departments</TabsTrigger>
             <TabsTrigger value="hours">Working hours</TabsTrigger>
+            <TabsTrigger value="holidays">Holidays</TabsTrigger>
             <TabsTrigger value="roles">Roles</TabsTrigger>
             <TabsTrigger value="notifications">Notifications</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
@@ -47,6 +49,9 @@ export default function Settings() {
           </TabsContent>
           <TabsContent value="hours" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <WorkingHoursSection />
+          </TabsContent>
+          <TabsContent value="holidays" className="rounded-xl border border-border bg-surface p-5 shadow-card">
+            <HolidaysSection />
           </TabsContent>
           <TabsContent value="roles" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <ul className="space-y-2 text-sm">

@@ -68,6 +68,7 @@ export class KironOfflineDB extends Dexie {
   conversation_members!: Table<ConversationMemberRow, string>;
   messages!: Table<KeyedRow, string>;
   notifications!: Table<KeyedRow, string>;
+  holidays!: Table<KeyedRow, string>;
   sync_meta!: Table<SyncMeta, string>;
   mutations!: Table<QueuedMutation, string>;
 
@@ -93,6 +94,11 @@ export class KironOfflineDB extends Dexie {
     // v2 adds the offline write queue.
     this.version(2).stores({
       mutations: "id, status, createdAt",
+    });
+    // v3 adds the holiday calendar cache. Indexed by date for the
+    // Attendance page's daily lookups.
+    this.version(3).stores({
+      holidays: "id, date, company_id, type",
     });
   }
 }
@@ -135,7 +141,7 @@ export async function clearAllData() {
       offlineDB.tasks, offlineDB.approvals, offlineDB.attendance_logs,
       offlineDB.leave_requests, offlineDB.conversations,
       offlineDB.conversation_members, offlineDB.messages, offlineDB.notifications,
-      offlineDB.mutations,
+      offlineDB.holidays, offlineDB.mutations,
     ],
     async () => {
       await Promise.all([
@@ -153,6 +159,7 @@ export async function clearAllData() {
         offlineDB.conversation_members.clear(),
         offlineDB.messages.clear(),
         offlineDB.notifications.clear(),
+        offlineDB.holidays.clear(),
         offlineDB.mutations.clear(),
       ]);
     },

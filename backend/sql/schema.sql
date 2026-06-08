@@ -36,6 +36,7 @@ create type public.notification_type as enum (
 );
 create type public.channel_type as enum ('direct','company_group','team_group','project_group','announcement');
 create type public.employment_type as enum ('intern','contract','full_time','temporary','part_time');
+create type public.holiday_type as enum ('gazetted','optional','informational');
 
 -- ============================================================ AUTH
 create table public.users (
@@ -300,12 +301,27 @@ create table public.notifications (
   created_at timestamptz not null default now()
 );
 
+create table public.holidays (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid references public.companies(id) on delete cascade,
+  date date not null,
+  name text not null,
+  type public.holiday_type not null default 'gazetted',
+  notes text,
+  created_by uuid references public.profiles(id),
+  created_at timestamptz not null default now()
+);
+
 -- ============================================================ INDEXES
 create index idx_profiles_company on public.profiles(home_company_id);
 create index idx_profiles_manager on public.profiles(reporting_manager_id);
 create index idx_user_roles_user on public.user_roles(user_id);
 create index idx_projects_company on public.projects(company_id);
 create index idx_project_members_project on public.project_members(project_id);
+create index idx_holidays_date on public.holidays(date);
+create unique index uq_holidays_company_date_name on public.holidays(
+  coalesce(company_id, '00000000-0000-0000-0000-000000000000'::uuid), date, lower(name)
+);
 create index idx_project_members_user on public.project_members(user_id);
 create index idx_tasks_project on public.tasks(project_id);
 create index idx_tasks_company on public.tasks(company_id);

@@ -5,6 +5,20 @@ export type ID = string;
 export type ISODate = string;
 
 // ---------- Companies / Departments ----------
+// ---------- Holidays ----------
+export type HolidayType = "gazetted" | "optional" | "informational";
+
+export interface Holiday {
+  id: ID;
+  /** NULL means it applies to every company. */
+  companyId?: ID | null;
+  /** ISO date (YYYY-MM-DD). */
+  date: ISODate;
+  name: string;
+  type: HolidayType;
+  notes?: string;
+}
+
 /** Working-hours schedule shared by Company default and per-user override.
  * workDays is ISO day numbers: 1=Mon, 2=Tue, …, 7=Sun. workStart and workEnd
  * are "HH:MM" strings. */

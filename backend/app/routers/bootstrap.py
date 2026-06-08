@@ -137,6 +137,9 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
     # --- notifications (self only) ---
     notifications = _rows(db, "SELECT * FROM notifications WHERE user_id = :uid", {"uid": uid})
 
+    # --- holidays (all rows; the client filters by company_id where needed) ---
+    holidays = _rows(db, "SELECT * FROM holidays ORDER BY date ASC, name ASC")
+
     return {
         "companies": companies,
         "departments": departments,
@@ -152,4 +155,5 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "conversation_members": conv_members,
         "messages": messages,
         "notifications": notifications,
+        "holidays": holidays,
     }

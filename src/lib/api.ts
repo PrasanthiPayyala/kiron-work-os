@@ -285,6 +285,43 @@ export const api = {
   }): Promise<Record<string, unknown>> {
     return request(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   },
+
+  // ---------- Holidays (HR/super_admin manages; everyone reads via /bootstrap) ----------
+  listHolidays(opts?: { year?: number; companyId?: string }): Promise<Record<string, unknown>[]> {
+    const q = new URLSearchParams();
+    if (opts?.year) q.set("year", String(opts.year));
+    if (opts?.companyId) q.set("company_id", opts.companyId);
+    return request(`/holidays${q.toString() ? `?${q}` : ""}`);
+  },
+  createHoliday(payload: {
+    date: string;
+    name: string;
+    type: "gazetted" | "optional" | "informational";
+    company_id?: string | null;
+    notes?: string | null;
+  }): Promise<Record<string, unknown>> {
+    return request("/holidays", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateHoliday(id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/holidays/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteHoliday(id: string): Promise<void> {
+    return request(`/holidays/${id}`, { method: "DELETE" });
+  },
+  /** Bulk import a year's list. `replace=true` updates type/notes of any
+   * pre-existing rows for the same (company, date, name) instead of skipping. */
+  bulkImportHolidays(payload: {
+    holidays: Array<{
+      date: string;
+      name: string;
+      type: "gazetted" | "optional" | "informational";
+      company_id?: string | null;
+      notes?: string | null;
+    }>;
+    replace?: boolean;
+  }): Promise<{ inserted: number; updated: number; skipped: number }> {
+    return request("/holidays/bulk", { method: "POST", body: JSON.stringify(payload) });
+  },
   checkIn: withOffline("checkIn", raw.checkIn),
   updateAttendance: withOffline("updateAttendance", raw.updateAttendance),
   applyLeave: withOffline("applyLeave", raw.applyLeave),
@@ -439,4 +476,5 @@ export interface BootstrapResponse {
   conversation_members: { conversation_id: string; user_id: string }[];
   messages: any[];
   notifications: any[];
+  holidays: any[];
 }
