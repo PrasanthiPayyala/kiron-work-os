@@ -1,183 +1,150 @@
-# Supabase CLI
+# Kiron Work OS
 
-[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=main)](https://coveralls.io/github/supabase/cli?branch=main) [![Bitbucket Pipelines](https://img.shields.io/bitbucket/pipelines/supabase-cli/setup-cli/master?style=flat-square&label=Bitbucket%20Canary)](https://bitbucket.org/supabase-cli/setup-cli/pipelines) [![Gitlab Pipeline Status](https://img.shields.io/gitlab/pipeline-status/sweatybridge%2Fsetup-cli?label=Gitlab%20Canary)
-](https://gitlab.com/sweatybridge/setup-cli/-/pipelines)
+Internal operations platform for the Kiron Group — replaces personal WhatsApp,
+ad-hoc file transfers, and email threads for ~20 people across the group's
+companies. Tasks, projects, attendance, leave, chat with attachments,
+approvals, and a notifications feed, behind one sign-in.
 
-[Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
+Single-tenant, self-hosted on one Linux VM. PWA so it installs to phone /
+desktop and keeps working offline.
 
-This repository contains all the functionality for Supabase CLI.
+## Stack
 
-- [x] Running Supabase locally
-- [x] Managing database migrations
-- [x] Creating and deploying Supabase Functions
-- [x] Generating types directly from your database schema
-- [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
+| Layer | Choice |
+|---|---|
+| Frontend | React 18 · Vite 5 · TypeScript 5 · Tailwind · shadcn/ui · React Router v6 |
+| State | React Query + a custom `DataStoreProvider` over a single `/bootstrap` snapshot |
+| Offline | vite-plugin-pwa + Dexie/IndexedDB write-through cache + mutation queue |
+| Realtime | WebSocket hub on the backend with per-user fan-out |
+| Backend | FastAPI · SQLAlchemy 2 · psycopg 3 · Alembic |
+| Auth | JWT (PyJWT) · argon2 password hashing |
+| Storage | Local filesystem (`/var/lib/kiron/files`) via a `/files` endpoint |
+| DB | PostgreSQL 14+ |
+| Email | stdlib `smtplib` (SSL/STARTTLS auto-detect) — used for password reset |
 
-## Getting started
+## Repo layout
 
-### Install the CLI
+```
+backend/                 FastAPI app + SQLAlchemy schema + Alembic migrations
+  app/main.py            FastAPI entry (lifespan starts the SLA scheduler)
+  app/routers/           One module per resource (tasks, projects, chat, …)
+  app/scheduler.py       APScheduler — SLA breach + due-today notifications
+  alembic/versions/      Schema migrations (0001 baseline → 0007 holidays)
+  sql/schema.sql         Authoritative schema (kept in sync with migrations)
+src/                     Frontend
+  lib/auth.tsx           AuthProvider, role-based nav, `can` capability map
+  lib/dataStore.tsx      Single hydration cache + WS subscription
+  lib/api.ts             Thin REST client with offline-queue wrapper
+  lib/offline/           Dexie schema + mutation queue
+  lib/mappers.ts         DB row → domain type
+  pages/                 One per route
+  components/            Reusable UI (incl. shadcn primitives under ui/)
+deploy/                  Production deployment kit (see DEPLOY.md)
+CLAUDE.md                Project-specific instructions for the Claude Code CLI
+```
 
-Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
+## Local development
+
+Prereqs: Python 3.11+, Node 20+, PostgreSQL 14+ running locally.
 
 ```bash
-npm i supabase --save-dev
+# Backend
+cd backend
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt    # Windows: .venv\Scripts\pip
+cp .env.example .env                          # set DATABASE_URL + JWT_SECRET
+.venv/bin/python -m app.create_db             # CREATE DATABASE kiron + roles
+.venv/bin/python -m alembic upgrade head      # apply migrations
+.venv/bin/python -m app.seed                  # seed demo accounts + sample data
+.venv/bin/python -m uvicorn app.main:app --port 8787 --reload
+
+# Frontend (new terminal, repo root)
+npm install
+npm run dev        # http://localhost:8080
 ```
 
-To install the beta release channel:
+Open <http://localhost:8080> and sign in.
+
+### Seeded accounts
+
+All passwords are `Kiron@2025`. The `must_change_password` flag is **off** on
+seeded rows so you land straight on the dashboard.
+
+| Email | Role |
+|---|---|
+| `kiran@kirongroup.in` | super_admin |
+| `prasanthi@kirongroup.in` | founder |
+| `anita@kirongroup.in` | hr_admin |
+| `samiyuddin.mohammed@kirongroup.in` | manager |
+| `varsha.cheriyala@kirongroup.in` | employee |
+| `pallavi.gonepalli@kirongroup.in` | intern |
+
+Accounts created from **People → Add user** (HR/super_admin) get
+`must_change_password=true` — the new joiner is forced through
+`/change-password` on first sign-in.
+
+## Roles & navigation
+
+Eight roles drive the sidebar via `roleNavAccess` in `src/lib/auth.tsx`:
+
+`super_admin`, `founder`, `founder_office_coordinator`,
+`founder_office_support`, `manager`, `hr_admin`, `employee`, `intern`
+
+Capability checks (e.g. who can create projects, deactivate users, edit
+holidays) live in `src/lib/auth.tsx`'s `can` object on the frontend and
+`backend/app/authz.py` on the backend — keep the two in sync.
+
+## What's shipped
+
+- Dashboard, My Work, Projects (CRUD + members), Tasks, Attendance, Leave,
+  Approvals, Reports, People (CRUD + deactivate), Notifications, Chat
+  (realtime + attachments)
+- Password reset via email link
+- Forced password change on first login
+- Working-hours config: company default + per-employee override
+- Holiday calendar: gazetted / optional / informational types, bulk import
+- User lifecycle: deactivate to block login + invalidate live sessions,
+  intern → full-time conversion preserves project memberships
+- SLA breach scheduler (APScheduler in-process, advisory-locked for
+  multi-worker safety)
+- Offline shell + write-through cache + mutation queue
+
+## Production deployment
+
+See [`deploy/DEPLOY.md`](deploy/DEPLOY.md) for a six-step runbook covering
+nginx + systemd + Let's Encrypt on a single VM. The `deploy/` directory
+ships ready-to-use config: `kiron-api.service`, `nginx-kiron.conf`,
+`backend.env.example`, `setup-db.sh`, `setup-backend.sh`,
+`deploy-frontend.sh`.
+
+After any pull on the VM:
 
 ```bash
-npm i supabase@beta --save-dev
+cd /opt/kiron && sudo -u kiron git pull
+sudo -u kiron bash deploy/setup-backend.sh && sudo systemctl restart kiron-api
+sudo -u kiron WEB_ROOT=/var/www/kiron bash deploy/deploy-frontend.sh
 ```
 
-When installing with yarn 4, you need to disable experimental fetch with the following nodejs config.
-
-```
-NODE_OPTIONS=--no-experimental-fetch yarn add supabase
-```
-
-> **Note**
-For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
-
-<details>
-  <summary><b>macOS</b></summary>
-
-  Available via [Homebrew](https://brew.sh). To install:
-
-  ```sh
-  brew install supabase/tap/supabase
-  ```
-
-  To install the beta release channel:
-  
-  ```sh
-  brew install supabase/tap/supabase-beta
-  brew link --overwrite supabase-beta
-  ```
-  
-  To upgrade:
-
-  ```sh
-  brew upgrade supabase
-  ```
-</details>
-
-<details>
-  <summary><b>Windows</b></summary>
-
-  Available via [Scoop](https://scoop.sh). To install:
-
-  ```powershell
-  scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-  scoop install supabase
-  ```
-
-  To upgrade:
-
-  ```powershell
-  scoop update supabase
-  ```
-</details>
-
-<details>
-  <summary><b>Linux</b></summary>
-
-  Available via [Homebrew](https://brew.sh) and Linux packages.
-
-  #### via Homebrew
-
-  To install:
-
-  ```sh
-  brew install supabase/tap/supabase
-  ```
-
-  To upgrade:
-
-  ```sh
-  brew upgrade supabase
-  ```
-
-  #### via Linux packages
-
-  Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg.tar.zst` file depending on your package manager and run the respective commands.
-
-  ```sh
-  sudo apk add --allow-untrusted <...>.apk
-  ```
-
-  ```sh
-  sudo dpkg -i <...>.deb
-  ```
-
-  ```sh
-  sudo rpm -i <...>.rpm
-  ```
-
-  ```sh
-  sudo pacman -U <...>.pkg.tar.zst
-  ```
-</details>
-
-<details>
-  <summary><b>Other Platforms</b></summary>
-
-  You can also install the CLI via [go modules](https://go.dev/ref/mod#go-install) without the help of package managers.
-
-  ```sh
-  go install github.com/supabase/cli@latest
-  ```
-
-  Add a symlink to the binary in `$PATH` for easier access:
-
-  ```sh
-  ln -s "$(go env GOPATH)/bin/cli" /usr/bin/supabase
-  ```
-
-  This works on other non-standard Linux distros.
-</details>
-
-<details>
-  <summary><b>Community Maintained Packages</b></summary>
-
-  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/main/projects/supabase.com/cli/package.yml).
-  To install in your working directory:
-
-  ```bash
-  pkgx install supabase
-  ```
-
-  Available via [Nixpkgs](https://nixos.org/). Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix).
-</details>
-
-### Run the CLI
+## Testing
 
 ```bash
-supabase bootstrap
+# Backend
+cd backend && .venv/bin/python -m pytest
+
+# Frontend type + unit
+npm run typecheck
+npm run test
 ```
 
-Or using npx:
+## Known gaps
 
-```bash
-npx supabase bootstrap
-```
+- The `mail` module is hidden in v1 (still Supabase-bound). The route and
+  components stay on disk so it can be re-enabled when the IMAP rebuild lands.
+- No audit log yet — admin actions (deactivations, role changes, project
+  deletes) aren't recorded. On the post-rollout backlog.
+- No idle-vs-active hour tracking. Open design question; see
+  `~/.claude/projects/.../memory/project_tuesday_golive_planning.md`.
 
-The bootstrap command will guide you through the process of setting up a Supabase project using one of the [starter](https://github.com/supabase-community/supabase-samples/blob/main/samples.json) templates.
+## License
 
-## Docs
-
-Command & config reference can be found [here](https://supabase.com/docs/reference/cli/about).
-
-## Breaking changes
-
-We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations.
-
-However, due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. If you need such guarantees, we encourage you to pin a specific version of CLI in package.json.
-
-## Developing
-
-To run from source:
-
-```sh
-# Go >= 1.22
-go run . help
-```
+Private — Kiron Group internal use only.
