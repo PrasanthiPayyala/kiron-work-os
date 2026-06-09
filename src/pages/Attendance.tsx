@@ -7,7 +7,6 @@ import { getEffectiveSchedule, isNonWorkingDate } from "@/lib/mappers";
 import { api, ApiError } from "@/lib/api";
 import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMemo, useState } from "react";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -334,7 +333,11 @@ export default function Attendance() {
         status: dbStatus,
         source: "self_checkin",
       });
-      toast.success(status === "wfh" ? "Checked in (WFH)" : "Checked in");
+      toast.success(
+        status === "wfh" ? "Checked in (WFH)" :
+        status === "half_day" ? "Checked in (half day)" :
+        "Checked in",
+      );
       refresh();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Check-in failed");
@@ -395,14 +398,26 @@ export default function Attendance() {
             <div className="mt-4 flex flex-wrap items-center gap-2">
               {!todayLog ? (
                 <>
-                  <Select value={todayMode} onValueChange={(v) => setTodayMode(v as AttendanceStatus)}>
-                    <SelectTrigger className="h-9 w-32"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="present">In office</SelectItem>
-                      <SelectItem value="wfh">WFH</SelectItem>
-                      <SelectItem value="half_day">Half day</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {/* Three inline pills instead of a dropdown so Half day is
+                      visible without a click. The selected mode is what the
+                      Check in button records. */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      { value: "present",  label: "In office" },
+                      { value: "wfh",      label: "WFH" },
+                      { value: "half_day", label: "Half day" },
+                    ] as { value: AttendanceStatus; label: string }[]).map(({ value, label }) => (
+                      <Button
+                        key={value}
+                        type="button"
+                        size="sm"
+                        variant={todayMode === value ? "default" : "outline"}
+                        onClick={() => setTodayMode(value)}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
                   <Button onClick={handleCheckIn} disabled={busy !== null} className="gap-1.5">
                     {busy === "checkin" ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
                     Check in
