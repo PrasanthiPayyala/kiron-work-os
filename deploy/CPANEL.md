@@ -19,6 +19,12 @@ Browser ──HTTPS──> cPanel Apache (your VPS public IP)
 Replace `crm.innomaxsol.com`, `innomax` (cPanel account, here `crminnomaxsol`), and the email
 addresses with your own values throughout.
 
+**If you're co-hosting an older PHP app under `/old/`** (this is what
+`innomaxsol.com` does — RISE CRM remains accessible while React rolls out),
+follow the `/old/` callouts marked **(co-host only)** below. If `/old/` isn't
+relevant to you, you can skip them and delete the matching block in
+`deploy/kiron-vhost.conf` before installing.
+
 ---
 
 ## 0. One-time prerequisites
@@ -169,10 +175,12 @@ sudo -u kiron python3.11 -m venv /opt/kiron/backend/.venv
 sudo -u kiron /opt/kiron/backend/.venv/bin/pip install --upgrade pip
 sudo -u kiron /opt/kiron/backend/.venv/bin/pip install -r /opt/kiron/backend/requirements.txt
 
-# Migrations + seed:
-cd /opt/kiron/backend
-sudo -u kiron .venv/bin/python -m alembic upgrade head
-sudo -u kiron .venv/bin/python -m app.seed
+# Migrations + seed. NOTE: alembic resolves script_location from the CURRENT
+# WORKING DIRECTORY (not from -c <ini-path>). Always `cd /opt/kiron/backend`
+# first or you'll hit `FAILED: Path doesn't exist: '<cwd>/alembic'`. The
+# sudo-bash-cd one-liner makes this explicit and survives copy-paste.
+sudo -u kiron bash -c 'cd /opt/kiron/backend && .venv/bin/python -m alembic upgrade head'
+sudo -u kiron bash -c 'cd /opt/kiron/backend && .venv/bin/python -m app.seed'
 ```
 
 Check:
@@ -242,9 +250,17 @@ sudo mysqldump <php_crm_db_name> | gzip > /var/backups/kiron/php-crm-db-${TS}.sq
 cd /opt/kiron
 sudo -u kiron bash -c 'cat > .env.production <<EOF
 VITE_API_URL=/api
+# These three vars exist only because the (hidden) Mail module eagerly imports
+# a Supabase client at module load. The values are never used at runtime —
+# Mail is disabled in v1 via roleNavAccess — but Vite fails the build if the
+# imports can construct their client. Drop these once the Mail module's
+# imports are lazy-loaded (tracked task).
+VITE_SUPABASE_URL=https://disabled.example.invalid
+VITE_SUPABASE_PUBLISHABLE_KEY=disabled-no-supabase-in-v1
+VITE_SUPABASE_ANON_KEY=disabled-no-supabase-in-v1
 EOF'
-sudo -u kiron npm ci
-sudo -u kiron npm run build       # output: /opt/kiron/dist/
+sudo -u kiron npm ci --legacy-peer-deps   # react-day-picker peer-dep noise
+sudo -u kiron npm run build               # output: /opt/kiron/dist/
 ```
 
 ### 6c. Publish to the docroot (the destructive step)
@@ -255,10 +271,30 @@ keeps cPanel's `.htaccess` if it left one behind, so we don't break
 cPanel's own URL rewrites.
 
 ```bash
-sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ "$SUBDOMAIN_DOCROOT/"
-# The cPanel user needs to own its docroot:
-sudo chown -R crminnomaxsol:crminnomaxsol "$SUBDOMAIN_DOCROOT"
+# --exclude='/.htaccess' preserves any cPanel-managed .htaccess at the root.
+# --exclude='/old'      (co-host only) preserves the legacy PHP CRM. Drop
+#                       this flag if you don't have an /old/ folder.
+# --chown sets ownership during the transfer so the cPanel user owns the new
+#         files immediately — avoids a separate `chown -R` pass that would
+#         also touch /old/ (which needs group=nobody, see below).
+sudo rsync -a --delete \
+  --exclude='/.htaccess' \
+  --exclude='/old' \
+  --chown=crminnomaxsol:crminnomaxsol \
+  /opt/kiron/dist/ "$SUBDOMAIN_DOCROOT/"
 ```
+
+**(co-host only) Apache needs to traverse `/old/`** as user `nobody`. cPanel
+puts the docroot in group `<cpuser>` with mode 750, which blocks Apache.
+Fix once with:
+
+```bash
+sudo chgrp -R nobody "$SUBDOMAIN_DOCROOT/old"
+sudo find "$SUBDOMAIN_DOCROOT/old" -type d -exec chmod 755 {} \;
+sudo find "$SUBDOMAIN_DOCROOT/old" -type f -exec chmod 644 {} \;
+```
+
+Without that, the React app loads but every `/old/*` request returns 403.
 
 Quick check — load `https://crm.innomaxsol.com` in a browser. You should
 see the React app load BUT the login form will fail (no `/api` proxy yet).
@@ -279,74 +315,66 @@ sudo systemctl disable --now kiron-api
 
 ---
 
-## 7. Apache reverse-proxy via WHM Include Editor
+## 7. Apache reverse-proxy via userdata includes
 
-cPanel regenerates Apache vhosts on rebuild, so editing the vhost directly
-is fragile. The right place is the **Include Editor**, which survives
-rebuilds.
+cPanel rebuilds Apache vhosts whenever you edit anything in WHM. **userdata
+includes** (`/etc/apache2/conf.d/userdata/...`) are the right place for
+per-domain custom config: they survive every rebuild and don't conflict with
+cPanel's own management.
 
-In WHM:
+The repo ships the working snippet at [`deploy/kiron-vhost.conf`](kiron-vhost.conf).
+Read its comments — every line that exists is there because the obvious
+version didn't work (`%{REQUEST_FILENAME}` blanks the PWA, conditional
+WebSocket rewrite 404s under HTTP/2, etc.).
 
-1. **Service Configuration → Apache Configuration → Include Editor**
-2. **Post VirtualHost Include → 2_4 (or 'All Versions')** → paste the
-   block below, replacing the docroot if yours differs:
+Two gotchas you must respect:
 
-```apache
-<VirtualHost *:443>
-    ServerName crm.innomaxsol.com
-    DocumentRoot /home/crminnomaxsol/public_html
+1. **Drop the snippet into BOTH `std/` AND `ssl/` paths.** WHM treats them
+   independently — the std/ (HTTP) include doesn't apply to the ssl/ (HTTPS)
+   vhost. If you only edit std/, everything works on `http://` but the live
+   `https://` URL stays broken. Easiest is `cp` the same file to both.
 
-    # Required modules: mod_proxy, mod_proxy_http, mod_proxy_wstunnel,
-    # mod_rewrite, mod_headers. All are standard on WHM EasyApache.
+2. **Run `ensure_vhost_includes` and `rebuildhttpdconf` after editing.** The
+   userdata file is the SOURCE; the active `/etc/apache2/conf/httpd.conf` is
+   the BUILT artifact. A reload alone won't pick up the change.
 
-    # API endpoints — strip the /api prefix so FastAPI's routes match.
-    ProxyPreserveHost On
-    ProxyRequests Off
-    ProxyPass        /api/  http://127.0.0.1:8787/
-    ProxyPassReverse /api/  http://127.0.0.1:8787/
+```bash
+CPUSER=crminnomaxsol
+DOMAIN=crm.innomaxsol.com
 
-    # WebSocket for chat / notifications / approvals realtime.
-    RewriteEngine On
-    RewriteCond %{HTTP:Upgrade} websocket [NC]
-    RewriteCond %{HTTP:Connection} upgrade [NC]
-    RewriteRule ^/ws$ ws://127.0.0.1:8787/ws [P,L]
+# 1. Install the snippet in both std/ and ssl/.
+for SCOPE in std ssl; do
+  sudo mkdir -p "/etc/apache2/conf.d/userdata/${SCOPE}/2_4/${CPUSER}/${DOMAIN}"
+  sudo cp /opt/kiron/deploy/kiron-vhost.conf \
+    "/etc/apache2/conf.d/userdata/${SCOPE}/2_4/${CPUSER}/${DOMAIN}/kiron.conf"
+done
 
-    # SPA fallback — any unknown path serves index.html so React Router
-    # owns the URL bar.
-    <Directory /home/crminnomaxsol/public_html>
-        Options -Indexes +FollowSymLinks
-        AllowOverride All
-        Require all granted
-        RewriteEngine On
-        RewriteCond %{REQUEST_URI} !^/api/
-        RewriteCond %{REQUEST_URI} !^/ws$
-        RewriteCond %{REQUEST_FILENAME} !-f
-        RewriteCond %{REQUEST_FILENAME} !-d
-        RewriteRule . /index.html [L]
-    </Directory>
-
-    # Make sw.js never cache (PWA service worker updates rely on this).
-    <Files "sw.js">
-        Header set Cache-Control "no-cache, no-store, must-revalidate"
-    </Files>
-
-    # Hashed assets — long cache.
-    <FilesMatch "\.(js|css|woff2|png|jpg|svg)$">
-        Header set Cache-Control "public, max-age=31536000, immutable"
-    </FilesMatch>
-</VirtualHost>
+# 2. Rebuild + reload.
+sudo /scripts/ensure_vhost_includes --user="${CPUSER}"
+sudo /scripts/rebuildhttpdconf
+sudo systemctl reload httpd
 ```
-
-3. Click **Update** → WHM runs `apachectl configtest` and reloads. If it
-   errors, copy the message back to me.
 
 Verify proxy works:
+
 ```bash
-curl -s https://crm.innomaxsol.com/api/health     # → {"status":"ok"}
+# REST API → should return {"status":"ok"}
+curl -s https://crm.innomaxsol.com/api/health
+
+# WebSocket. Force HTTP/1.1 because curl over HTTP/2 strips the Upgrade
+# headers and the test is meaningless. Expected: HTTP/1.1 403 (FastAPI
+# rejecting the bogus token, proving the WS handshake reached the backend).
+curl --http1.1 -is --max-time 3 \
+  -H "Upgrade: websocket" -H "Connection: upgrade" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  -H "Sec-WebSocket-Version: 13" \
+  "https://crm.innomaxsol.com/ws?token=invalid" | head -5
 ```
 
-If you get `503 Service Unavailable` from Apache: SELinux is blocking the
-proxy. Run `sudo setsebool -P httpd_can_network_connect 1` and retry.
+If `/api/health` returns `503 Service Unavailable` from Apache: SELinux is
+blocking the proxy. Run `sudo setsebool -P httpd_can_network_connect 1` and
+retry. If the WS test returns a 404 with `server: Apache`, your snippet is
+only in std/ (or rebuildhttpdconf wasn't run). Re-check the for-loop above.
 
 ---
 
@@ -374,15 +402,23 @@ proxy. Run `sudo setsebool -P httpd_can_network_connect 1` and retry.
 ```bash
 cd /opt/kiron && sudo -u kiron git pull
 
-# Backend changed (deps / migrations):
+# Backend changed (deps / migrations). The `cd` is mandatory — alembic
+# resolves script_location from cwd, not from -c <ini>.
 sudo -u kiron /opt/kiron/backend/.venv/bin/pip install -r /opt/kiron/backend/requirements.txt
-sudo -u kiron /opt/kiron/backend/.venv/bin/python -m alembic upgrade head
+sudo -u kiron bash -c 'cd /opt/kiron/backend && .venv/bin/python -m alembic upgrade head'
 sudo systemctl restart kiron-api
 
-# Frontend changed:
-sudo -u kiron npm ci && sudo -u kiron npm run build
-sudo rsync -a --delete --exclude='.htaccess' /opt/kiron/dist/ /home/crminnomaxsol/public_html/
-sudo chown -R crminnomaxsol:crminnomaxsol /home/crminnomaxsol/public_html
+# Frontend changed. The two --exclude flags preserve the co-hosted PHP CRM
+# (drop the /old line if you don't have one) and cPanel's .htaccess.
+# --chown sets ownership during the transfer so we don't have to chown -R
+# afterward (which would also touch /old/ and break its group=nobody perm).
+sudo -u kiron npm ci --legacy-peer-deps
+sudo -u kiron npm run build
+sudo rsync -a --delete \
+  --exclude='/.htaccess' \
+  --exclude='/old' \
+  --chown=crminnomaxsol:crminnomaxsol \
+  /opt/kiron/dist/ /home/crminnomaxsol/public_html/
 ```
 
 The PWA update banner appears in users' browsers automatically once the
@@ -396,13 +432,22 @@ new `sw.js` ships.
 |---|---|
 | `502 Bad Gateway` from `/api` | `systemctl status kiron-api`; is uvicorn on 127.0.0.1:8787? |
 | `503 Service Unavailable` from Apache | SELinux: `sudo setsebool -P httpd_can_network_connect 1` |
-| Login 401 with seeded password | Did `app.seed` run? `sudo -u kiron /opt/kiron/backend/.venv/bin/python -m app.seed` |
-| WebSocket connect closes immediately | `mod_proxy_wstunnel` not loaded; WHM → EasyApache 4 → enable it, rebuild |
-| Subdomain serves cPanel's default index | docroot not pointed at our `dist/`; re-run rsync, verify file ownership |
-| Password reset email never arrives | `journalctl -u kiron-api | grep -i smtp`; firewall blocking outbound 465? |
-| `nano: command not found` | `sudo dnf install -y nano vim` (CentOS minimal ships neither) |
-| cPanel's `.htaccess` reappears and serves a 403 | Our SPA rewrite needs `AllowOverride All` on the docroot; the Include Editor block above sets it |
-| Logged out on refresh | `JWT_SECRET` changed between deploys — keep it stable |
+| Login 401 with seeded password | Did `app.seed` run? `sudo -u kiron bash -c 'cd /opt/kiron/backend && .venv/bin/python -m app.seed'` |
+| `alembic FAILED: Path doesn't exist: '/root/alembic'` | Alembic uses cwd, not -c. Wrap every alembic call as `sudo -u kiron bash -c 'cd /opt/kiron/backend && .venv/bin/python -m alembic ...'`. |
+| WebSocket connect closes immediately | `mod_proxy_wstunnel` not loaded; WHM → EasyApache 4 → enable it, rebuild. |
+| `/ws` returns 404 in production | Conditional `RewriteRule` for /ws doesn't work under HTTP/2 (mod_http2 strips Connection: Upgrade). Use explicit `ProxyPass /ws ws://127.0.0.1:8787/ws` — see `deploy/kiron-vhost.conf`. |
+| `https://` works, `http://` doesn't (or vice versa) | userdata include only in `std/` or only in `ssl/`. Copy `kiron.conf` to both paths and re-run `rebuildhttpdconf`. |
+| Blank PWA + Console: "module script expected, got text/html" | SPA fallback used `%{REQUEST_FILENAME}` instead of `%{DOCUMENT_ROOT}%{REQUEST_URI}`. The first is meaningless at vhost scope; switch to the second (see `deploy/kiron-vhost.conf`). |
+| `/old/*` 403 | Apache (user `nobody`) can't traverse a docroot in group `<cpuser>` mode 750. Run `chgrp -R nobody /home/<cpuser>/public_html/old`. |
+| Editing user saves "couldn't save" / column does not exist | New migration not applied to production DB. `cd /opt/kiron/backend && .venv/bin/python -m alembic upgrade head`. |
+| `/old/` login redirects to a blank React page | React PWA service worker (scope `/`) is intercepting `/old/*` navigations. `vite.config.ts` must include `/^\/old(\/\|$)/` in `navigateFallbackDenylist` — fixed in commit `f436bb5`. |
+| Vite build errors `supabaseUrl is required` | The (hidden) Mail module eager-imports a Supabase client. Add the three dummy `VITE_SUPABASE_*` vars to `.env.production` (see Step 6b). Real fix is to lazy-load Mail. |
+| Subdomain serves cPanel's default index | docroot not pointed at our `dist/`; re-run rsync, verify file ownership. |
+| `npm ci` ERESOLVE on react-day-picker | Use `npm ci --legacy-peer-deps`. |
+| Password reset email never arrives | `journalctl -u kiron-api \| grep -i smtp`; firewall blocking outbound 465? |
+| `nano: command not found` | `sudo dnf install -y nano vim` (CentOS minimal ships neither). |
+| cPanel's `.htaccess` reappears and serves a 403 | Our SPA rewrite needs `AllowOverride All` on the docroot. The userdata include sets `RewriteEngine On` directly so it doesn't depend on `.htaccess`. |
+| Logged out on refresh | `JWT_SECRET` changed between deploys — keep it stable. |
 
 ## Backups
 
