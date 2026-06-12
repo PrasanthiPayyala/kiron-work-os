@@ -277,16 +277,17 @@ export const api = {
     return request(`/users/${id}/reactivate`, { method: "POST" });
   },
 
-  // ---------- Companies (config only — schedule / branding lives here) ----------
-  updateCompany(id: string, patch: {
-    work_days?: number[] | null;
-    work_start?: string | null;
-    work_end?: string | null;
-    /** Saturday-of-month positions (1..5) that are working. null/[] = all
-     * Saturdays in work_days are working. [1,3,5] = 1st/3rd/5th work; 2nd
-     * and 4th are off. */
-    saturday_weeks_working?: number[] | null;
-  }): Promise<Record<string, unknown>> {
+  // ---------- Companies (full profile + schedule) ----------
+  /** Create a new group entity. Requires founder / founder_office_coordinator
+   * / hr_admin / super_admin. Returns the inserted row with every field
+   * (including the new profile columns) so the client can splice it into
+   * the data store without a re-fetch. */
+  createCompany(payload: { name: string } & Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request("/companies", { method: "POST", body: JSON.stringify(payload) });
+  },
+  /** Patch a company. Same authz as create. Every field is optional — pass
+   * only the keys you actually want to change. */
+  updateCompany(id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
     return request(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   },
 

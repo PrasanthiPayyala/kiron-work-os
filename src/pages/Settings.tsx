@@ -1,19 +1,28 @@
+import { useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { useDataStore } from "@/lib/dataStore";
-import { Settings as SettingsIcon } from "lucide-react";
+import { useAuth, can } from "@/lib/auth";
+import { Settings as SettingsIcon, Pencil, Plus } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { WorkingHoursSection } from "@/pages/settings/WorkingHours";
 import { HolidaysSection } from "@/pages/settings/Holidays";
+import { CompanyDialog } from "@/components/companies/CompanyDialog";
+import type { Company } from "@/types";
 
 // Mail Accounts tab is hidden for v1 alongside the sidebar item — see
 // roleNavAccess in src/lib/auth.tsx. Re-add the trigger + TabsContent when
 // the mail module is rebuilt on FastAPI.
 
 export default function Settings() {
-  const { companies, departments } = useDataStore();
+  const { companies, departments, refresh } = useDataStore();
+  const { role } = useAuth();
+  const canManageCompanies = role ? can.manageCompanies(role) : false;
+  // Company create/edit dialog state — single dialog reused for both flows.
+  const [companyDialog, setCompanyDialog] = useState<{ mode: "create" | "edit"; company?: Company } | null>(null);
   return (
     <div>
       <PageHeader title="Settings" description="Workspace, companies, departments, working hours, roles, notifications." icon={<SettingsIcon className="h-5 w-5" />} />
@@ -31,13 +40,45 @@ export default function Settings() {
           </TabsList>
           <TabsContent value="workspace" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <h3 className="font-display text-sm font-semibold">Workspace</h3>
-            <p className="mt-1 text-sm text-muted-foreground">Kiron Group · 14 companies · 30+ employees</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Kiron Group · {companies.length} {companies.length === 1 ? "company" : "companies"}
+            </p>
           </TabsContent>
           <TabsContent value="companies" className="rounded-xl border border-border bg-surface shadow-card">
+            <div className="flex items-center justify-between border-b border-border p-3.5">
+              <p className="text-xs text-muted-foreground">{companies.length} {companies.length === 1 ? "entity" : "entities"} registered</p>
+              {canManageCompanies && (
+                <Button size="sm" className="gap-1.5" onClick={() => setCompanyDialog({ mode: "create" })}>
+                  <Plus className="h-3.5 w-3.5" /> Add company
+                </Button>
+              )}
+            </div>
             <ul className="divide-y divide-border">
               {companies.map((c) => (
-                <li key={c.id} className="flex items-center justify-between p-3.5"><CompanyBadge companyId={c.id} /><span className="text-xs text-muted-foreground">{c.name}</span></li>
+                <li key={c.id} className="flex items-center justify-between gap-3 p-3.5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <CompanyBadge companyId={c.id} />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{c.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {c.domain ?? "—"}
+                        {c.profile.cin ? ` · CIN ${c.profile.cin}` : ""}
+                        {c.profile.gst ? ` · GST ${c.profile.gst}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                  {canManageCompanies && (
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setCompanyDialog({ mode: "edit", company: c })}>
+                      <Pencil className="h-3.5 w-3.5" /> Edit
+                    </Button>
+                  )}
+                </li>
               ))}
+              {companies.length === 0 && (
+                <li className="p-6 text-center text-sm text-muted-foreground">
+                  No companies yet. {canManageCompanies ? "Add the first one to get started." : "An admin needs to add the first entity."}
+                </li>
+              )}
             </ul>
           </TabsContent>
           <TabsContent value="departments" className="rounded-xl border border-border bg-surface shadow-card">
@@ -72,6 +113,16 @@ export default function Settings() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {companyDialog && (
+        <CompanyDialog
+          open
+          onOpenChange={(o) => { if (!o) setCompanyDialog(null); }}
+          mode={companyDialog.mode}
+          company={companyDialog.company}
+          onSaved={() => { void refresh(); }}
+        />
+      )}
     </div>
   );
 }

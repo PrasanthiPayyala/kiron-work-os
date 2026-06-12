@@ -31,6 +31,14 @@ export interface Schedule {
   saturdayWeeksWorking: number[] | null;
 }
 
+/** A director / board member on a company profile. `din` is the Indian
+ * Director Identification Number (8 digits). */
+export interface Director {
+  name: string;
+  designation: string;
+  din?: string | null;
+}
+
 export interface Company {
   id: ID;
   name: string;
@@ -38,9 +46,47 @@ export interface Company {
   initials: string;
   color: string; // hsl token reference, e.g. "var(--primary)"
   domain?: string;
+  code?: string | null;
+  logoUrl?: string | null;
+  isActive: boolean;
   /** Default schedule for everyone in the company. Profile overrides win
    * (see User.scheduleOverride). */
   schedule: Schedule;
+  /** Profile fields captured by HR / founder office (migration 0009).
+   * Every entry is nullable / optional — older companies have most of
+   * these blank until somebody fills them in. */
+  profile: {
+    websiteUrls: string[];
+    websiteTechnologies?: string | null;
+    natureOfBusiness?: string | null;
+    dateOfIncorporation?: ISODate | null;
+    isStartup: boolean;
+    // Registration / tax IDs
+    cin?: string | null;
+    gst?: string | null;
+    pan?: string | null;
+    tan?: string | null;
+    tin?: string | null;
+    msmeUdyamNumber?: string | null;
+    msmeUdyamMobile?: string | null;
+    msmeUdyamEmail?: string | null;
+    dpiitStartupNumber?: string | null;
+    // Addresses + phones
+    registeredAddress?: string | null;
+    corporateAddresses: string[];
+    operationsAddresses: string[];
+    phoneNumbers: string[];
+    // Directors + per-entity founder designations
+    directors: Director[];
+    kiranDesignation?: string | null;
+    prashantiDesignation?: string | null;
+    // Compliance
+    certificates: string[];
+    managingCaName?: string | null;
+    managingCaPhone?: string | null;
+    managingCaEmail?: string | null;
+    caDocumentsHeld: string[];
+  };
 }
 
 export interface Department {

@@ -6,6 +6,7 @@ import type {
   AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role,
   TaskStatus, AttendanceStatus, LeaveStatus, ApprovalState, ApprovalKind,
   Visibility, Priority, EmploymentType, Holiday, HolidayType, Schedule,
+  Director,
 } from "@/types";
 
 type DbProfile = any;
@@ -73,6 +74,29 @@ export const pickPrimaryRole = (roles: Role[]): Role => {
 // the UI can use a plain <input type="time" /> against the value.
 const hhmm = (t?: string | null): string => (t ? t.slice(0, 5) : "");
 
+/** Coerce a value into a defaulted string[] — text[] columns come back as
+ * either an array (data) or null/undefined (column never set). */
+const arr = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
+
+/** Postgres date columns serialise as ISO "YYYY-MM-DD"; slice defensively in
+ * case a timestamp slipped through. */
+const isoDate = (v: unknown): string | null => {
+  if (!v) return null;
+  if (typeof v === "string") return v.slice(0, 10);
+  return null;
+};
+
+const directorsIn = (v: unknown): Director[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
+    .map((d) => ({
+      name: String(d.name ?? ""),
+      designation: String(d.designation ?? ""),
+      din: d.din != null ? String(d.din) : null,
+    }));
+};
+
 export function mapCompany(r: DbCompany): Company {
   return {
     id: r.id,
@@ -81,6 +105,9 @@ export function mapCompany(r: DbCompany): Company {
     initials: r.initials ?? r.name.slice(0, 2).toUpperCase(),
     color: r.color ?? "210 50% 50%",
     domain: r.domain ?? undefined,
+    code: r.code ?? null,
+    logoUrl: r.logo_url ?? null,
+    isActive: r.is_active !== false,
     schedule: {
       workDays: Array.isArray(r.work_days) && r.work_days.length ? r.work_days : [1,2,3,4,5,6],
       workStart: hhmm(r.work_start) || "09:30",
@@ -88,6 +115,34 @@ export function mapCompany(r: DbCompany): Company {
       saturdayWeeksWorking: Array.isArray(r.saturday_weeks_working) && r.saturday_weeks_working.length
         ? r.saturday_weeks_working
         : null,
+    },
+    profile: {
+      websiteUrls: arr(r.website_urls),
+      websiteTechnologies: r.website_technologies ?? null,
+      natureOfBusiness: r.nature_of_business ?? null,
+      dateOfIncorporation: isoDate(r.date_of_incorporation),
+      isStartup: r.is_startup === true,
+      cin: r.cin ?? null,
+      gst: r.gst ?? null,
+      pan: r.pan ?? null,
+      tan: r.tan ?? null,
+      tin: r.tin ?? null,
+      msmeUdyamNumber: r.msme_udyam_number ?? null,
+      msmeUdyamMobile: r.msme_udyam_mobile ?? null,
+      msmeUdyamEmail: r.msme_udyam_email ?? null,
+      dpiitStartupNumber: r.dpiit_startup_number ?? null,
+      registeredAddress: r.registered_address ?? null,
+      corporateAddresses: arr(r.corporate_addresses),
+      operationsAddresses: arr(r.operations_addresses),
+      phoneNumbers: arr(r.phone_numbers),
+      directors: directorsIn(r.directors),
+      kiranDesignation: r.kiran_designation ?? null,
+      prashantiDesignation: r.prashanti_designation ?? null,
+      certificates: arr(r.certificates),
+      managingCaName: r.managing_ca_name ?? null,
+      managingCaPhone: r.managing_ca_phone ?? null,
+      managingCaEmail: r.managing_ca_email ?? null,
+      caDocumentsHeld: arr(r.ca_documents_held),
     },
   };
 }

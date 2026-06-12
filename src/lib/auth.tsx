@@ -124,6 +124,14 @@ export const can = {
   // Create / edit / deactivate user accounts. Mirrors the backend's
   // USER_MANAGE_ROLES gate so the UI can hide controls the API would reject.
   manageUsers: (r: Role) => r === "super_admin" || r === "hr_admin",
+  // Create / edit a group entity (registration data, addresses, directors,
+  // schedule). Mirrors the backend's COMPANY_MANAGE_ROLES — wider than
+  // user-management because onboarding new entities is a founder / founder-
+  // office / HR responsibility, not just IT. Jayaram + Roja get this via
+  // their founder_office_coordinator role.
+  manageCompanies: (r: Role) =>
+    r === "super_admin" || r === "founder" ||
+    r === "founder_office_coordinator" || r === "hr_admin",
 };
 
 export const useCurrentCompany = () => {

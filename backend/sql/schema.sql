@@ -67,6 +67,39 @@ create table public.companies (
   -- Saturday work; 2nd & 4th are off. No effect when 6 (Sat) isn't in
   -- work_days. See migration 0008_saturday_pattern.
   saturday_weeks_working int[],
+  -- Company profile (migration 0009_company_profile). Captured by HR /
+  -- founder office through Settings > Companies. All NULLABLE so existing
+  -- rows are valid until somebody fills the details in.
+  website_urls          text[],
+  website_technologies  text,
+  nature_of_business    text,
+  date_of_incorporation date,
+  is_startup            boolean not null default false,
+  cin                   text,
+  gst                   text,
+  pan                   text,
+  tan                   text,
+  tin                   text,
+  msme_udyam_number     text,
+  msme_udyam_mobile     text,
+  msme_udyam_email      text,
+  dpiit_startup_number  text,
+  registered_address    text,
+  corporate_addresses   text[],
+  operations_addresses  text[],
+  phone_numbers         text[],
+  -- Directors: jsonb list of {name, designation, din?}.
+  directors             jsonb,
+  -- Per-entity designations for the two founder principals (Kiran, Prashanti)
+  -- — they appear on every profile so they're first-class columns rather
+  -- than rows inside `directors`.
+  kiran_designation     text,
+  prashanti_designation text,
+  certificates          text[],
+  managing_ca_name      text,
+  managing_ca_phone     text,
+  managing_ca_email     text,
+  ca_documents_held     text[],
   created_at timestamptz not null default now()
 );
 

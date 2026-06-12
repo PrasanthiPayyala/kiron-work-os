@@ -14,6 +14,10 @@ TASK_CREATE_ROLES = {"super_admin", "founder", "manager", "founder_office_coordi
 APPROVAL_DECIDE_ROLES = {"super_admin", "founder"}
 # Who may create, edit, deactivate, or reactivate user accounts.
 USER_MANAGE_ROLES = {"super_admin", "hr_admin"}
+# Who may create, edit, or change the schedule of a company. Wider than
+# USER_MANAGE_ROLES because the founder + founder office are the people who
+# actually onboard new group entities and keep their profile data current.
+COMPANY_MANAGE_ROLES = {"super_admin", "founder", "founder_office_coordinator", "hr_admin"}
 
 
 def has_any_role(roles: set[str], allowed: set[str]) -> bool:
@@ -87,3 +91,10 @@ def can_manage_project(project: dict, uid: str, roles: set[str]) -> bool:
 def can_manage_users(roles: set[str]) -> bool:
     """Create new accounts, edit profile fields, set roles, deactivate."""
     return has_any_role(roles, USER_MANAGE_ROLES)
+
+
+def can_manage_companies(roles: set[str]) -> bool:
+    """Create a company, edit its profile (CIN/GST/addresses/directors/etc.),
+    or change its schedule. Wider than user management because onboarding
+    new entities is a founder-office / HR responsibility, not just IT."""
+    return has_any_role(roles, COMPANY_MANAGE_ROLES)
