@@ -33,14 +33,20 @@ Additions to `companies`:
 
 All new columns are nullable; existing rows aren't touched.
 
-Revision ID: 0010_contacts_and_company_expansion
+Revision ID: 0010_contacts_directory
 Revises: 0009_company_profile
 Create Date: 2026-06-15
+
+Note: revision ID was originally `0010_contacts_and_company_expansion` (35
+chars) but alembic's default `alembic_version.version_num` is `varchar(32)`,
+so the bookkeeping UPDATE failed even though the DDL applied successfully.
+Shortened to fit. Migration body is idempotent (IF NOT EXISTS on everything)
+so re-running it after the rename is safe.
 """
 from alembic import op
 
 
-revision = "0010_contacts_and_company_expansion"
+revision = "0010_contacts_directory"
 down_revision = "0009_company_profile"
 branch_labels = None
 depends_on = None
