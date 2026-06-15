@@ -18,8 +18,13 @@ export default function Login() {
     if (!authLoading && user) navigate("/dashboard", { replace: true });
   }, [authLoading, user, navigate]);
 
-  const [signInEmail, setSignInEmail] = useState("prasanthi@kirongroup.in");
-  const [signInPassword, setSignInPassword] = useState("Kiron@2025");
+  // Fields start empty in production. Hardcoded demo defaults
+  // (prasanthi@kirongroup.in + Kiron@2025) caused users to either accidentally
+  // log in as the demo account or trip the browser's saved-password autofill
+  // for the wrong identity. Browser password managers still fill in saved
+  // credentials when the user types or focuses the field.
+  const [signInEmail, setSignInEmail] = useState("");
+  const [signInPassword, setSignInPassword] = useState("");
 
   const [signUpName, setSignUpName] = useState("");
   const [signUpEmail, setSignUpEmail] = useState("");
@@ -94,9 +99,6 @@ export default function Login() {
                       Forgot password?
                     </Link>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Demo: any seeded user with password <code className="rounded bg-muted px-1 py-0.5 text-[11px]">Kiron@2025</code>
-                  </p>
                 </form>
               </TabsContent>
 
