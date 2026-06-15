@@ -379,12 +379,12 @@ export const api = {
   },
 
   // ---------- Files (multipart upload; download is a plain GET with auth) ----------
-  async uploadFile(file: File, entity?: { type: string; id: string }): Promise<AttachmentRow> {
+  async uploadFile(file: File, entity?: { type: string; id?: string }): Promise<AttachmentRow> {
     const form = new FormData();
     form.append("file", file);
     if (entity) {
       form.append("entity_type", entity.type);
-      form.append("entity_id", entity.id);
+      if (entity.id) form.append("entity_id", entity.id);
     }
     const headers: Record<string, string> = {};
     const access = tokens.access;
@@ -397,6 +397,16 @@ export const api = {
       throw new ApiError(res.status, detail);
     }
     return res.json();
+  },
+
+  /** Build a public, unauthenticated URL for a company logo (entity_type='company').
+   * The backend only serves entity_type='company' + image/* via /files/public/,
+   * so this is safe for direct <img src=...> use without token plumbing. */
+  companyLogoSrc(fileUrl: string | null | undefined): string | null {
+    if (!fileUrl) return null;
+    const id = fileUrl.replace(/^.*\/files\//, "");
+    if (!id) return null;
+    return `${BASE}/files/public/${id}`;
   },
 
   /** List attachments for a task/project/message. Newest first. */

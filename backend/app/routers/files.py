@@ -102,6 +102,35 @@ async def upload(
     return row(saved)
 
 
+@router.get("/public/{attachment_id}")
+def download_public(
+    attachment_id: str,
+    db: Session = Depends(get_db),
+):
+    """Unauthenticated read for files that are intentionally public.
+
+    Restricted to entity_type='company' (logos) AND image/* mime types — so
+    only branding assets are reachable. UUIDs make IDs unguessable; the
+    surface area is the same as a public CDN URL for a logo.
+    """
+    att = db.execute(
+        text("SELECT * FROM attachments WHERE id = :id"), {"id": attachment_id}
+    ).mappings().first()
+    if not att or att.get("entity_type") != "company":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    mt = (att.get("mime_type") or "").lower()
+    if not mt.startswith("image/"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    storage = att.get("storage_path")
+    if not storage or not Path(storage).is_file():
+        raise HTTPException(status.HTTP_410_GONE, "File bytes missing on disk")
+    return FileResponse(
+        storage,
+        media_type=mt or "application/octet-stream",
+        filename=att.get("file_name") or attachment_id,
+    )
+
+
 @router.get("/{attachment_id}")
 def download(
     attachment_id: str,

@@ -5,7 +5,7 @@
 // The dialog is tall — a full entity profile has ~25 fields across 5 tabs.
 // Header + footer stay pinned; only the tab body scrolls so Save is always
 // reachable (same pattern as UserDialog).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import type { Company, Director } from "@/types";
@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Upload, Loader2 } from "lucide-react";
 
 // ---------- Repeatable string list (URLs, addresses, phones, certificates) ----------
 function MultiInput({
@@ -122,6 +122,97 @@ function DirectorList({
       <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={add}>
         <Plus className="h-3.5 w-3.5" /> Add director
       </Button>
+    </div>
+  );
+}
+
+// ---------- Logo upload (file picker + preview, image/* only) ----------
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+
+function LogoUpload({
+  value, onChange, companyId,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  companyId?: string;  // present in edit mode; null/undefined in create mode is fine
+}) {
+  const { toast } = useToast();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const preview = api.companyLogoSrc(value);
+
+  const pick = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Logo must be an image", variant: "destructive" });
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      toast({ title: "Logo too large", description: "Keep it under 2 MB.", variant: "destructive" });
+      return;
+    }
+    setUploading(true);
+    try {
+      // entity_id was made nullable in migration 0002 — for create mode (no
+      // companyId yet) the row is stored with entity_id=NULL but entity_type
+      // stays 'company' so the public download endpoint still serves it.
+      const att = await api.uploadFile(file, { type: "company", id: companyId });
+      onChange(att.file_url);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Upload failed";
+      toast({ title: "Couldn't upload logo", description: msg, variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
+        {preview ? (
+          <img src={preview} alt="Logo preview" className="h-full w-full object-contain" />
+        ) : (
+          <span className="text-xs text-muted-foreground">No logo</span>
+        )}
+      </div>
+      <div className="flex flex-1 flex-col gap-1.5">
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={uploading}
+            onClick={() => inputRef.current?.click()}
+            className="gap-1.5"
+          >
+            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {value ? "Replace" : "Upload"}
+          </Button>
+          {value && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={uploading}
+              onClick={() => onChange("")}
+              className="text-muted-foreground hover:text-destructive"
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">PNG, JPG or SVG. Max 2 MB.</p>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void pick(f);
+        }}
+      />
     </div>
   );
 }
@@ -257,7 +348,7 @@ function toPayload(f: FormState): Record<string, unknown> {
     msme_udyam_number: f.msmeUdyamNumber.trim() || null,
     msme_udyam_mobile: f.msmeUdyamMobile.trim() || null,
     msme_udyam_email: f.msmeUdyamEmail.trim() || null,
-    dpiit_startup_number: f.dpiitStartupNumber.trim() || null,
+    dpiit_startup_number: f.isStartup ? (f.dpiitStartupNumber.trim() || null) : null,
     registered_address: f.registeredAddress.trim() || null,
     corporate_addresses: cleanList(f.corporateAddresses),
     operations_addresses: cleanList(f.operationsAddresses),
@@ -369,8 +460,12 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
                   <Input id="cd-domain" value={form.domain} onChange={(e) => set("domain", e.target.value)} placeholder="innomaxsol.com" />
                 </div>
                 <div className="grid gap-1.5 col-span-2">
-                  <Label htmlFor="cd-logo">Logo URL</Label>
-                  <Input id="cd-logo" value={form.logoUrl} onChange={(e) => set("logoUrl", e.target.value)} placeholder="https://..." />
+                  <Label>Logo</Label>
+                  <LogoUpload
+                    value={form.logoUrl}
+                    onChange={(v) => set("logoUrl", v)}
+                    companyId={company?.id}
+                  />
                 </div>
               </div>
 
@@ -455,10 +550,12 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
                   <Label htmlFor="cd-msme-em">Udyam email</Label>
                   <Input id="cd-msme-em" type="email" value={form.msmeUdyamEmail} onChange={(e) => set("msmeUdyamEmail", e.target.value)} placeholder="contact@example.com" />
                 </div>
-                <div className="grid gap-1.5 col-span-2">
-                  <Label htmlFor="cd-dpiit">DPIIT StartUp registration number</Label>
-                  <Input id="cd-dpiit" value={form.dpiitStartupNumber} onChange={(e) => set("dpiitStartupNumber", e.target.value)} placeholder="DIPP12345" />
-                </div>
+                {form.isStartup && (
+                  <div className="grid gap-1.5 col-span-2">
+                    <Label htmlFor="cd-dpiit">DPIIT StartUp registration number</Label>
+                    <Input id="cd-dpiit" value={form.dpiitStartupNumber} onChange={(e) => set("dpiitStartupNumber", e.target.value)} placeholder="DIPP12345" />
+                  </div>
+                )}
               </div>
             </TabsContent>
 
