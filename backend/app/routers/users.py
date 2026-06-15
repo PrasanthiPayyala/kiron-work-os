@@ -144,6 +144,11 @@ def create_user(
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=1, max_length=120)
+    # Email IS editable in edit mode — it's the login identity, so changing
+    # it affects how the person signs in. Uniqueness is enforced before any
+    # write; the UPDATE touches both `users.email` (auth) and
+    # `profiles.email` (display) so they stay in sync.
+    email: Optional[EmailStr] = None
     designation: Optional[str] = Field(None, max_length=120)
     home_company_id: Optional[str] = None
     department_id: Optional[str] = None
@@ -196,7 +201,29 @@ def update_user(
     # column so the profile inherits the company default again.
     if fields.get("saturday_weeks_working") == []:
         fields["saturday_weeks_working"] = None
+
+    # Email change is special: lives in BOTH users (auth) and profiles (display).
+    # Take it out of `fields` so it doesn't go into the profiles UPDATE blindly,
+    # validate uniqueness against other users, then write both rows.
+    new_email = fields.pop("email", None)
+    if new_email is not None:
+        new_email = str(new_email).strip()
+        dup = db.execute(
+            text("SELECT 1 FROM users WHERE lower(email) = lower(:em) AND id != :id"),
+            {"em": new_email, "id": user_id},
+        ).first()
+        if dup:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Another account already uses that email")
+        db.execute(
+            text("UPDATE users SET email = :em WHERE id = :id"),
+            {"em": new_email, "id": user_id},
+        )
+        # Put it back into the profiles UPDATE so profiles.email stays in sync.
+        fields["email"] = new_email
+
     if not fields:
+        db.commit()  # still commit the users.email update if it happened
         return _profile_or_404(db, user_id)
 
     set_parts = []

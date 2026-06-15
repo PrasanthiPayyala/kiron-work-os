@@ -33,11 +33,13 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
     departments = _rows(db, "SELECT * FROM departments")
     profiles = _rows(db, "SELECT * FROM profiles")
 
-    # user_roles: RLS exposed only own roles unless super_admin.
-    if "super_admin" in roles:
-        user_roles = _rows(db, "SELECT user_id, role FROM user_roles")
-    else:
-        user_roles = _rows(db, "SELECT user_id, role FROM user_roles WHERE user_id = :uid", {"uid": uid})
+    # user_roles: everyone sees everyone's roles. Profiles are already
+    # exposed to all signed-in users (line above), and the People page
+    # renders role labels — hiding the rows just left non-super_admin
+    # viewers seeing every colleague as the default "employee" fallback,
+    # which also broke HR's ability to confirm role edits visually after
+    # saving. Old behaviour (own row only) is the Supabase RLS legacy.
+    user_roles = _rows(db, "SELECT user_id, role FROM user_roles")
 
     # --- the caller's memberships, used for scoping below ---
     member_project_ids = {

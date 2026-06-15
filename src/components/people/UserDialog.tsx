@@ -149,7 +149,9 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
         // Patch the profile, then sync roles if they changed. Two calls because
         // user_roles lives in a separate table; the order matters only if the
         // first fails — keep them sequential so we don't strand roles.
-        await api.updateUser(user.id, {
+        // email is editable in edit mode — backend uniqueness-checks and
+        // updates both users.email (auth identity) and profiles.email.
+        const patch: Record<string, unknown> = {
           full_name: fullName.trim(),
           designation: designation.trim(),
           employment_type: employmentType,
@@ -169,7 +171,13 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
             : workDays.includes(6) && satWeeks.length < 5
               ? satWeeks
               : null,
-        });
+        };
+        // Only include email when it actually changed — sending it on every
+        // save would waste a uniqueness query, and changes are rare.
+        if (email.trim() && email.trim().toLowerCase() !== user.email.toLowerCase()) {
+          patch.email = email.trim();
+        }
+        await api.updateUser(user.id, patch);
         if (role !== user.role) {
           await api.setUserRoles(user.id, [role]);
         }
@@ -212,8 +220,11 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="ud-email">Email {mode === "edit" && <span className="text-xs text-muted-foreground">(read-only)</span>}</Label>
-              <Input id="ud-email" type="email" value={email} disabled={mode === "edit"} onChange={(e) => setEmail(e.target.value)} />
+              <Label htmlFor="ud-email">
+                Email
+                {mode === "edit" && <span className="ml-1 text-xs text-muted-foreground">— login identity, change with care</span>}
+              </Label>
+              <Input id="ud-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="ud-pw">{mode === "create" ? "Temporary password" : "Password (use reset link instead)"}</Label>
