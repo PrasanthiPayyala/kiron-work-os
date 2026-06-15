@@ -151,35 +151,37 @@ class CompanyCreate(CompanyProfile):
 _JSONB_COLS = {"directors"}
 
 
-def _apply_update(db: Session, company_id: str, fields: dict) -> dict:
-    """Build a parameterised UPDATE from the writable fields dict. Empty
-    list / empty string -> NULL so the UI can clear an entry by submitting
-    blank. Returns the refreshed row."""
-    set_parts = []
+def _build_update(fields: dict, company_id: str) -> tuple[str | None, dict]:
+    """Build the UPDATE SQL + params for a sparse fields dict. Returns
+    (sql, params) — sql is None when there's nothing to update so the
+    caller can skip the execute()."""
+    set_parts: list[str] = []
     params: dict = {"id": company_id}
     for col, val in fields.items():
         if col not in _WRITABLE:
-            # Unknown column -> silently skip so a future client adding a
-            # field we don't recognise doesn't break the save.
             continue
-        # Coerce empty array / blank string to NULL for nullable columns so
-        # "I cleared this field" actually persists as missing.
+        # Coerce empty array / blank string to NULL for nullable columns.
         if isinstance(val, list) and not val:
             val = None
         if isinstance(val, str) and not val.strip():
             val = None
         if col in _JSONB_COLS:
-            # Serialise dict / list and cast in SQL so psycopg routes the
-            # bind to jsonb rather than text[].
             params[col] = json.dumps(val) if val is not None else None
             set_parts.append(f"{col} = :{col}::jsonb")
         else:
             params[col] = val
             set_parts.append(f"{col} = :{col}")
     if not set_parts:
-        return _get(db, company_id)
-    sql = f"UPDATE companies SET {', '.join(set_parts)} WHERE id = :id"
-    db.execute(text(sql), params)
+        return None, params
+    return f"UPDATE companies SET {', '.join(set_parts)} WHERE id = :id", params
+
+
+def _apply_update(db: Session, company_id: str, fields: dict) -> dict:
+    """PATCH helper — apply a sparse update and commit. Used by the PATCH
+    endpoint where the row already exists."""
+    sql, params = _build_update(fields, company_id)
+    if sql is not None:
+        db.execute(text(sql), params)
     db.commit()
     return _get(db, company_id)
 
@@ -206,16 +208,25 @@ def create_company(
 
     new_id = str(uuid.uuid4())
     fields = body.model_dump(exclude_unset=True)
-    # `name` is mandatory at INSERT time. Pull it out so _apply_update doesn't
-    # try to set it again (it's already in the INSERT). We do INSERT first
-    # with just name + id so subsequent UPDATE can use the same code path.
     name = fields.pop("name")
-    db.execute(
-        text("INSERT INTO companies (id, name) VALUES (:id, :n)"),
-        {"id": new_id, "n": name},
-    )
-    db.commit()
-    return _apply_update(db, new_id, fields)
+
+    # Single transaction: INSERT bare row, then UPDATE with the profile
+    # fields, then commit. If the UPDATE throws (constraint violation,
+    # cast error, etc.) the bare INSERT rolls back too — so we never leak
+    # a half-filled row that subsequently 409s on retry.
+    try:
+        db.execute(
+            text("INSERT INTO companies (id, name) VALUES (:id, :n)"),
+            {"id": new_id, "n": name},
+        )
+        update_sql, update_params = _build_update(fields, new_id)
+        if update_sql is not None:
+            db.execute(text(update_sql), update_params)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return _get(db, new_id)
 
 
 @router.patch("/{company_id}")
