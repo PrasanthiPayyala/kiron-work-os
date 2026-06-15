@@ -31,6 +31,7 @@ import FounderOffice from "./pages/FounderOffice";
 import Settings from "./pages/Settings";
 import Mail from "./pages/Mail";
 import Notifications from "./pages/Notifications";
+import Contacts from "./pages/Contacts";
 
 const queryClient = new QueryClient();
 
@@ -87,6 +88,14 @@ const App = () => (
                   }
                 />
                 <Route path="/people" element={<People />} />
+                <Route
+                  path="/contacts"
+                  element={
+                    <ProtectedRoute require="contacts">
+                      <Contacts />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="/people/interns" element={<Interns />} />
                 <Route path="/people/:id" element={<PersonProfile />} />
                 <Route

@@ -408,3 +408,41 @@ export function mapNotification(r: DbNotif): Notification {
     createdAt: r.created_at ?? "",
   };
 }
+
+// ---------- Contacts & Organizations ----------
+export function mapOrganization(r: any): import("@/types").Organization {
+  return {
+    id: r.id,
+    name: r.name,
+    type: r.type ?? null,
+    website: r.website ?? null,
+    address: r.address ?? null,
+    gstin: r.gstin ?? null,
+    notes: r.notes ?? null,
+    isActive: r.is_active !== false,
+    createdAt: r.created_at ?? "",
+    createdBy: r.created_by ?? null,
+  };
+}
+
+export function mapContact(r: any): import("@/types").Contact {
+  const links: { company_id: string; relationship?: string | null }[] = Array.isArray(r.company_links)
+    ? r.company_links
+    : [];
+  return {
+    id: r.id,
+    fullName: r.full_name,
+    category: r.category,
+    role: r.role ?? null,
+    email: r.email ?? null,
+    phone: r.phone ?? null,
+    organizationId: r.organization_id ?? null,
+    notes: r.notes ?? null,
+    isActive: r.is_active !== false,
+    businessCardAttachmentId: r.business_card_attachment_id ?? null,
+    companyIds: Array.isArray(r.company_ids) ? r.company_ids : links.map((l) => l.company_id),
+    companyLinks: links.map((l) => ({ companyId: l.company_id, relationship: l.relationship ?? null })),
+    createdAt: r.created_at ?? "",
+    createdBy: r.created_by ?? null,
+  };
+}

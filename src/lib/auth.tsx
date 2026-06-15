@@ -96,7 +96,7 @@ export function useAuth() {
 export type NavKey =
   | "dashboard" | "my_work" | "projects" | "tasks" | "attendance"
   | "leave" | "chat" | "approvals" | "reports" | "people"
-  | "founder_office" | "settings" | "mail";
+  | "founder_office" | "settings" | "mail" | "contacts";
 
 // "mail" is intentionally absent from every role for v1 — the IMAP module is
 // still Supabase-bound and would throw if anyone clicked it. The Mail.tsx
@@ -104,14 +104,14 @@ export type NavKey =
 // the FastAPI rebuild lands; just re-add "mail" to whichever roles should
 // see it then.
 export const roleNavAccess: Record<Role, NavKey[]> = {
-  super_admin:                ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
-  founder:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
-  founder_office_coordinator: ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","founder_office","settings"],
-  founder_office_support:     ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people","founder_office"],
-  manager:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people"],
+  super_admin:                ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder_office_coordinator: ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder_office_support:     ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people","contacts","founder_office"],
+  manager:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts"],
   employee:                   ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people"],
   intern:                     ["dashboard","my_work","projects","tasks","attendance","leave","chat","people"],
-  hr_admin:                   ["dashboard","attendance","leave","approvals","reports","people","settings","chat"],
+  hr_admin:                   ["dashboard","attendance","leave","approvals","reports","people","contacts","settings","chat"],
 };
 
 export const can = {
@@ -132,7 +132,86 @@ export const can = {
   manageCompanies: (r: Role) =>
     r === "super_admin" || r === "founder" ||
     r === "founder_office_coordinator" || r === "hr_admin",
+  // Finance fields on a company (CIN/GST/PAN/bank). Tighter than basic:
+  // HR can fix addresses / phones / logo / schedule but not tax IDs.
+  // Mirrors backend COMPANY_EDIT_FINANCE.
+  editCompanyFinance: (r: Role) =>
+    r === "super_admin" || r === "founder" || r === "founder_office_coordinator",
+  // ---------- Contacts ----------
+  // Open the Contacts page. Per-category visibility still gates which rows
+  // the API actually returns.
+  viewContacts: (r: Role) =>
+    r === "super_admin" || r === "founder" || r === "founder_office_coordinator" ||
+    r === "founder_office_support" || r === "hr_admin" || r === "manager",
+  // Create / edit / delete contacts in general. Per-category edit rules
+  // (see viewContactCategory + editContactCategory) further restrict this.
+  editContacts: (r: Role) =>
+    r === "super_admin" || r === "founder" || r === "founder_office_coordinator" || r === "hr_admin",
 };
+
+// Mirror of backend CONTACT_CATEGORY_VIEW / _EDIT. Kept in sync by hand —
+// the backend is source of truth (it enforces); these helpers only decide
+// what to render in the UI so the user isn't shown buttons that would 403.
+const CONTACT_CATEGORY_VIEW: Record<string, ReadonlySet<Role>> = {
+  ca:            new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin"]),
+  cs:            new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin"]),
+  auditor:       new Set(["super_admin","founder","founder_office_coordinator","founder_office_support"]),
+  lawyer:        new Set(["super_admin","founder","founder_office_coordinator","founder_office_support"]),
+  banker:        new Set(["super_admin","founder","founder_office_coordinator","founder_office_support"]),
+  insurance:     new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin"]),
+  investor:      new Set(["super_admin","founder","founder_office_coordinator"]),
+  govt_official: new Set(["super_admin","founder","founder_office_coordinator","founder_office_support"]),
+  client_poc:      new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin","manager"]),
+  vendor_poc:      new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin","manager"]),
+  channel_partner: new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin","manager"]),
+  collaborator:    new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin","manager"]),
+  advisor:         new Set(["super_admin","founder","founder_office_coordinator","founder_office_support"]),
+  mentor:          new Set(["super_admin","founder","founder_office_coordinator","founder_office_support"]),
+  press:           new Set(["super_admin","founder","founder_office_coordinator"]),
+  industry_body:   new Set(["super_admin","founder","founder_office_coordinator","founder_office_support"]),
+  college:            new Set(["super_admin","founder","founder_office_coordinator","hr_admin","manager"]),
+  tpo:                new Set(["super_admin","founder","founder_office_coordinator","hr_admin","manager"]),
+  training_institute: new Set(["super_admin","founder","founder_office_coordinator","hr_admin","manager"]),
+  recruitment_agency: new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+  domain_registrar: new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin"]),
+  hosting_saas:     new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin"]),
+  agency:           new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin","manager"]),
+  other:            new Set(["super_admin","founder","founder_office_coordinator","founder_office_support","hr_admin","manager"]),
+};
+
+const CONTACT_CATEGORY_EDIT: Record<string, ReadonlySet<Role>> = {
+  ca:            new Set(["super_admin","founder","founder_office_coordinator"]),
+  cs:            new Set(["super_admin","founder","founder_office_coordinator"]),
+  auditor:       new Set(["super_admin","founder","founder_office_coordinator"]),
+  lawyer:        new Set(["super_admin","founder","founder_office_coordinator"]),
+  banker:        new Set(["super_admin","founder","founder_office_coordinator"]),
+  insurance:     new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+  investor:      new Set(["super_admin","founder"]),
+  govt_official: new Set(["super_admin","founder","founder_office_coordinator"]),
+  client_poc:      new Set(["super_admin","founder","founder_office_coordinator"]),
+  vendor_poc:      new Set(["super_admin","founder","founder_office_coordinator"]),
+  channel_partner: new Set(["super_admin","founder","founder_office_coordinator"]),
+  collaborator:    new Set(["super_admin","founder","founder_office_coordinator"]),
+  advisor:         new Set(["super_admin","founder","founder_office_coordinator"]),
+  mentor:          new Set(["super_admin","founder","founder_office_coordinator"]),
+  press:           new Set(["super_admin","founder","founder_office_coordinator"]),
+  industry_body:   new Set(["super_admin","founder","founder_office_coordinator"]),
+  college:            new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+  tpo:                new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+  training_institute: new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+  recruitment_agency: new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+  domain_registrar: new Set(["super_admin","founder","founder_office_coordinator"]),
+  hosting_saas:     new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+  agency:           new Set(["super_admin","founder","founder_office_coordinator"]),
+  other:            new Set(["super_admin","founder","founder_office_coordinator","hr_admin"]),
+};
+
+export const canViewCategory = (r: Role, c: string): boolean =>
+  CONTACT_CATEGORY_VIEW[c]?.has(r) ?? false;
+export const canEditCategory = (r: Role, c: string): boolean =>
+  CONTACT_CATEGORY_EDIT[c]?.has(r) ?? false;
+export const visibleCategories = (r: Role): string[] =>
+  Object.keys(CONTACT_CATEGORY_VIEW).filter((c) => CONTACT_CATEGORY_VIEW[c].has(r));
 
 export const useCurrentCompany = () => {
   const { user } = useAuth();

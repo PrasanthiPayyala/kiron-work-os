@@ -16,6 +16,7 @@ from .routers import (
     bootstrap,
     chat,
     companies,
+    contacts,
     conversations,
     files,
     holidays,
@@ -62,6 +63,7 @@ app.include_router(files.router)
 app.include_router(notifications.router)
 app.include_router(projects.router)
 app.include_router(companies.router)
+app.include_router(contacts.router)
 app.include_router(users.router)
 app.include_router(holidays.router)
 app.include_router(ws.router)

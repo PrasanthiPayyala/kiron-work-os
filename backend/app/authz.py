@@ -19,6 +19,99 @@ USER_MANAGE_ROLES = {"super_admin", "hr_admin"}
 # actually onboard new group entities and keep their profile data current.
 COMPANY_MANAGE_ROLES = {"super_admin", "founder", "founder_office_coordinator", "hr_admin"}
 
+# Splits COMPANY_MANAGE_ROLES into a scoped pair so HR can fix addresses /
+# phone / logo / schedule but cannot quietly rewrite GST/CIN/PAN/bank refs.
+# Used by routers/companies.py PATCH to enforce per-field access; the gate
+# (`can_edit_company_basic`) stays unchanged for any HR access.
+COMPANY_EDIT_BASIC = COMPANY_MANAGE_ROLES
+COMPANY_EDIT_FINANCE = {"super_admin", "founder", "founder_office_coordinator"}
+
+# ---------- Contacts ----------
+# Who can see the Contacts page at all. Managers get in to see business
+# contacts (clients, vendors, partners) — read-only at the category level.
+CONTACTS_VIEW_ROLES = {
+    "super_admin", "founder", "founder_office_coordinator",
+    "founder_office_support", "hr_admin", "manager",
+}
+# Who can create / edit / delete contacts in general. Per-category edit
+# permissions further restrict this (e.g. HR can edit recruitment but not
+# investor contacts).
+CONTACTS_EDIT_ROLES = {
+    "super_admin", "founder", "founder_office_coordinator", "hr_admin",
+}
+
+# Category → set of roles allowed to *see* the contact rows + their fields
+# in the API response. The Contacts page filters server-side using this,
+# so a role that can't see "investor" never receives those rows at all.
+CONTACT_CATEGORY_VIEW: dict[str, set[str]] = {
+    # Compliance — sensitive
+    "ca":            {"super_admin", "founder", "founder_office_coordinator", "founder_office_support", "hr_admin"},
+    "cs":            {"super_admin", "founder", "founder_office_coordinator", "founder_office_support", "hr_admin"},
+    "auditor":       {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"},
+    "lawyer":        {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"},
+    "banker":        {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"},
+    "insurance":     {"super_admin", "founder", "founder_office_coordinator", "founder_office_support", "hr_admin"},
+    "investor":      {"super_admin", "founder", "founder_office_coordinator"},
+    "govt_official": {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"},
+    # Business — managers can see (read-only enforced at the EDIT map)
+    "client_poc":      CONTACTS_VIEW_ROLES,
+    "vendor_poc":      CONTACTS_VIEW_ROLES,
+    "channel_partner": CONTACTS_VIEW_ROLES,
+    "collaborator":    CONTACTS_VIEW_ROLES,
+    "advisor":         {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"},
+    "mentor":          {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"},
+    "press":           {"super_admin", "founder", "founder_office_coordinator"},
+    "industry_body":   {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"},
+    # Recruitment — HR + founder office (+ managers for awareness)
+    "college":            {"super_admin", "founder", "founder_office_coordinator", "hr_admin", "manager"},
+    "tpo":                {"super_admin", "founder", "founder_office_coordinator", "hr_admin", "manager"},
+    "training_institute": {"super_admin", "founder", "founder_office_coordinator", "hr_admin", "manager"},
+    "recruitment_agency": {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+    # IT / Vendor
+    "domain_registrar": {"super_admin", "founder", "founder_office_coordinator", "founder_office_support", "hr_admin"},
+    "hosting_saas":     {"super_admin", "founder", "founder_office_coordinator", "founder_office_support", "hr_admin"},
+    "agency":           CONTACTS_VIEW_ROLES,
+    "other":            CONTACTS_VIEW_ROLES,
+}
+
+# Category → set of roles allowed to *edit* contact rows of that category.
+# Managers are excluded across the board — they read business contacts but
+# additions/corrections route through founder office for quality control.
+CONTACT_CATEGORY_EDIT: dict[str, set[str]] = {
+    # Compliance — only super_admin + founder office coord (not HR, not founder_office_support)
+    "ca":            {"super_admin", "founder", "founder_office_coordinator"},
+    "cs":            {"super_admin", "founder", "founder_office_coordinator"},
+    "auditor":       {"super_admin", "founder", "founder_office_coordinator"},
+    "lawyer":        {"super_admin", "founder", "founder_office_coordinator"},
+    "banker":        {"super_admin", "founder", "founder_office_coordinator"},
+    "insurance":     {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+    "investor":      {"super_admin", "founder"},
+    "govt_official": {"super_admin", "founder", "founder_office_coordinator"},
+    # Business
+    "client_poc":      {"super_admin", "founder", "founder_office_coordinator"},
+    "vendor_poc":      {"super_admin", "founder", "founder_office_coordinator"},
+    "channel_partner": {"super_admin", "founder", "founder_office_coordinator"},
+    "collaborator":    {"super_admin", "founder", "founder_office_coordinator"},
+    "advisor":         {"super_admin", "founder", "founder_office_coordinator"},
+    "mentor":          {"super_admin", "founder", "founder_office_coordinator"},
+    "press":           {"super_admin", "founder", "founder_office_coordinator"},
+    "industry_body":   {"super_admin", "founder", "founder_office_coordinator"},
+    # Recruitment
+    "college":            {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+    "tpo":                {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+    "training_institute": {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+    "recruitment_agency": {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+    # IT / Vendor
+    "domain_registrar": {"super_admin", "founder", "founder_office_coordinator"},
+    "hosting_saas":     {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+    "agency":           {"super_admin", "founder", "founder_office_coordinator"},
+    "other":            {"super_admin", "founder", "founder_office_coordinator", "hr_admin"},
+}
+
+# All known categories — derived from the VIEW map so the source of truth
+# stays single. Must match the CHECK constraint in migration 0010.
+CONTACT_CATEGORIES = set(CONTACT_CATEGORY_VIEW.keys())
+
 
 def has_any_role(roles: set[str], allowed: set[str]) -> bool:
     return bool(roles & allowed)
@@ -98,3 +191,47 @@ def can_manage_companies(roles: set[str]) -> bool:
     or change its schedule. Wider than user management because onboarding
     new entities is a founder-office / HR responsibility, not just IT."""
     return has_any_role(roles, COMPANY_MANAGE_ROLES)
+
+
+def can_edit_company_basic(roles: set[str]) -> bool:
+    """Can edit non-finance company fields (logo, addresses, phone, schedule).
+    HR is included — they may correct day-to-day operational info."""
+    return has_any_role(roles, COMPANY_EDIT_BASIC)
+
+
+def can_edit_company_finance(roles: set[str]) -> bool:
+    """Can edit finance/regulatory fields (CIN, GST, PAN, TAN, MSME, DPIIT,
+    bank accounts). Tighter than basic — HR is excluded so tax IDs can't be
+    quietly rewritten."""
+    return has_any_role(roles, COMPANY_EDIT_FINANCE)
+
+
+# ---------- Contacts ----------
+
+def can_view_contacts(roles: set[str]) -> bool:
+    """Can open the Contacts page at all. Per-category visibility still
+    gates which rows the API returns."""
+    return has_any_role(roles, CONTACTS_VIEW_ROLES)
+
+
+def can_edit_contacts(roles: set[str]) -> bool:
+    """Can create / edit / delete contacts in general. Per-category edit
+    rules further restrict this."""
+    return has_any_role(roles, CONTACTS_EDIT_ROLES)
+
+
+def can_view_contact_category(roles: set[str], category: str) -> bool:
+    """True iff caller may see contact rows of the given category."""
+    allowed = CONTACT_CATEGORY_VIEW.get(category)
+    return allowed is not None and has_any_role(roles, allowed)
+
+
+def can_edit_contact_category(roles: set[str], category: str) -> bool:
+    """True iff caller may create / edit contact rows of the given category."""
+    allowed = CONTACT_CATEGORY_EDIT.get(category)
+    return allowed is not None and has_any_role(roles, allowed)
+
+
+def visible_categories(roles: set[str]) -> set[str]:
+    """All categories the caller may see — used for server-side filtering."""
+    return {cat for cat, allowed in CONTACT_CATEGORY_VIEW.items() if has_any_role(roles, allowed)}

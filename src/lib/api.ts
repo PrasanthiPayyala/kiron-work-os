@@ -291,6 +291,48 @@ export const api = {
     return request(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   },
 
+  // ---------- Contacts + Organizations ----------
+  listOrganizations(): Promise<Record<string, unknown>[]> {
+    return request("/organizations");
+  },
+  createOrganization(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request("/organizations", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateOrganization(id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/organizations/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteOrganization(id: string): Promise<void> {
+    return request(`/organizations/${id}`, { method: "DELETE" });
+  },
+  listContacts(opts?: { category?: string; companyId?: string; search?: string }): Promise<Record<string, unknown>[]> {
+    const q = new URLSearchParams();
+    if (opts?.category) q.set("category", opts.category);
+    if (opts?.companyId) q.set("company_id", opts.companyId);
+    if (opts?.search) q.set("search", opts.search);
+    return request(`/contacts${q.toString() ? `?${q}` : ""}`);
+  },
+  getContact(id: string): Promise<Record<string, unknown>> {
+    return request(`/contacts/${id}`);
+  },
+  createContact(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request("/contacts", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateContact(id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/contacts/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteContact(id: string): Promise<void> {
+    return request(`/contacts/${id}`, { method: "DELETE" });
+  },
+  linkContactCompany(contactId: string, companyId: string, relationship?: string | null): Promise<Record<string, unknown>> {
+    return request(`/contacts/${contactId}/companies`, {
+      method: "POST",
+      body: JSON.stringify({ company_id: companyId, relationship: relationship ?? null }),
+    });
+  },
+  unlinkContactCompany(contactId: string, companyId: string): Promise<void> {
+    return request(`/contacts/${contactId}/companies/${companyId}`, { method: "DELETE" });
+  },
+
   // ---------- Holidays (HR/super_admin manages; everyone reads via /bootstrap) ----------
   listHolidays(opts?: { year?: number; companyId?: string }): Promise<Record<string, unknown>[]> {
     const q = new URLSearchParams();

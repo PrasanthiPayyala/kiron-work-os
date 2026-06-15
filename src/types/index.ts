@@ -385,3 +385,51 @@ export interface Notification {
   read: boolean;
   createdAt: ISODate;
 }
+
+// ---------- Contacts & Organizations ----------
+export type ContactCategory =
+  // Compliance
+  | "ca" | "cs" | "auditor" | "lawyer" | "banker" | "insurance" | "investor" | "govt_official"
+  // Business
+  | "client_poc" | "vendor_poc" | "channel_partner" | "collaborator"
+  | "advisor" | "mentor" | "press" | "industry_body"
+  // Recruitment
+  | "college" | "tpo" | "training_institute" | "recruitment_agency"
+  // IT / Vendor
+  | "domain_registrar" | "hosting_saas" | "agency"
+  | "other";
+
+export interface Organization {
+  id: ID;
+  name: string;
+  type?: string | null;
+  website?: string | null;
+  address?: string | null;
+  gstin?: string | null;
+  notes?: string | null;
+  isActive: boolean;
+  createdAt: ISODate;
+  createdBy?: ID | null;
+}
+
+export interface ContactCompanyLink {
+  companyId: ID;
+  relationship?: string | null;
+}
+
+export interface Contact {
+  id: ID;
+  fullName: string;
+  category: ContactCategory;
+  role?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  organizationId?: ID | null;
+  notes?: string | null;
+  isActive: boolean;
+  businessCardAttachmentId?: ID | null;
+  companyIds: ID[];
+  companyLinks: ContactCompanyLink[];
+  createdAt: ISODate;
+  createdBy?: ID | null;
+}
