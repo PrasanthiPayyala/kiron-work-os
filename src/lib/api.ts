@@ -31,9 +31,13 @@ export const tokens = {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Structured detail payload (e.g. `{message, blockers}` from
+   * /companies DELETE). Callers can narrow on `error.detail.blockers`. */
+  detail?: unknown;
+  constructor(status: number, message: string, detail?: unknown) {
     super(message);
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -64,14 +68,22 @@ async function request<T>(path: string, opts: RequestInit = {}, retry = true): P
     tokens.clear();
   }
   if (!res.ok) {
-    let detail = res.statusText;
+    let message: string = res.statusText;
+    let rawDetail: unknown = undefined;
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      rawDetail = body.detail;
+      // FastAPI lets handlers pass either a string or a structured dict
+      // as `detail`. Surface the string form for `.message`, keep the
+      // full payload on `.detail` so callers can pull out e.g. blockers.
+      if (typeof rawDetail === "string") message = rawDetail;
+      else if (rawDetail && typeof rawDetail === "object" && "message" in rawDetail) {
+        message = String((rawDetail as { message: unknown }).message);
+      }
     } catch {
       /* non-JSON error */
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, message, rawDetail);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -289,6 +301,12 @@ export const api = {
    * only the keys you actually want to change. */
   updateCompany(id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
     return request(`/companies/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  /** Hard delete a company. 409 with `{detail:{message, blockers}}` if the
+   * company still has profiles / projects / tasks / conversations linked —
+   * the caller renders the blocker counts and offers Mark inactive. */
+  deleteCompany(id: string): Promise<Record<string, unknown>> {
+    return request(`/companies/${id}`, { method: "DELETE" });
   },
 
   // ---------- Contacts + Organizations ----------

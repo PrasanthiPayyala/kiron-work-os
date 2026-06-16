@@ -96,8 +96,13 @@ _WRITABLE = {
 class CompanyProfile(BaseModel):
     """Full editable surface of a company. Every field is optional so PATCH
     behaves as a sparse update (unset = don't touch). POST uses the same
-    schema but requires `name` upfront."""
+    schema via CompanyCreate which redeclares `name` as required.
+
+    `name` is in this base because PATCH must accept name edits — without
+    it, Pydantic v2's default extra='ignore' silently drops the field and
+    the rename never reaches _build_update."""
     # Display / identity
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
     short_name: Optional[str] = None
     initials: Optional[str] = None
     color: Optional[str] = None
@@ -241,6 +246,51 @@ def create_company(
     return _get(db, new_id)
 
 
+@router.delete("/{company_id}")
+def delete_company(
+    company_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Hard delete a company. Refused if any of the non-cascading FK
+    sources have rows: profiles.home_company_id, projects.company_id,
+    tasks.company_id, conversations.company_id. The user should mark the
+    company inactive (PATCH is_active=false) instead in that case.
+
+    Cascade tables (departments, holidays, contact_companies,
+    company_bank_accounts, company_activity) are cleared automatically by
+    the FK ON DELETE CASCADE on the company row going away — no manual
+    cleanup needed.
+    """
+    if not can_manage_companies(user.roles):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to delete companies")
+    _get(db, company_id)  # 404 if absent
+
+    blockers: dict[str, int] = {}
+    checks = [
+        ("employees",     "SELECT count(*) FROM profiles      WHERE home_company_id = :id"),
+        ("projects",      "SELECT count(*) FROM projects      WHERE company_id      = :id"),
+        ("tasks",         "SELECT count(*) FROM tasks         WHERE company_id      = :id"),
+        ("conversations", "SELECT count(*) FROM conversations WHERE company_id      = :id"),
+    ]
+    for label, sql in checks:
+        n = db.execute(text(sql), {"id": company_id}).scalar() or 0
+        if n:
+            blockers[label] = n
+    if blockers:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Company has linked data — mark it inactive instead, or remove the linked rows first.",
+                "blockers": blockers,
+            },
+        )
+
+    db.execute(text("DELETE FROM companies WHERE id = :id"), {"id": company_id})
+    db.commit()
+    return {"deleted": company_id}
+
+
 @router.patch("/{company_id}")
 def update_company(
     company_id: str,
@@ -254,4 +304,23 @@ def update_company(
     _validate_schedule(body.work_days, body.work_start, body.work_end,
                        body.saturday_weeks_working)
     fields = body.model_dump(exclude_unset=True)
+
+    # If the caller is renaming, reject collisions with other entities.
+    # The unique constraint on companies.name would surface the same way
+    # via a 500, but a clean 409 with a clear message is what the UI
+    # expects (mirrors users.update_user email handling).
+    new_name = fields.get("name")
+    if new_name is not None:
+        new_name = new_name.strip()
+        if not new_name:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Name cannot be blank")
+        dup = db.execute(
+            text("SELECT 1 FROM companies WHERE lower(name) = lower(:n) AND id != :id"),
+            {"n": new_name, "id": company_id},
+        ).first()
+        if dup:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Another company already uses that name")
+        fields["name"] = new_name
+
     return _apply_update(db, company_id, fields)

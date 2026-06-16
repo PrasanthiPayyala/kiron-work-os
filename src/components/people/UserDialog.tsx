@@ -263,7 +263,16 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
             <Select value={companyId} onValueChange={setCompanyId}>
               <SelectTrigger><SelectValue placeholder="Select company" /></SelectTrigger>
               <SelectContent>
-                {companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                {companies
+                  // Inactive companies stay selectable for existing users
+                  // whose home is one (so editing them isn't broken), but
+                  // are hidden from the picker for fresh assignments.
+                  .filter((c) => c.isActive || c.id === companyId)
+                  .map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}{!c.isActive ? " (inactive)" : ""}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
