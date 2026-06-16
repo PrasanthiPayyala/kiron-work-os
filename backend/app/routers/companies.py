@@ -167,7 +167,13 @@ def _build_update(fields: dict, company_id: str) -> tuple[str | None, dict]:
             val = None
         if col in _JSONB_COLS:
             params[col] = json.dumps(val) if val is not None else None
-            set_parts.append(f"{col} = :{col}::jsonb")
+            # CAST(:name AS jsonb), not :name::jsonb — SQLAlchemy's text()
+            # parser refuses to bind :directors when it is immediately
+            # followed by `::` (postgres cast operator), so substitution
+            # silently failed and the params dict dropped the key. Every
+            # company save with a directors field (incl. empty list ->
+            # None) ended up 500-ing on a malformed UPDATE.
+            set_parts.append(f"{col} = CAST(:{col} AS jsonb)")
         else:
             params[col] = val
             set_parts.append(f"{col} = :{col}")
