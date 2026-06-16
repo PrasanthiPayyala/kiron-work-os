@@ -5,6 +5,7 @@
 // Server events (see backend/app/routers/ws.py):
 //   { type: "hello", user_id }
 //   { type: "message.new",      data: <raw message row + attachments> }
+//   { type: "message.deleted",  data: <raw message row, deleted_at set> }
 //   { type: "notification.new", data: <raw notification row> }
 //   { type: "approval.changed", data: <raw approval row> }
 
@@ -13,6 +14,7 @@ import { tokens } from "@/lib/api";
 export type RealtimeEvent =
   | { type: "hello"; user_id: string }
   | { type: "message.new"; data: Record<string, unknown> }
+  | { type: "message.deleted"; data: Record<string, unknown> }
   | { type: "notification.new"; data: Record<string, unknown> }
   | { type: "approval.changed"; data: Record<string, unknown> };
 

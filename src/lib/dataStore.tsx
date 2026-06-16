@@ -287,6 +287,15 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
           if (prev.messages.some((m) => m.id === msg.id)) return prev;
           return { ...prev, messages: [...prev.messages, msg] };
         });
+      } else if (ev.type === "message.deleted") {
+        const msg = mapMessage(ev.data as Parameters<typeof mapMessage>[0]);
+        setStore((prev) => {
+          const idx = prev.messages.findIndex((m) => m.id === msg.id);
+          if (idx === -1) return prev;
+          const next = [...prev.messages];
+          next[idx] = msg;
+          return { ...prev, messages: next };
+        });
       } else if (ev.type === "notification.new") {
         const n = mapNotification(ev.data as Parameters<typeof mapNotification>[0]);
         setStore((prev) => {

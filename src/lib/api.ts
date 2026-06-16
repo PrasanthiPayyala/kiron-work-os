@@ -404,6 +404,12 @@ export const api = {
   }): Promise<MessagePayload> {
     return request("/messages", { method: "POST", body: JSON.stringify(payload) });
   },
+  /** Soft-delete a chat message. Returns the updated row with deleted_at set,
+   * or `{already_deleted:true}` if it had already been deleted (idempotent).
+   * Sender of the message OR super_admin/founder is allowed. */
+  deleteMessage(messageId: string): Promise<MessagePayload | { id: string; already_deleted: boolean }> {
+    return request(`/messages/${messageId}`, { method: "DELETE" });
+  },
 
   createConversation(payload: {
     channel_type: "direct" | "team_group" | "company_group" | "project_group" | "announcement";

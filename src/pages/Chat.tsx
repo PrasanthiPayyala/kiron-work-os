@@ -19,8 +19,15 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   MessageSquare, Send, Hash, Megaphone, Users, Plus, Paperclip,
-  Download, X, UserPlus, Loader2, FileText,
+  Download, X, UserPlus, Loader2, FileText, MoreHorizontal, Trash2,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { Conversation } from "@/types";
 
 const groupKinds = [
@@ -55,10 +62,15 @@ function unreadCountFor(conv: Conversation, msgsForConv: { senderId: string; cre
 }
 
 export default function Chat() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const { conversations, messages, users, getUser, refresh } = useDataStore();
+  // Super_admin + founder can delete anyone's message (matches backend
+  // DELETE_ANYONE_ROLES). Sender can always delete their own — the per-
+  // message check still happens below.
+  const canModerate = role === "super_admin" || role === "founder";
   const [active, setActive] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [confirmDeleteMsg, setConfirmDeleteMsg] = useState<string | null>(null);
   const [pending, setPending] = useState<AttachmentRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -103,6 +115,21 @@ export default function Chat() {
   };
 
   const removePending = (id: string) => setPending((p) => p.filter((a) => a.id !== id));
+
+  const runDelete = async () => {
+    if (!confirmDeleteMsg) return;
+    try {
+      await api.deleteMessage(confirmDeleteMsg);
+      // The realtime broadcast patches the row for every member of the
+      // conversation; this caller sees it as soon as the WS event arrives.
+      // For the rare WS-blip case, a refresh() ensures eventual consistency.
+      void refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't delete");
+    } finally {
+      setConfirmDeleteMsg(null);
+    }
+  };
 
   const send = async () => {
     if (!user || !active) return;
@@ -215,15 +242,43 @@ export default function Chat() {
                 {convMsgs.map((m) => {
                   const u = getUser(m.senderId);
                   const isMine = m.senderId === user?.id;
+                  const isDeleted = !!m.deletedAt;
+                  const canDelete = !isDeleted && (isMine || canModerate);
                   return (
-                    <div key={m.id} className={cn("flex gap-2.5", isMine && "flex-row-reverse")}>
+                    <div key={m.id} className={cn("group flex gap-2.5", isMine && "flex-row-reverse")}>
                       <UserAvatar userId={m.senderId} size="sm" />
                       <div className={cn("max-w-[70%] flex-1", isMine && "items-end")}>
                         <div className={cn("flex items-baseline gap-2", isMine && "justify-end")}>
                           <span className="text-sm font-semibold">{u?.name ?? "Unknown"}</span>
                           <span className="text-[10px] text-muted-foreground">{formatTime(m.createdAt)}</span>
+                          {canDelete && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-surface-muted group-hover:opacity-100"
+                                  aria-label="Message actions"
+                                >
+                                  <MoreHorizontal className="h-3.5 w-3.5" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align={isMine ? "end" : "start"} className="w-44">
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setConfirmDeleteMsg(m.id)}
+                                >
+                                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete message
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </div>
-                        {m.body && (
+                        {isDeleted ? (
+                          <p className="mt-1 inline-block whitespace-pre-wrap rounded-lg bg-surface-muted px-3 py-2 text-sm italic text-muted-foreground">
+                            This message was deleted
+                          </p>
+                        ) : (
+                          <>
+                          {m.body && (
                           <p className={cn(
                             "mt-1 inline-block whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
                             isMine ? "bg-primary text-primary-foreground" : "bg-surface-muted",
@@ -251,6 +306,8 @@ export default function Chat() {
                               </li>
                             ))}
                           </ul>
+                        )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -322,6 +379,24 @@ export default function Chat() {
         onClose={() => setNewConvOpen(false)}
         onCreated={(id) => { setActive(id); refresh(); }}
       />
+
+      <AlertDialog open={!!confirmDeleteMsg} onOpenChange={(o) => !o && setConfirmDeleteMsg(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this message?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Other people in the conversation will see "This message was deleted" in its place.
+              The original text is kept in the audit log but is no longer visible. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={runDelete} className="bg-destructive hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

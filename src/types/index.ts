@@ -365,6 +365,10 @@ export interface Message {
   taskRefId?: ID;
   /** Lightweight metadata returned alongside message rows; download via api.downloadFile(id). */
   attachments?: MessageAttachmentMeta[];
+  /** Soft-delete tombstone. When set, the message body is suppressed in
+   * the UI and replaced with "This message was deleted". */
+  deletedAt?: ISODate | null;
+  deletedBy?: ID | null;
 }
 
 // ---------- Misc ----------

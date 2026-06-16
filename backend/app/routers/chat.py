@@ -22,6 +22,9 @@ from . import ws as ws_router
 router = APIRouter(prefix="/messages", tags=["chat"])
 
 CONV_ELEVATED = {"super_admin", "founder"}
+# Who can delete somebody *else's* message (moderation / confidentiality
+# cleanup). The sender of a message can always delete their own.
+DELETE_ANYONE_ROLES = {"super_admin", "founder"}
 
 
 class MessageCreate(BaseModel):
@@ -98,4 +101,46 @@ def send(
     # asyncio.create_task path silently failed from the threadpool).
     background.add_task(ws_router.message_new, payload, body.conversation_id)
 
+    return payload
+
+
+@router.delete("/{message_id}")
+def delete(
+    message_id: str,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Soft-delete a chat message — sets deleted_at + deleted_by, body stays
+    in place for the audit row. The UI renders a tombstone. Sender can
+    delete their own; super_admin and founder can delete anyone's.
+
+    Already-deleted messages return 200 (idempotent) so retries are safe.
+    """
+    msg = db.execute(
+        text("SELECT id, conversation_id, sender_id, deleted_at FROM messages WHERE id = :id"),
+        {"id": message_id},
+    ).mappings().first()
+    if not msg:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    if msg["deleted_at"] is not None:
+        return {"id": message_id, "already_deleted": True}
+
+    is_sender = str(msg["sender_id"]) == user.id
+    is_mod = bool(user.roles & DELETE_ANYONE_ROLES)
+    if not (is_sender or is_mod):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the sender or an admin can delete this message")
+
+    db.execute(
+        text("UPDATE messages SET deleted_at = now(), deleted_by = :u WHERE id = :id"),
+        {"u": user.id, "id": message_id},
+    )
+    db.commit()
+
+    updated = db.execute(
+        text("SELECT * FROM messages WHERE id = :id"), {"id": message_id}
+    ).mappings().first()
+    payload = row(updated)
+
+    background.add_task(ws_router.message_deleted, payload, str(msg["conversation_id"]))
     return payload

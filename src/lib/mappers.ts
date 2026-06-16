@@ -388,6 +388,8 @@ export function mapMessage(r: DbMessage): Message {
     mentions: r.mentions ?? [],
     taskRefId: r.task_ref_id ?? undefined,
     attachments,
+    deletedAt: (r as any).deleted_at ?? null,
+    deletedBy: (r as any).deleted_by ?? null,
   };
 }
 

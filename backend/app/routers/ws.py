@@ -86,6 +86,19 @@ async def message_new(message_row: dict, conversation_id: str) -> None:
     await hub.send_to_users(user_ids, {"type": "message.new", "data": message_row})
 
 
+async def message_deleted(message_row: dict, conversation_id: str) -> None:
+    """Broadcast a soft-delete to every member of the conversation. Clients
+    patch the row in their local store so the tombstone appears in real
+    time without a refresh."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT user_id FROM conversation_members WHERE conversation_id = :c"),
+            {"c": conversation_id},
+        ).all()
+    user_ids = [str(r[0]) for r in rows]
+    await hub.send_to_users(user_ids, {"type": "message.deleted", "data": message_row})
+
+
 async def notification_new(notification_row: dict) -> None:
     await hub.send_to_users(
         [str(notification_row["user_id"])],
