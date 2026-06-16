@@ -42,3 +42,7 @@ supabase/.temp/
 
 # Claude Code local settings (may contain secrets in permission rules)
 .claude/settings.local.json
+
+# Onboarding output — contains temporary passwords for new accounts.
+# Must be distributed privately then shredded; never committed.
+scripts/temp_passwords.csv
