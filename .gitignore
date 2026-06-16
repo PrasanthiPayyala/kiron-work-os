@@ -46,3 +46,7 @@ supabase/.temp/
 # Onboarding output — contains temporary passwords for new accounts.
 # Must be distributed privately then shredded; never committed.
 scripts/temp_passwords.csv
+
+# Python bytecode caches (created by py_compile / running scripts)
+__pycache__/
+*.pyc
