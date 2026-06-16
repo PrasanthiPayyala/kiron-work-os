@@ -139,9 +139,6 @@ export function mapCompany(r: DbCompany): Company {
       kiranDesignation: r.kiran_designation ?? null,
       prashantiDesignation: r.prashanti_designation ?? null,
       certificates: arr(r.certificates),
-      managingCaName: r.managing_ca_name ?? null,
-      managingCaPhone: r.managing_ca_phone ?? null,
-      managingCaEmail: r.managing_ca_email ?? null,
       caDocumentsHeld: arr(r.ca_documents_held),
     },
   };

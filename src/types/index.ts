@@ -80,11 +80,11 @@ export interface Company {
     directors: Director[];
     kiranDesignation?: string | null;
     prashantiDesignation?: string | null;
-    // Compliance
+    // Compliance — managing CA contacts now live in the Contacts module
+    // (linked via contact_companies with category='ca'). Migration 0011
+    // dropped the single-CA columns; the page surfaces linked CAs as
+    // read-only and editing happens through Contacts.
     certificates: string[];
-    managingCaName?: string | null;
-    managingCaPhone?: string | null;
-    managingCaEmail?: string | null;
     caDocumentsHeld: string[];
   };
 }

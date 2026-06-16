@@ -254,9 +254,6 @@ type FormState = {
   prashantiDesignation: string;
   // Compliance
   certificates: string[];
-  managingCaName: string;
-  managingCaPhone: string;
-  managingCaEmail: string;
   caDocumentsHeld: string[];
 };
 
@@ -272,7 +269,6 @@ const blank = (): FormState => ({
   corporateAddresses: [], operationsAddresses: [], phoneNumbers: [],
   directors: [], kiranDesignation: "", prashantiDesignation: "",
   certificates: [],
-  managingCaName: "", managingCaPhone: "", managingCaEmail: "",
   caDocumentsHeld: [],
 });
 
@@ -307,9 +303,6 @@ const fromCompany = (c: Company): FormState => ({
   kiranDesignation: c.profile.kiranDesignation ?? "",
   prashantiDesignation: c.profile.prashantiDesignation ?? "",
   certificates: c.profile.certificates,
-  managingCaName: c.profile.managingCaName ?? "",
-  managingCaPhone: c.profile.managingCaPhone ?? "",
-  managingCaEmail: c.profile.managingCaEmail ?? "",
   caDocumentsHeld: c.profile.caDocumentsHeld,
 });
 
@@ -357,9 +350,6 @@ function toPayload(f: FormState): Record<string, unknown> {
     kiran_designation: f.kiranDesignation.trim() || null,
     prashanti_designation: f.prashantiDesignation.trim() || null,
     certificates: cleanList(f.certificates),
-    managing_ca_name: f.managingCaName.trim() || null,
-    managing_ca_phone: f.managingCaPhone.trim() || null,
-    managing_ca_email: f.managingCaEmail.trim() || null,
     ca_documents_held: cleanList(f.caDocumentsHeld),
   };
 }
@@ -607,21 +597,12 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
                 onChange={(v) => set("certificates", v)}
               />
               <div className="rounded-md border border-border bg-surface-muted/40 p-3 space-y-3">
-                <p className="text-xs font-medium text-muted-foreground">Managing CA</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="cd-ca-name">CA name</Label>
-                    <Input id="cd-ca-name" value={form.managingCaName} onChange={(e) => set("managingCaName", e.target.value)} placeholder="CA firm or individual" />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="cd-ca-phone">CA phone</Label>
-                    <Input id="cd-ca-phone" type="tel" value={form.managingCaPhone} onChange={(e) => set("managingCaPhone", e.target.value)} placeholder="+91 ..." />
-                  </div>
-                  <div className="grid gap-1.5 col-span-2">
-                    <Label htmlFor="cd-ca-email">CA email</Label>
-                    <Input id="cd-ca-email" type="email" value={form.managingCaEmail} onChange={(e) => set("managingCaEmail", e.target.value)} placeholder="ca@example.com" />
-                  </div>
-                </div>
+                <p className="text-xs font-medium text-muted-foreground">Managing CAs</p>
+                <p className="text-xs text-muted-foreground">
+                  CAs are managed in the <span className="font-medium text-foreground">Contacts</span> module.
+                  Add a contact with category <span className="font-medium">CA</span> and link it to this
+                  company — multiple CAs per entity are supported there.
+                </p>
                 <MultiInput
                   label="Documents held by the CA"
                   values={form.caDocumentsHeld}

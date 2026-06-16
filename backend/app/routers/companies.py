@@ -79,9 +79,11 @@ _WRITABLE = {
     "registered_address", "corporate_addresses", "operations_addresses", "phone_numbers",
     # Directors + founder principal designations
     "directors", "kiran_designation", "prashanti_designation",
-    # Compliance
-    "certificates", "managing_ca_name", "managing_ca_phone", "managing_ca_email",
-    "ca_documents_held",
+    # Compliance — managing_ca_* moved into Contacts (migration 0011).
+    # Linked CAs are now contacts with category='ca' joined via
+    # contact_companies. ca_documents_held stays on the company (it's a
+    # list of certificates the company holds, not specific to one CA).
+    "certificates", "ca_documents_held",
     # Renaming a company is allowed but rare; the unique constraint surfaces
     # the conflict at the DB layer.
     "name",
@@ -132,11 +134,9 @@ class CompanyProfile(BaseModel):
     )
     kiran_designation: Optional[str] = None
     prashanti_designation: Optional[str] = None
-    # Compliance
+    # Compliance — CA contacts now live in the contacts table linked via
+    # contact_companies (migration 0011). Only the document-list stays here.
     certificates: Optional[list[str]] = None
-    managing_ca_name: Optional[str] = None
-    managing_ca_phone: Optional[str] = None
-    managing_ca_email: Optional[EmailStr] = None
     ca_documents_held: Optional[list[str]] = None
 
 
