@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
-import type { Company, Director } from "@/types";
+import type { Company, Director, LeadershipMember } from "@/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -121,6 +121,61 @@ function DirectorList({
       </div>
       <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={add}>
         <Plus className="h-3.5 w-3.5" /> Add director
+      </Button>
+    </div>
+  );
+}
+
+// ---------- Leadership (name + designation, no DIN) ----------
+function LeadershipList({
+  values, onChange,
+}: {
+  values: LeadershipMember[];
+  onChange: (next: LeadershipMember[]) => void;
+}) {
+  const update = (idx: number, patch: Partial<LeadershipMember>) => {
+    const next = values.map((d, i) => i === idx ? { ...d, ...patch } : d);
+    onChange(next);
+  };
+  const remove = (idx: number) => onChange(values.filter((_, i) => i !== idx));
+  const add = () => onChange([...values, { name: "", designation: "" }]);
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Leadership</Label>
+      <p className="text-[11px] text-muted-foreground">
+        Operational leaders (CEO / COO / heads of department / advisors). Distinct from Directors above — no DIN required.
+      </p>
+      <div className="space-y-2">
+        {values.length === 0 && (
+          <p className="text-[11px] italic text-muted-foreground">No leadership members added yet.</p>
+        )}
+        {values.map((m, i) => (
+          <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-1.5">
+            <Input
+              value={m.name}
+              placeholder="Full name"
+              onChange={(e) => update(i, { name: e.target.value })}
+            />
+            <Input
+              value={m.designation}
+              placeholder="Designation (e.g. CEO, COO, Head of Sales)"
+              onChange={(e) => update(i, { designation: e.target.value })}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+              onClick={() => remove(i)}
+              aria-label="Remove leader"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={add}>
+        <Plus className="h-3.5 w-3.5" /> Add leader
       </Button>
     </div>
   );
@@ -248,8 +303,9 @@ type FormState = {
   corporateAddresses: string[];
   operationsAddresses: string[];
   phoneNumbers: string[];
-  // Directors
+  // Directors + leadership + founder principal designations
   directors: Director[];
+  leadership: LeadershipMember[];
   kiranDesignation: string;
   prashantiDesignation: string;
   // Compliance
@@ -267,7 +323,7 @@ const blank = (): FormState => ({
   dpiitStartupNumber: "",
   registeredAddress: "",
   corporateAddresses: [], operationsAddresses: [], phoneNumbers: [],
-  directors: [], kiranDesignation: "", prashantiDesignation: "",
+  directors: [], leadership: [], kiranDesignation: "", prashantiDesignation: "",
   certificates: [],
   caDocumentsHeld: [],
 });
@@ -300,6 +356,7 @@ const fromCompany = (c: Company): FormState => ({
   operationsAddresses: c.profile.operationsAddresses,
   phoneNumbers: c.profile.phoneNumbers,
   directors: c.profile.directors,
+  leadership: c.profile.leadership,
   kiranDesignation: c.profile.kiranDesignation ?? "",
   prashantiDesignation: c.profile.prashantiDesignation ?? "",
   certificates: c.profile.certificates,
@@ -319,6 +376,10 @@ function toPayload(f: FormState): Record<string, unknown> {
         din: d.din?.trim() || null,
       }))
       .filter((d) => d.name || d.designation);
+  const cleanLeaders = (xs: LeadershipMember[]) =>
+    xs
+      .map((m) => ({ name: m.name.trim(), designation: m.designation.trim() }))
+      .filter((m) => m.name || m.designation);
   return {
     name: f.name.trim(),
     short_name: f.shortName.trim() || null,
@@ -347,6 +408,7 @@ function toPayload(f: FormState): Record<string, unknown> {
     operations_addresses: cleanList(f.operationsAddresses),
     phone_numbers: cleanList(f.phoneNumbers),
     directors: cleanDirs(f.directors),
+    leadership: cleanLeaders(f.leadership),
     kiran_designation: f.kiranDesignation.trim() || null,
     prashanti_designation: f.prashantiDesignation.trim() || null,
     certificates: cleanList(f.certificates),
@@ -587,6 +649,7 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
                 </div>
               </div>
               <DirectorList values={form.directors} onChange={(v) => set("directors", v)} />
+              <LeadershipList values={form.leadership} onChange={(v) => set("leadership", v)} />
             </TabsContent>
 
             <TabsContent value="compliance" className="space-y-3">

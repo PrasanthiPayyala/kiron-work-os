@@ -97,6 +97,16 @@ const directorsIn = (v: unknown): Director[] => {
     }));
 };
 
+const leadershipIn = (v: unknown): import("@/types").LeadershipMember[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
+    .map((d) => ({
+      name: String(d.name ?? ""),
+      designation: String(d.designation ?? ""),
+    }));
+};
+
 export function mapCompany(r: DbCompany): Company {
   return {
     id: r.id,
@@ -136,6 +146,7 @@ export function mapCompany(r: DbCompany): Company {
       operationsAddresses: arr(r.operations_addresses),
       phoneNumbers: arr(r.phone_numbers),
       directors: directorsIn(r.directors),
+      leadership: leadershipIn((r as any).leadership),
       kiranDesignation: r.kiran_designation ?? null,
       prashantiDesignation: r.prashanti_designation ?? null,
       certificates: arr(r.certificates),

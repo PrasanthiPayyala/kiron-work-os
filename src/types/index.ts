@@ -32,11 +32,20 @@ export interface Schedule {
 }
 
 /** A director / board member on a company profile. `din` is the Indian
- * Director Identification Number (8 digits). */
+ * Director Identification Number (8 digits). Directors are formally
+ * registered with the MCA. */
 export interface Director {
   name: string;
   designation: string;
   din?: string | null;
+}
+
+/** An operational leadership member (CEO, COO, CTO, head of department,
+ * advisory chair, etc.). Distinct from `Director` because no MCA
+ * registration / DIN is involved — purely organisational. */
+export interface LeadershipMember {
+  name: string;
+  designation: string;
 }
 
 export interface Company {
@@ -76,8 +85,10 @@ export interface Company {
     corporateAddresses: string[];
     operationsAddresses: string[];
     phoneNumbers: string[];
-    // Directors + per-entity founder designations
+    // Directors (legal — MCA-registered) + leadership (operational, no
+    // DIN required) + per-entity founder principal designations.
     directors: Director[];
+    leadership: LeadershipMember[];
     kiranDesignation?: string | null;
     prashantiDesignation?: string | null;
     // Compliance — managing CA contacts now live in the Contacts module

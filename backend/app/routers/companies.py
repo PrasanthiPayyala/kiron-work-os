@@ -77,8 +77,11 @@ _WRITABLE = {
     "dpiit_startup_number",
     # Addresses + phones
     "registered_address", "corporate_addresses", "operations_addresses", "phone_numbers",
-    # Directors + founder principal designations
-    "directors", "kiran_designation", "prashanti_designation",
+    # Directors (legal — registered with MCA, get a DIN) and leadership
+    # (operational — CEO/COO/heads-of, no DIN). Both jsonb lists of
+    # {name, designation, …}. Founder principal designations are stored
+    # per-entity as plain text columns.
+    "directors", "leadership", "kiran_designation", "prashanti_designation",
     # Compliance — managing_ca_* moved into Contacts (migration 0011).
     # Linked CAs are now contacts with category='ca' joined via
     # contact_companies. ca_documents_held stays on the company (it's a
@@ -130,7 +133,10 @@ class CompanyProfile(BaseModel):
     phone_numbers: Optional[list[str]] = None
     # Directors + founder principal designations
     directors: Optional[list[dict]] = Field(
-        None, description="List of {name, designation, din?}"
+        None, description="List of {name, designation, din?} — registered with MCA"
+    )
+    leadership: Optional[list[dict]] = Field(
+        None, description="List of {name, designation} — operational leadership (CEO/COO/etc.)"
     )
     kiran_designation: Optional[str] = None
     prashanti_designation: Optional[str] = None
@@ -148,7 +154,7 @@ class CompanyCreate(CompanyProfile):
 # Columns stored as Postgres jsonb. We bind the value as a JSON string and
 # cast in SQL — psycopg's Python list -> Postgres ARRAY adapter would
 # otherwise mis-route the bind for jsonb targets.
-_JSONB_COLS = {"directors"}
+_JSONB_COLS = {"directors", "leadership"}
 
 
 def _build_update(fields: dict, company_id: str) -> tuple[str | None, dict]:
