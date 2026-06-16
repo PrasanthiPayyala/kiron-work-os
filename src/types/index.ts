@@ -48,6 +48,30 @@ export interface LeadershipMember {
   designation: string;
 }
 
+/** A bank account a group entity holds. Lives in the company_bank_accounts
+ * table; finance-scoped (HR can't see). One account per row; is_primary
+ * marks the default for invoicing / salary debit. */
+export interface CompanyBankAccount {
+  id: ID;
+  companyId: ID;
+  bankName: string;
+  accountNumber: string;
+  ifsc?: string | null;
+  branch?: string | null;
+  accountType?: string | null;
+  isPrimary: boolean;
+  notes?: string | null;
+}
+
+/** Industry-specific licence (FSSAI, IATA, ITDC, SEBI, factory licence,
+ * pollution control board, etc.). Stored as a jsonb list on the company. */
+export interface IndustryLicence {
+  licence_type: string;
+  number: string;
+  issued_at?: string | null;     // YYYY-MM-DD
+  expires_at?: string | null;    // YYYY-MM-DD
+}
+
 export interface Company {
   id: ID;
   name: string;
@@ -97,6 +121,15 @@ export interface Company {
     // read-only and editing happens through Contacts.
     certificates: string[];
     caDocumentsHeld: string[];
+    // Statutory employer numbers (migration 0010) — these feed the
+    // compliance-reminder calendar (PF/ESI monthly, PT half/yearly).
+    esiNumber?: string | null;
+    epfNumber?: string | null;
+    professionalTaxNumber?: string | null;
+    shopsEstablishmentNumber?: string | null;
+    shopsEstablishmentExpiresAt?: ISODate | null;
+    iecNumber?: string | null;
+    industryLicences: IndustryLicence[];
   };
 }
 

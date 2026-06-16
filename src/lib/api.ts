@@ -309,6 +309,24 @@ export const api = {
     return request(`/companies/${id}`, { method: "DELETE" });
   },
 
+  // ---------- Bank accounts (finance-scoped — HR can't see/edit) ----------
+  listBankAccounts(companyId: string): Promise<Record<string, unknown>[]> {
+    return request(`/companies/${companyId}/bank-accounts`);
+  },
+  createBankAccount(companyId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/companies/${companyId}/bank-accounts`, {
+      method: "POST", body: JSON.stringify(payload),
+    });
+  },
+  updateBankAccount(accountId: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request(`/bank-accounts/${accountId}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    });
+  },
+  deleteBankAccount(accountId: string): Promise<void> {
+    return request(`/bank-accounts/${accountId}`, { method: "DELETE" });
+  },
+
   // ---------- Contacts + Organizations ----------
   listOrganizations(): Promise<Record<string, unknown>[]> {
     return request("/organizations");

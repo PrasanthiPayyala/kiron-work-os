@@ -107,6 +107,18 @@ const leadershipIn = (v: unknown): import("@/types").LeadershipMember[] => {
     }));
 };
 
+const industryLicencesIn = (v: unknown): import("@/types").IndustryLicence[] => {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
+    .map((d) => ({
+      licence_type: String(d.licence_type ?? d.license_type ?? ""),
+      number: String(d.number ?? ""),
+      issued_at: d.issued_at != null ? String(d.issued_at).slice(0, 10) : null,
+      expires_at: d.expires_at != null ? String(d.expires_at).slice(0, 10) : null,
+    }));
+};
+
 export function mapCompany(r: DbCompany): Company {
   return {
     id: r.id,
@@ -151,6 +163,13 @@ export function mapCompany(r: DbCompany): Company {
       prashantiDesignation: r.prashanti_designation ?? null,
       certificates: arr(r.certificates),
       caDocumentsHeld: arr(r.ca_documents_held),
+      esiNumber: (r as any).esi_number ?? null,
+      epfNumber: (r as any).epf_number ?? null,
+      professionalTaxNumber: (r as any).professional_tax_number ?? null,
+      shopsEstablishmentNumber: (r as any).shops_establishment_number ?? null,
+      shopsEstablishmentExpiresAt: isoDate((r as any).shops_establishment_expires_at),
+      iecNumber: (r as any).iec_number ?? null,
+      industryLicences: industryLicencesIn((r as any).industry_licenses),
     },
   };
 }

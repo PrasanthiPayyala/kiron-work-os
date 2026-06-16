@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth, can } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
-import type { Company, Director, LeadershipMember } from "@/types";
+import type { Company, Director, LeadershipMember, IndustryLicence } from "@/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, X, Upload, Loader2 } from "lucide-react";
+import { BankAccountsSection } from "./BankAccountsSection";
 
 // ---------- Repeatable string list (URLs, addresses, phones, certificates) ----------
 function MultiInput({
@@ -122,6 +123,79 @@ function DirectorList({
       </div>
       <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={add}>
         <Plus className="h-3.5 w-3.5" /> Add director
+      </Button>
+    </div>
+  );
+}
+
+// ---------- Industry licences (FSSAI, IATA, factory, etc.) ----------
+function IndustryLicenceList({
+  values, onChange, disabled,
+}: {
+  values: IndustryLicence[];
+  onChange: (next: IndustryLicence[]) => void;
+  disabled?: boolean;
+}) {
+  const update = (idx: number, patch: Partial<IndustryLicence>) => {
+    const next = values.map((l, i) => i === idx ? { ...l, ...patch } : l);
+    onChange(next);
+  };
+  const remove = (idx: number) => onChange(values.filter((_, i) => i !== idx));
+  const add = () => onChange([...values, { licence_type: "", number: "", issued_at: null, expires_at: null }]);
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Industry licences</Label>
+      <p className="text-[11px] text-muted-foreground">
+        FSSAI, IATA, ITDC, factory licence, pollution control, etc. — anything sector-specific with a renewal date.
+      </p>
+      <div className="space-y-2">
+        {values.length === 0 && (
+          <p className="text-[11px] italic text-muted-foreground">No licences added yet.</p>
+        )}
+        {values.map((l, i) => (
+          <div key={i} className="grid grid-cols-[1fr_1fr_140px_140px_auto] gap-1.5">
+            <Input
+              value={l.licence_type}
+              disabled={disabled}
+              placeholder="Licence type (e.g. FSSAI)"
+              onChange={(e) => update(i, { licence_type: e.target.value })}
+            />
+            <Input
+              value={l.number}
+              disabled={disabled}
+              placeholder="Licence number"
+              onChange={(e) => update(i, { number: e.target.value })}
+            />
+            <Input
+              type="date"
+              value={l.issued_at ?? ""}
+              disabled={disabled}
+              title="Issued"
+              onChange={(e) => update(i, { issued_at: e.target.value || null })}
+            />
+            <Input
+              type="date"
+              value={l.expires_at ?? ""}
+              disabled={disabled}
+              title="Expires"
+              onChange={(e) => update(i, { expires_at: e.target.value || null })}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={disabled}
+              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+              onClick={() => remove(i)}
+              aria-label="Remove licence"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={add} disabled={disabled}>
+        <Plus className="h-3.5 w-3.5" /> Add licence
       </Button>
     </div>
   );
@@ -325,6 +399,14 @@ type FormState = {
   // Compliance
   certificates: string[];
   caDocumentsHeld: string[];
+  // Statutory employer numbers + licences (migration 0010)
+  esiNumber: string;
+  epfNumber: string;
+  professionalTaxNumber: string;
+  shopsEstablishmentNumber: string;
+  shopsEstablishmentExpiresAt: string;  // YYYY-MM-DD
+  iecNumber: string;
+  industryLicences: IndustryLicence[];
 };
 
 const blank = (): FormState => ({
@@ -340,6 +422,10 @@ const blank = (): FormState => ({
   directors: [], leadership: [], kiranDesignation: "", prashantiDesignation: "",
   certificates: [],
   caDocumentsHeld: [],
+  esiNumber: "", epfNumber: "", professionalTaxNumber: "",
+  shopsEstablishmentNumber: "", shopsEstablishmentExpiresAt: "",
+  iecNumber: "",
+  industryLicences: [],
 });
 
 const fromCompany = (c: Company): FormState => ({
@@ -375,6 +461,13 @@ const fromCompany = (c: Company): FormState => ({
   prashantiDesignation: c.profile.prashantiDesignation ?? "",
   certificates: c.profile.certificates,
   caDocumentsHeld: c.profile.caDocumentsHeld,
+  esiNumber: c.profile.esiNumber ?? "",
+  epfNumber: c.profile.epfNumber ?? "",
+  professionalTaxNumber: c.profile.professionalTaxNumber ?? "",
+  shopsEstablishmentNumber: c.profile.shopsEstablishmentNumber ?? "",
+  shopsEstablishmentExpiresAt: c.profile.shopsEstablishmentExpiresAt ?? "",
+  iecNumber: c.profile.iecNumber ?? "",
+  industryLicences: c.profile.industryLicences,
 });
 
 /** Strip empty values from the form so the backend can NULL them, and
@@ -394,6 +487,15 @@ function toPayload(f: FormState): Record<string, unknown> {
     xs
       .map((m) => ({ name: m.name.trim(), designation: m.designation.trim() }))
       .filter((m) => m.name || m.designation);
+  const cleanLicences = (xs: IndustryLicence[]) =>
+    xs
+      .map((l) => ({
+        licence_type: l.licence_type.trim(),
+        number: l.number.trim(),
+        issued_at: l.issued_at || null,
+        expires_at: l.expires_at || null,
+      }))
+      .filter((l) => l.licence_type || l.number);
   return {
     name: f.name.trim(),
     short_name: f.shortName.trim() || null,
@@ -427,6 +529,13 @@ function toPayload(f: FormState): Record<string, unknown> {
     prashanti_designation: f.prashantiDesignation.trim() || null,
     certificates: cleanList(f.certificates),
     ca_documents_held: cleanList(f.caDocumentsHeld),
+    esi_number: f.esiNumber.trim() || null,
+    epf_number: f.epfNumber.trim() || null,
+    professional_tax_number: f.professionalTaxNumber.trim() || null,
+    shops_establishment_number: f.shopsEstablishmentNumber.trim() || null,
+    shops_establishment_expires_at: f.shopsEstablishmentExpiresAt || null,
+    iec_number: f.iecNumber.trim() || null,
+    industry_licenses: cleanLicences(f.industryLicences),
   };
 }
 
@@ -501,12 +610,15 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
         </DialogHeader>
 
         <Tabs defaultValue="basics" className="flex-1 min-h-0 flex flex-col">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className={canEditFinance ? "grid w-full grid-cols-6" : "grid w-full grid-cols-5"}>
             <TabsTrigger value="basics">Basics</TabsTrigger>
             <TabsTrigger value="registration">Registration</TabsTrigger>
             <TabsTrigger value="addresses">Addresses</TabsTrigger>
             <TabsTrigger value="people">People</TabsTrigger>
             <TabsTrigger value="compliance">Compliance</TabsTrigger>
+            {/* Bank tab is finance-scoped — HR doesn't even see it. The
+                column shrinks to 5 in that case so the tabs still fill. */}
+            {canEditFinance && <TabsTrigger value="bank">Bank</TabsTrigger>}
           </TabsList>
 
           {/* The body is the scrollable region. min-h-0 + overflow-y-auto is
@@ -685,13 +797,62 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
               <LeadershipList values={form.leadership} onChange={(v) => set("leadership", v)} />
             </TabsContent>
 
-            <TabsContent value="compliance" className="space-y-3">
+            <TabsContent value="compliance" className="space-y-4">
+              {!canEditFinance && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Statutory numbers and industry licences are view-only for your role.
+                  Ask the founder office to update ESI, EPF, Professional Tax, Shops &
+                  Establishment, IEC, or industry licences.
+                </div>
+              )}
               <MultiInput
                 label="Certificates available"
                 values={form.certificates}
                 placeholder="ISO 9001, ISMS, etc."
                 onChange={(v) => set("certificates", v)}
               />
+
+              <div className="rounded-md border border-border bg-surface-muted/40 p-3 space-y-3">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Statutory employer numbers</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Used by the compliance-reminder calendar for monthly PF/ESI, half-yearly PT, and annual S&E renewals.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cd-esi" className="text-xs">ESI registration number</Label>
+                    <Input id="cd-esi" disabled={!canEditFinance} value={form.esiNumber} onChange={(e) => set("esiNumber", e.target.value)} placeholder="13-12345-678" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cd-epf" className="text-xs">EPF / PF code</Label>
+                    <Input id="cd-epf" disabled={!canEditFinance} value={form.epfNumber} onChange={(e) => set("epfNumber", e.target.value)} placeholder="AP/HYD/0123456" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cd-pt" className="text-xs">Professional Tax (PT) number</Label>
+                    <Input id="cd-pt" disabled={!canEditFinance} value={form.professionalTaxNumber} onChange={(e) => set("professionalTaxNumber", e.target.value)} placeholder="State-specific" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cd-iec" className="text-xs">IEC (Import-Export Code)</Label>
+                    <Input id="cd-iec" disabled={!canEditFinance} value={form.iecNumber} onChange={(e) => set("iecNumber", e.target.value)} placeholder="10-digit IEC" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cd-se" className="text-xs">Shops &amp; Establishment number</Label>
+                    <Input id="cd-se" disabled={!canEditFinance} value={form.shopsEstablishmentNumber} onChange={(e) => set("shopsEstablishmentNumber", e.target.value)} placeholder="State-specific" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cd-se-exp" className="text-xs">S&amp;E renewal due</Label>
+                    <Input id="cd-se-exp" type="date" disabled={!canEditFinance} value={form.shopsEstablishmentExpiresAt} onChange={(e) => set("shopsEstablishmentExpiresAt", e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              <IndustryLicenceList
+                values={form.industryLicences}
+                onChange={(v) => set("industryLicences", v)}
+                disabled={!canEditFinance}
+              />
+
               <div className="rounded-md border border-border bg-surface-muted/40 p-3 space-y-3">
                 <p className="text-xs font-medium text-muted-foreground">Managing CAs</p>
                 <p className="text-xs text-muted-foreground">
@@ -707,6 +868,19 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
                 />
               </div>
             </TabsContent>
+
+            {canEditFinance && (
+              <TabsContent value="bank" className="space-y-3">
+                {mode === "create" ? (
+                  <div className="rounded-md border border-border bg-surface-muted/40 p-4 text-xs text-muted-foreground">
+                    Save the company first, then come back to <strong>Edit → Bank</strong> to
+                    add accounts. They need the company's UUID to attach.
+                  </div>
+                ) : company ? (
+                  <BankAccountsSection companyId={company.id} />
+                ) : null}
+              </TabsContent>
+            )}
           </div>
         </Tabs>
 
