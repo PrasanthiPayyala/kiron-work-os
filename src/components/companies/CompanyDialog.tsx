@@ -7,6 +7,7 @@
 // reachable (same pattern as UserDialog).
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { useAuth, can } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import type { Company, Director, LeadershipMember } from "@/types";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -180,6 +181,19 @@ function LeadershipList({
     </div>
   );
 }
+
+// Keys the HR role (basic-edit-only) must not send in the PATCH payload.
+// Mirrors _WRITABLE_FINANCE in backend/app/routers/companies.py. If you
+// add a finance column there, add it here too.
+const FINANCE_PAYLOAD_KEYS = [
+  "cin", "gst", "pan", "tan", "tin",
+  "msme_udyam_number", "msme_udyam_mobile", "msme_udyam_email",
+  "dpiit_startup_number",
+  "gst_registrations", "esi_number", "epf_number",
+  "professional_tax_number", "shops_establishment_number",
+  "shops_establishment_expires_at", "iec_number",
+  "industry_licenses", "trademark_registrations",
+] as const;
 
 // ---------- Logo upload (file picker + preview, image/* only) ----------
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
@@ -426,6 +440,12 @@ type Props = {
 
 export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Props) {
   const { toast } = useToast();
+  const { role: myRole } = useAuth();
+  // Finance fields (CIN/GST/PAN/TAN/TIN/MSME/DPIIT and the new compliance
+  // numbers from migration 0010) are locked for HR — only super_admin,
+  // founder, and founder_office_coordinator can rewrite tax IDs. Mirrors
+  // backend COMPANY_EDIT_FINANCE.
+  const canEditFinance = myRole ? can.editCompanyFinance(myRole) : false;
   const [form, setForm] = useState<FormState>(blank);
   const [saving, setSaving] = useState(false);
 
@@ -445,6 +465,13 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
     setSaving(true);
     try {
       const payload = toPayload(form);
+      // HR (basic-only role) can't write finance keys. Strip them before
+      // PATCH so a save of "I just fixed an address" doesn't 403 because
+      // the payload includes the unchanged GST. The backend still enforces
+      // the same gate.
+      if (!canEditFinance) {
+        for (const k of FINANCE_PAYLOAD_KEYS) delete (payload as Record<string, unknown>)[k];
+      }
       if (mode === "create") {
         await api.createCompany(payload as { name: string });
         toast({ title: "Company created", description: form.name.trim() });
@@ -569,43 +596,49 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
             </TabsContent>
 
             <TabsContent value="registration" className="space-y-3">
+              {!canEditFinance && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Tax / registration fields are view-only for your role. Ask
+                  the founder office to update CIN, GST, PAN, TAN, or MSME.
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-cin">CIN</Label>
-                  <Input id="cd-cin" value={form.cin} onChange={(e) => set("cin", e.target.value.toUpperCase())} placeholder="U72900AP2018PTC108XXX" />
+                  <Input id="cd-cin" disabled={!canEditFinance} value={form.cin} onChange={(e) => set("cin", e.target.value.toUpperCase())} placeholder="U72900AP2018PTC108XXX" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-gst">GST</Label>
-                  <Input id="cd-gst" value={form.gst} onChange={(e) => set("gst", e.target.value.toUpperCase())} placeholder="37AAFCS1234A1Z5" />
+                  <Input id="cd-gst" disabled={!canEditFinance} value={form.gst} onChange={(e) => set("gst", e.target.value.toUpperCase())} placeholder="37AAFCS1234A1Z5" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-pan">PAN</Label>
-                  <Input id="cd-pan" value={form.pan} onChange={(e) => set("pan", e.target.value.toUpperCase())} placeholder="AAFCS1234A" />
+                  <Input id="cd-pan" disabled={!canEditFinance} value={form.pan} onChange={(e) => set("pan", e.target.value.toUpperCase())} placeholder="AAFCS1234A" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-tan">TAN</Label>
-                  <Input id="cd-tan" value={form.tan} onChange={(e) => set("tan", e.target.value.toUpperCase())} placeholder="HYDS12345A" />
+                  <Input id="cd-tan" disabled={!canEditFinance} value={form.tan} onChange={(e) => set("tan", e.target.value.toUpperCase())} placeholder="HYDS12345A" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-tin">TIN</Label>
-                  <Input id="cd-tin" value={form.tin} onChange={(e) => set("tin", e.target.value)} placeholder="If applicable" />
+                  <Input id="cd-tin" disabled={!canEditFinance} value={form.tin} onChange={(e) => set("tin", e.target.value)} placeholder="If applicable" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-msme">MSME / Udyam number</Label>
-                  <Input id="cd-msme" value={form.msmeUdyamNumber} onChange={(e) => set("msmeUdyamNumber", e.target.value)} placeholder="UDYAM-AP-XX-0001234" />
+                  <Input id="cd-msme" disabled={!canEditFinance} value={form.msmeUdyamNumber} onChange={(e) => set("msmeUdyamNumber", e.target.value)} placeholder="UDYAM-AP-XX-0001234" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-msme-mob">Udyam mobile</Label>
-                  <Input id="cd-msme-mob" type="tel" value={form.msmeUdyamMobile} onChange={(e) => set("msmeUdyamMobile", e.target.value)} placeholder="+91 ..." />
+                  <Input id="cd-msme-mob" disabled={!canEditFinance} type="tel" value={form.msmeUdyamMobile} onChange={(e) => set("msmeUdyamMobile", e.target.value)} placeholder="+91 ..." />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="cd-msme-em">Udyam email</Label>
-                  <Input id="cd-msme-em" type="email" value={form.msmeUdyamEmail} onChange={(e) => set("msmeUdyamEmail", e.target.value)} placeholder="contact@example.com" />
+                  <Input id="cd-msme-em" disabled={!canEditFinance} type="email" value={form.msmeUdyamEmail} onChange={(e) => set("msmeUdyamEmail", e.target.value)} placeholder="contact@example.com" />
                 </div>
                 {form.isStartup && (
                   <div className="grid gap-1.5 col-span-2">
                     <Label htmlFor="cd-dpiit">DPIIT StartUp registration number</Label>
-                    <Input id="cd-dpiit" value={form.dpiitStartupNumber} onChange={(e) => set("dpiitStartupNumber", e.target.value)} placeholder="DIPP12345" />
+                    <Input id="cd-dpiit" disabled={!canEditFinance} value={form.dpiitStartupNumber} onChange={(e) => set("dpiitStartupNumber", e.target.value)} placeholder="DIPP12345" />
                   </div>
                 )}
               </div>

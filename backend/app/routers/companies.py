@@ -24,7 +24,11 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..authz import can_manage_companies
+from ..authz import (
+    can_edit_company_basic,
+    can_edit_company_finance,
+    can_manage_companies,
+)
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
@@ -60,10 +64,14 @@ def _validate_schedule(work_days: Optional[list[int]],
                                 "saturday_weeks_working values must be 1..5")
 
 
-# Columns the PATCH endpoint can write directly. Keep this list as the
-# single source of truth; any new column added to migration 0009+ should
-# land here too.
-_WRITABLE = {
+# Columns the PATCH endpoint can write — split into two scope groups so
+# HR can fix operational fields (addresses, logo, schedule, phones, name)
+# without quietly rewriting tax IDs and bank refs (CIN/GST/PAN/etc.).
+# can_edit_company_basic gates everything; can_edit_company_finance
+# additionally gates the finance set. Any new column added in future
+# migrations should land in exactly one of these sets.
+
+_WRITABLE_BASIC = {
     # Display / identity
     "short_name", "initials", "color", "domain", "code", "logo_url", "is_active",
     # Schedule
@@ -71,10 +79,6 @@ _WRITABLE = {
     # Profile basics
     "website_urls", "website_technologies", "nature_of_business",
     "date_of_incorporation", "is_startup",
-    # Registration / tax IDs
-    "cin", "gst", "pan", "tan", "tin",
-    "msme_udyam_number", "msme_udyam_mobile", "msme_udyam_email",
-    "dpiit_startup_number",
     # Addresses + phones
     "registered_address", "corporate_addresses", "operations_addresses", "phone_numbers",
     # Directors (legal — registered with MCA, get a DIN) and leadership
@@ -82,15 +86,25 @@ _WRITABLE = {
     # {name, designation, …}. Founder principal designations are stored
     # per-entity as plain text columns.
     "directors", "leadership", "kiran_designation", "prashanti_designation",
-    # Compliance — managing_ca_* moved into Contacts (migration 0011).
-    # Linked CAs are now contacts with category='ca' joined via
-    # contact_companies. ca_documents_held stays on the company (it's a
-    # list of certificates the company holds, not specific to one CA).
+    # Compliance certificates the company holds — not tax IDs.
     "certificates", "ca_documents_held",
-    # Renaming a company is allowed but rare; the unique constraint surfaces
-    # the conflict at the DB layer.
+    # Renaming is allowed (uniqueness checked separately in update_company).
     "name",
 }
+
+_WRITABLE_FINANCE = {
+    # Registration / tax IDs
+    "cin", "gst", "pan", "tan", "tin",
+    "msme_udyam_number", "msme_udyam_mobile", "msme_udyam_email",
+    "dpiit_startup_number",
+    # Compliance numbers added in migration 0010 (UI in A4)
+    "gst_registrations", "esi_number", "epf_number",
+    "professional_tax_number", "shops_establishment_number",
+    "shops_establishment_expires_at", "iec_number",
+    "industry_licenses", "trademark_registrations",
+}
+
+_WRITABLE = _WRITABLE_BASIC | _WRITABLE_FINANCE
 
 
 class CompanyProfile(BaseModel):
@@ -159,7 +173,10 @@ class CompanyCreate(CompanyProfile):
 # Columns stored as Postgres jsonb. We bind the value as a JSON string and
 # cast in SQL — psycopg's Python list -> Postgres ARRAY adapter would
 # otherwise mis-route the bind for jsonb targets.
-_JSONB_COLS = {"directors", "leadership"}
+_JSONB_COLS = {
+    "directors", "leadership",
+    "gst_registrations", "industry_licenses", "trademark_registrations",
+}
 
 
 def _build_update(fields: dict, company_id: str) -> tuple[str | None, dict]:
@@ -203,6 +220,28 @@ def _apply_update(db: Session, company_id: str, fields: dict) -> dict:
     return _get(db, company_id)
 
 
+def _log_activity(db: Session, company_id: str, actor_id: str, action: str,
+                  field_name: str | None = None,
+                  old: object | None = None, new: object | None = None,
+                  note: str | None = None) -> None:
+    """Append a company_activity row. Caller is responsible for committing.
+    Old/new values are stored as jsonb so we can audit complex fields
+    (lists, dicts) without serialising losslessly."""
+    db.execute(
+        text(
+            "INSERT INTO company_activity "
+            "  (company_id, actor_user_id, action, field_name, old_value, new_value, note) "
+            "VALUES (:cid, :uid, :a, :f, CAST(:ov AS jsonb), CAST(:nv AS jsonb), :n)"
+        ),
+        {
+            "cid": company_id, "uid": actor_id, "a": action, "f": field_name,
+            "ov": json.dumps(old) if old is not None else None,
+            "nv": json.dumps(new) if new is not None else None,
+            "n": note,
+        },
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_company(
     body: CompanyCreate,
@@ -239,6 +278,8 @@ def create_company(
         update_sql, update_params = _build_update(fields, new_id)
         if update_sql is not None:
             db.execute(text(update_sql), update_params)
+        _log_activity(db, new_id, user.id, "create",
+                      new={"name": name, **{k: v for k, v in fields.items() if v is not None}})
         db.commit()
     except Exception:
         db.rollback()
@@ -298,12 +339,24 @@ def update_company(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not can_manage_companies(user.roles):
+    # Basic gate: must at least have basic edit rights to touch anything.
+    if not can_edit_company_basic(user.roles):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to edit company config")
-    _get(db, company_id)
+    existing = _get(db, company_id)
     _validate_schedule(body.work_days, body.work_start, body.work_end,
                        body.saturday_weeks_working)
     fields = body.model_dump(exclude_unset=True)
+
+    # Field-level finance check: HR (in basic but NOT finance) trying to
+    # rewrite GST/CIN/PAN/bank refs gets a clean 403 listing the rejected
+    # keys, instead of silently sneaking the change through.
+    if not can_edit_company_finance(user.roles):
+        bad = set(fields) & _WRITABLE_FINANCE
+        if bad:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Not allowed to edit finance fields: {', '.join(sorted(bad))}",
+            )
 
     # If the caller is renaming, reject collisions with other entities.
     # The unique constraint on companies.name would surface the same way
@@ -323,4 +376,15 @@ def update_company(
                                 "Another company already uses that name")
         fields["name"] = new_name
 
-    return _apply_update(db, company_id, fields)
+    # Apply + audit. We log one row per CHANGED field so the timeline is
+    # readable; unchanged-but-resent keys produce no noise.
+    sql, params = _build_update(fields, company_id)
+    if sql is not None:
+        db.execute(text(sql), params)
+        for k, v in fields.items():
+            if existing.get(k) != v:
+                _log_activity(db, company_id, user.id, "update",
+                              field_name=k,
+                              old=existing.get(k), new=v)
+    db.commit()
+    return _get(db, company_id)
