@@ -2,6 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
+import { UnreadChatTile } from "@/components/UnreadChatTile";
 import { ChartWrap, MiniBar } from "@/components/Charts";
 import { UserAvatar } from "@/components/UserAvatar";
 import { TaskStatusBadge, PriorityBadge } from "@/components/StatusBadges";
@@ -36,6 +37,8 @@ export default function ManagerDashboard() {
           <StatCard label="Awaiting your review" value={pendingReviews.length} accent="warning" icon={<ShieldCheck className="h-4 w-4" />} />
           <StatCard label="Team avg score" value={`${Math.round(team.reduce((s, u) => s + (u.productivityScore ?? 0), 0) / Math.max(team.length, 1))}%`} accent="accent" />
         </div>
+
+        <UnreadChatTile />
 
         <div className="grid gap-4 lg:grid-cols-2">
           <ChartWrap title="Team workload" height={240}>

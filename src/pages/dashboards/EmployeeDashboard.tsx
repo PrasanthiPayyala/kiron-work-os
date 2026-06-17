@@ -2,6 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
+import { UnreadChatTile } from "@/components/UnreadChatTile";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { TaskStatusBadge, PriorityBadge } from "@/components/StatusBadges";
 import { Briefcase, Clock, CheckCircle2, Activity } from "lucide-react";
@@ -40,6 +41,8 @@ export default function EmployeeDashboard() {
           <StatCard label="Overdue" value={overdue.length} accent="destructive" />
           <StatCard label="Productivity" value={`${user.productivityScore ?? 78}%`} accent="accent" icon={<Activity className="h-4 w-4" />} />
         </div>
+
+        <UnreadChatTile />
 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2 rounded-xl border border-border bg-surface shadow-card">

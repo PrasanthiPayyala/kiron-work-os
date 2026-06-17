@@ -1,6 +1,7 @@
 import { useAuth } from "@/lib/auth";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
+import { UnreadChatTile } from "@/components/UnreadChatTile";
 import { ChartWrap, MiniLine, StackedBar, DonutChart } from "@/components/Charts";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { ProjectStatusBadge, RiskBadge } from "@/components/StatusBadges";
@@ -50,6 +51,8 @@ export default function SuperAdminDashboard() {
           <StatCard label="At-risk projects" value={projects.filter((p) => p.risk === "high").length} accent="destructive" icon={<AlertTriangle className="h-4 w-4" />} />
           <StatCard label="Strategic projects" value={projects.filter((p) => p.isStrategic).length} accent="primary" />
         </div>
+
+        <UnreadChatTile />
 
         <div className="flex items-center gap-1 rounded-lg border border-border bg-surface p-1 text-sm w-fit">
           {(["company","employee"] as const).map((k) => (

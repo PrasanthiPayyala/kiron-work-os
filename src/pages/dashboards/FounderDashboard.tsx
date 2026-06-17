@@ -2,6 +2,7 @@ import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
+import { UnreadChatTile } from "@/components/UnreadChatTile";
 import { ChartWrap, MiniLine, MiniBar, DonutChart } from "@/components/Charts";
 import { UserAvatar } from "@/components/UserAvatar";
 import { CompanyBadge } from "@/components/CompanyBadge";
@@ -58,6 +59,8 @@ export default function FounderDashboard() {
           <StatCard label="Approvals queued" value={pendingApprovals.length} hint="content + tasks + leave" accent="primary" icon={<CheckCircle2 className="h-4 w-4" />} delta="+1" trend="flat" />
           <StatCard label="On leave today" value={leavePending.length + 1} hint="HR routes pending" accent="info" />
         </div>
+
+        <UnreadChatTile />
 
         {/* Charts */}
         <div className="grid gap-4 lg:grid-cols-3">
