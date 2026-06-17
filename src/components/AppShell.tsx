@@ -240,7 +240,13 @@ export default function AppShell() {
               </Button>
             )}
 
-            <Button variant="outline" size="sm" className="hidden h-9 gap-1.5 sm:flex">
+            <Button
+              variant="outline"
+              size="sm"
+              className="hidden h-9 gap-1.5 sm:flex"
+              onClick={() => navigate("/tasks?create=1")}
+              title="Create a new task"
+            >
               <Plus className="h-4 w-4" /> Quick add
             </Button>
 

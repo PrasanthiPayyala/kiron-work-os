@@ -37,8 +37,11 @@ export default function People() {
   const [confirmUser, setConfirmUser] = useState<User | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deactivate" | "reactivate">("deactivate");
 
+  // Toggle is an exclusive switch — "Show deactivated" on means ONLY
+  // deactivated; off means ONLY active. Previously it was OR (which
+  // showed everyone when toggled on).
   const filtered = useMemo(() => users.filter((u) =>
-    (showInactive || u.isActive) &&
+    (showInactive ? !u.isActive : u.isActive) &&
     (company === "all" || u.homeCompanyId === company) &&
     (!q || u.name.toLowerCase().includes(q.toLowerCase()) || u.designation.toLowerCase().includes(q.toLowerCase()))
   ), [users, q, company, showInactive]);

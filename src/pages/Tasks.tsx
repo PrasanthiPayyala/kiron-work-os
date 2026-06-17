@@ -31,7 +31,7 @@ const kanbanCols: { key: TaskStatus; label: string }[] = [
 
 export default function Tasks() {
   const { user } = useAuth();
-  const { tasks: allTasks, companies, getUser } = useDataStore();
+  const { tasks: allTasks, companies, users, getUser, refresh } = useDataStore();
   const [view, setView] = useState<"list" | "kanban">("list");
   const [filter, setFilter] = useState<string>("all");
   const [company, setCompany] = useState<string>("all");
@@ -41,7 +41,18 @@ export default function Tasks() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [fromEmail, setFromEmail] = useState<{ messageId: string; accountId?: string; title: string; description: string } | null>(null);
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState({ title: "", description: "", priority: "medium" as "low" | "medium" | "high" | "critical" });
+  const [draft, setDraft] = useState({
+    title: "",
+    description: "",
+    priority: "medium" as "low" | "medium" | "high" | "critical",
+    company_id: "",
+    assignee_id: "",
+  });
+  const [createOpen, setCreateOpen] = useState(false);
+
+  // Post-update (comment) state for the open task in the Sheet detail view.
+  const [updateText, setUpdateText] = useState("");
+  const [posting, setPosting] = useState(false);
 
   useEffect(() => {
     if (searchParams.get("from_email") === "1") {
@@ -50,14 +61,27 @@ export default function Tasks() {
       const description = searchParams.get("description") || "";
       if (messageId) {
         setFromEmail({ messageId, title, description });
-        setDraft({ title, description, priority: "medium" });
+        setDraft({
+          title, description, priority: "medium",
+          company_id: user?.homeCompanyId ?? "",
+          assignee_id: user?.id ?? "",
+        });
       }
       // clear params so refresh doesn't reopen
       const next = new URLSearchParams(searchParams);
       ["from_email", "message_id", "title", "description"].forEach((k) => next.delete(k));
       setSearchParams(next, { replace: true });
     }
-  }, [searchParams, setSearchParams]);
+    // ?create=1 lands here from the topbar Quick Add — open the dialog
+    // immediately and clear the param so it doesn't re-fire on reload.
+    if (searchParams.get("create") === "1") {
+      openCreate();
+      const next = new URLSearchParams(searchParams);
+      next.delete("create");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams, user?.id]);
 
   const handleCreateFromEmail = async () => {
     if (!fromEmail || !user) return;
@@ -98,6 +122,63 @@ export default function Tasks() {
       toast.error("Failed to create task", { description: String((e as Error).message ?? e) });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const openCreate = () => {
+    if (!user) return;
+    setDraft({
+      title: "",
+      description: "",
+      priority: "medium",
+      company_id: user.homeCompanyId,
+      assignee_id: user.id,
+    });
+    setCreateOpen(true);
+  };
+
+  const handleCreate = async () => {
+    if (!user) return;
+    if (!draft.title.trim()) return toast.error("Title is required");
+    if (!draft.company_id) return toast.error("Company is required");
+    setCreating(true);
+    try {
+      await api.createTask({
+        title: draft.title.trim(),
+        description: draft.description.trim() || null,
+        priority: draft.priority,
+        status: "created",
+        company_id: draft.company_id,
+        assignee_id: draft.assignee_id || null,
+      });
+      toast.success("Task created");
+      setCreateOpen(false);
+      refresh();
+    } catch (e) {
+      toast.error("Failed to create task", { description: String((e as Error).message ?? e) });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handlePostUpdate = async () => {
+    if (!active) return;
+    const text = updateText.trim();
+    if (!text) return toast.error("Type an update before posting");
+    setPosting(true);
+    try {
+      await api.addTaskActivity(active.id, {
+        activity_type: "comment",
+        message: text,
+        note: text,
+      });
+      setUpdateText("");
+      toast.success("Update posted");
+      refresh();
+    } catch (e) {
+      toast.error("Couldn't post update", { description: String((e as Error).message ?? e) });
+    } finally {
+      setPosting(false);
     }
   };
 
@@ -148,7 +229,7 @@ export default function Tasks() {
               {syncing ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Cloud className="h-4 w-4 mr-1.5" />}
               Sync to External System
             </Button>
-            <Button size="sm"><Plus className="h-4 w-4 mr-1.5" /> Create task</Button>
+            <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4 mr-1.5" /> Create task</Button>
           </div>
         }
       />
@@ -290,8 +371,17 @@ export default function Tasks() {
                 </div>
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Add update</p>
-                  <textarea className="mt-2 w-full rounded-md border border-border bg-background p-2 text-sm" rows={3} placeholder="Required: status update or comment..." />
-                  <Button size="sm" className="mt-2">Post update</Button>
+                  <textarea
+                    value={updateText}
+                    onChange={(e) => setUpdateText(e.target.value)}
+                    className="mt-2 w-full rounded-md border border-border bg-background p-2 text-sm"
+                    rows={3}
+                    placeholder="Status update or comment..."
+                  />
+                  <Button size="sm" className="mt-2" onClick={handlePostUpdate} disabled={posting || !updateText.trim()}>
+                    {posting && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+                    Post update
+                  </Button>
                 </div>
               </div>
             </>
@@ -334,6 +424,94 @@ export default function Tasks() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setFromEmail(null)} disabled={creating}>Cancel</Button>
             <Button onClick={handleCreateFromEmail} disabled={creating}>
+              {creating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              Create task
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Standalone Create task dialog (opened by the Create task button
+          on this page AND by Quick Add in the topbar). Five fields per
+          the user's "minimal" choice — title, company, assignee,
+          priority, due date is implicit-not-yet-supported because the
+          backend POST doesn't accept it (description carries that). */}
+      <Dialog open={createOpen} onOpenChange={(o) => !o && !creating && setCreateOpen(false)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Plus className="h-4 w-4" /> Create task</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Title *</Label>
+              <Input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="What needs doing?" className="mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs">Description</Label>
+              <textarea
+                value={draft.description}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                rows={3}
+                className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm"
+                placeholder="Context, links, acceptance criteria..."
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Company *</Label>
+                <Select value={draft.company_id} onValueChange={(v) => setDraft({ ...draft, company_id: v })}>
+                  <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    {companies.filter((c) => c.isActive).map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.shortName || c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Priority</Label>
+                <Select value={draft.priority} onValueChange={(v: "low" | "medium" | "high" | "critical") => setDraft({ ...draft, priority: v })}>
+                  <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="critical">Critical</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Assignee</Label>
+              <Select
+                value={
+                  !draft.assignee_id
+                    ? "__unassigned__"
+                    : draft.assignee_id === user?.id
+                      ? "__me__"
+                      : draft.assignee_id
+                }
+                onValueChange={(v) =>
+                  setDraft({
+                    ...draft,
+                    assignee_id: v === "__me__" ? (user?.id ?? "") : v === "__unassigned__" ? "" : v,
+                  })
+                }
+              >
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__me__">Me ({user?.name})</SelectItem>
+                  <SelectItem value="__unassigned__">Unassigned</SelectItem>
+                  {users
+                    .filter((u) => u.isActive && u.id !== user?.id)
+                    .map((u) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>Cancel</Button>
+            <Button onClick={handleCreate} disabled={creating}>
               {creating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
               Create task
             </Button>

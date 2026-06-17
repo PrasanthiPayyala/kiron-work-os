@@ -42,6 +42,12 @@ type Store = {
 type Ctx = Store & {
   loading: boolean;
   refresh: () => Promise<void>;
+  /** Optimistic local merge of a single message. Used by Chat after a
+   * POST returns — the WS broadcast may not round-trip to the sender
+   * when the API runs with workers>1 (each worker's hub is isolated),
+   * so we can't depend on it for visibility of the sender's own
+   * messages. Idempotent on message id. */
+  addMessage: (msg: Message) => void;
   getUser: (id?: string) => User | undefined;
   getCompany: (id?: string) => Company | undefined;
   getDepartment: (id?: string) => Department | undefined;
@@ -315,14 +321,22 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     return off;
   }, [authUser?.id]);
 
+  const addMessage = useCallback((msg: Message) => {
+    setStore((prev) => {
+      if (prev.messages.some((m) => m.id === msg.id)) return prev;
+      return { ...prev, messages: [...prev.messages, msg] };
+    });
+  }, []);
+
   const value = useMemo<Ctx>(() => ({
     ...store,
     loading,
     refresh: load,
+    addMessage,
     getUser: (id?: string) => store.users.find((u) => u.id === id),
     getCompany: (id?: string) => store.companies.find((c) => c.id === id),
     getDepartment: (id?: string) => store.departments.find((d) => d.id === id),
-  }), [store, loading, load]);
+  }), [store, loading, load, addMessage]);
 
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }

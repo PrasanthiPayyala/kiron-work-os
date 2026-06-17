@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { useDataStore } from "@/lib/dataStore";
 import { useAuth } from "@/lib/auth";
 import { api, ApiError, type AttachmentRow } from "@/lib/api";
+import { mapMessage } from "@/lib/mappers";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -63,7 +64,7 @@ function unreadCountFor(conv: Conversation, msgsForConv: { senderId: string; cre
 
 export default function Chat() {
   const { user, role } = useAuth();
-  const { conversations, messages, users, getUser, refresh } = useDataStore();
+  const { conversations, messages, users, getUser, refresh, addMessage } = useDataStore();
   // Super_admin + founder can delete anyone's message (matches backend
   // DELETE_ANYONE_ROLES). Sender can always delete their own — the per-
   // message check still happens below.
@@ -136,18 +137,20 @@ export default function Chat() {
     if (!draft.trim() && pending.length === 0) return;
     setSending(true);
     try {
-      await api.sendMessage({
+      const sent = await api.sendMessage({
         conversation_id: active,
         body: draft.trim(),
         attachment_ids: pending.map((a) => a.id),
       });
       setDraft("");
       setPending([]);
-      // The sender's own browser also receives the WS broadcast (it's a
-      // member of the conversation), so the message lands in the store
-      // with attachments inline. Calling refresh() here would race with that
-      // and could overwrite the WS-added row with a bootstrap snapshot taken
-      // before the row was committed.
+      // Optimistically merge the new row locally. We can't rely on the
+      // WS broadcast alone: the API runs with workers>1 and each worker
+      // owns its own in-memory hub, so a POST handled by worker B
+      // won't fan out to the sender's WS connection if it's pinned to
+      // worker A. The WS handler dedupes by id, so if the broadcast
+      // does arrive it's a no-op.
+      addMessage(mapMessage(sent as Parameters<typeof mapMessage>[0]));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to send");
     } finally {
