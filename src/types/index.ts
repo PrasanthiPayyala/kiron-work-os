@@ -169,6 +169,10 @@ export interface User {
   employmentType: EmploymentType;
   isActive: boolean;
   mustChangePassword: boolean;
+  /** Per-user opt-in to the Team Attendance follow-up page. Granted by
+   * HR for TA / recruitment staff. Role-based access (super_admin /
+   * founder / hr_admin / founder_office_coordinator) wins regardless. */
+  attendanceFollowupAccess: boolean;
   /** Per-employee schedule override. Any field can be null to inherit just
    * that piece (e.g. same hours, custom days). saturdayWeeksWorking is the
    * Saturday-of-month restriction; null inherits the company value. */

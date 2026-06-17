@@ -54,6 +54,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
   const [managerId, setManagerId] = useState<string>("none");
   const [reviewerId, setReviewerId] = useState<string>("none");
   const [doj, setDoj] = useState("");
+  const [followupAccess, setFollowupAccess] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Working-schedule override (off by default — most employees follow the
@@ -85,6 +86,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setManagerId(user.reportingManagerId ?? "none");
       setReviewerId(user.reviewerId ?? "none");
       setDoj(user.joinedAt ?? "");
+      setFollowupAccess(user.attendanceFollowupAccess === true);
       const o = user.scheduleOverride;
       const hasAny = !!(o && (o.workDays || o.workStart || o.workEnd || o.saturdayWeeksWorking));
       setCustomSchedule(hasAny);
@@ -105,6 +107,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setManagerId("none");
       setReviewerId("none");
       setDoj("");
+      setFollowupAccess(false);
       setCustomSchedule(false);
       setWorkDays(firstCo?.schedule.workDays ?? [1,2,3,4,5,6]);
       setWorkStart(firstCo?.schedule.workStart ?? "09:30");
@@ -171,6 +174,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
             : workDays.includes(6) && satWeeks.length < 5
               ? satWeeks
               : null,
+          attendance_followup_access: followupAccess,
         };
         // Only include email when it actually changed — sending it on every
         // save would waste a uniqueness query, and changes are rare.
@@ -257,6 +261,29 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
               </Select>
             </div>
           </div>
+
+          {/* Per-user grant: gives plain employees access to the Team
+              Attendance page so TA / recruitment staff can follow up
+              with people who haven't checked in. Only meaningful in
+              edit mode — new users get the flag via a follow-up edit. */}
+          {mode === "edit" && (
+            <div className="flex items-start gap-2 rounded-md border border-border bg-surface-muted/40 p-3">
+              <input
+                id="ud-followup"
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={followupAccess}
+                onChange={(e) => setFollowupAccess(e.target.checked)}
+              />
+              <div className="flex-1">
+                <Label htmlFor="ud-followup" className="text-sm font-medium">Can view Team Attendance</Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Grants access to the Team Attendance / Follow-up page even on plain employee role.
+                  Use for HR / TA / recruitment staff who chase missed check-ins.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-1.5">
             <Label>Home company</Label>

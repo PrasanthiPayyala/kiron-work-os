@@ -167,6 +167,11 @@ class UserUpdate(BaseModel):
     # encoding as companies.saturday_weeks_working ([1,3,5] = 1st/3rd/5th
     # Saturday work; 2nd & 4th off).
     saturday_weeks_working: Optional[list[int]] = None
+    # Per-user opt-in to the Team Attendance follow-up page. Granted by HR
+    # for TA / recruitment staff who follow up with people who haven't
+    # checked in. Role-based access (super_admin / founder / hr_admin /
+    # founder_office_coordinator) always wins regardless of this flag.
+    attendance_followup_access: Optional[bool] = None
 
 
 @router.patch("/{user_id}")

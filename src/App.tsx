@@ -32,6 +32,7 @@ import Settings from "./pages/Settings";
 import Mail from "./pages/Mail";
 import Notifications from "./pages/Notifications";
 import Contacts from "./pages/Contacts";
+import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
 
@@ -75,6 +76,14 @@ const App = () => (
                 <Route path="/tasks" element={<Tasks />} />
                 <Route path="/mail" element={<ProtectedRoute require="mail"><Mail /></ProtectedRoute>} />
                 <Route path="/attendance" element={<Attendance />} />
+                <Route
+                  path="/team-attendance"
+                  element={
+                    <ProtectedRoute require="team_attendance">
+                      <TeamAttendance />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="/leave" element={<Leave />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/notifications" element={<Notifications />} />

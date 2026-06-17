@@ -206,6 +206,7 @@ export function mapProfile(r: DbProfile, role: Role = "employee"): User {
     employmentType,
     isActive: r.is_active !== false,
     mustChangePassword: r.must_change_password === true,
+    attendanceFollowupAccess: (r as any).attendance_followup_access === true,
     // Pass through the raw nullable override columns. The effective schedule
     // is computed via getEffectiveSchedule() so callers stay declarative.
     scheduleOverride: {

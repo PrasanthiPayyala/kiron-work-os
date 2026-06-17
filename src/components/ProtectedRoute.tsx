@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from "react-router-dom";
-import { useAuth, roleNavAccess, type NavKey } from "@/lib/auth";
+import { useAuth, roleNavAccess, canSeeTeamAttendance, type NavKey } from "@/lib/auth";
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -30,7 +30,13 @@ export function ProtectedRoute({ children, require }: { children: ReactNode; req
 
   if (require) {
     const allowed = roleNavAccess[user.role];
-    if (!allowed.includes(require)) {
+    let permitted = allowed.includes(require);
+    // team_attendance has a per-user grant path in addition to role-based
+    // access (HR opts TA / recruitment staff in via the profile flag).
+    if (!permitted && require === "team_attendance") {
+      permitted = canSeeTeamAttendance(user.role, user);
+    }
+    if (!permitted) {
       return <Navigate to="/dashboard" replace />;
     }
   }

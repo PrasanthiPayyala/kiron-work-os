@@ -309,6 +309,24 @@ export const api = {
     return request(`/companies/${id}`, { method: "DELETE" });
   },
 
+  // ---------- Attendance follow-up (Team Attendance page) ----------
+  /** Returns today's missing / checked-in / on-leave / off-today buckets
+   * for HR / TA follow-up. Server enforces who can call this — 403 if
+   * the caller isn't in ATTENDANCE_FOLLOWUP_ROLES and doesn't have the
+   * per-user opt-in flag. */
+  attendanceFollowup(date?: string): Promise<{
+    date: string;
+    iso_weekday: number;
+    totals: { missing: number; checked_in: number; on_leave: number; off_today: number };
+    missing: Record<string, unknown>[];
+    checked_in: Record<string, unknown>[];
+    on_leave: Record<string, unknown>[];
+    off_today: Record<string, unknown>[];
+  }> {
+    const q = date ? `?date=${encodeURIComponent(date)}` : "";
+    return request(`/attendance/followup${q}`);
+  },
+
   // ---------- Bank accounts (finance-scoped — HR can't see/edit) ----------
   listBankAccounts(companyId: string): Promise<Record<string, unknown>[]> {
     return request(`/companies/${companyId}/bank-accounts`);

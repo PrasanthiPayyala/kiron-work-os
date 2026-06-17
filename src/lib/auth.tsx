@@ -96,7 +96,7 @@ export function useAuth() {
 export type NavKey =
   | "dashboard" | "my_work" | "projects" | "tasks" | "attendance"
   | "leave" | "chat" | "approvals" | "reports" | "people"
-  | "founder_office" | "settings" | "mail" | "contacts";
+  | "founder_office" | "settings" | "mail" | "contacts" | "team_attendance";
 
 // "mail" is intentionally absent from every role for v1 — the IMAP module is
 // still Supabase-bound and would throw if anyone clicked it. The Mail.tsx
@@ -104,15 +104,24 @@ export type NavKey =
 // the FastAPI rebuild lands; just re-add "mail" to whichever roles should
 // see it then.
 export const roleNavAccess: Record<Role, NavKey[]> = {
-  super_admin:                ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
-  founder:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
-  founder_office_coordinator: ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  super_admin:                ["dashboard","my_work","projects","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder:                    ["dashboard","my_work","projects","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder_office_coordinator: ["dashboard","my_work","projects","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
   founder_office_support:     ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people","contacts","founder_office"],
   manager:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts"],
   employee:                   ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people"],
   intern:                     ["dashboard","my_work","projects","tasks","attendance","leave","chat","people"],
-  hr_admin:                   ["dashboard","attendance","leave","approvals","reports","people","contacts","settings","chat"],
+  hr_admin:                   ["dashboard","attendance","team_attendance","leave","approvals","reports","people","contacts","settings","chat"],
 };
+
+/** Capability check for the Team Attendance / Follow-up page. Roles in
+ * the role matrix above always have it; per-user opt-in (granted by HR
+ * for TA / recruitment staff who don't have an elevated role) is the
+ * second path. AppShell and ProtectedRoute both consult this. */
+export function canSeeTeamAttendance(role: Role | null | undefined, u: User | null | undefined): boolean {
+  if (role && roleNavAccess[role].includes("team_attendance")) return true;
+  return u?.attendanceFollowupAccess === true;
+}
 
 export const can = {
   seeFounderOffice: (r: Role) => ["super_admin","founder","founder_office_coordinator","founder_office_support"].includes(r),

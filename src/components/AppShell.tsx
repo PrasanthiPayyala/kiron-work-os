@@ -1,6 +1,6 @@
 import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom";
 import { useState } from "react";
-import { useAuth, roleNavAccess, roleLabel, type NavKey } from "@/lib/auth";
+import { useAuth, roleNavAccess, roleLabel, canSeeTeamAttendance, type NavKey } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { UserAvatar } from "@/components/UserAvatar";
 import { CompanyBadge } from "@/components/CompanyBadge";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Briefcase, FolderKanban, ListChecks, CalendarCheck, Plane,
   MessageSquare, ShieldCheck, BarChart3, Users, Crown, Settings, Mail, BookUser,
+  ClipboardCheck,
   Search, Bell, Plus, ChevronLeft, ChevronRight, LogOut, ChevronDown, X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -28,6 +29,7 @@ const navItems: { key: NavKey; label: string; to: string; icon: typeof LayoutDas
   { key: "tasks",          label: "Tasks",          to: "/tasks",           icon: ListChecks },
   { key: "mail",           label: "Mail",           to: "/mail",            icon: Mail },
   { key: "attendance",     label: "Attendance",     to: "/attendance",      icon: CalendarCheck },
+  { key: "team_attendance",label: "Team Attendance",to: "/team-attendance", icon: ClipboardCheck },
   { key: "leave",          label: "Leave",          to: "/leave",           icon: Plane },
   { key: "chat",           label: "Team Chat",      to: "/chat",            icon: MessageSquare },
   { key: "approvals",      label: "Approvals",      to: "/approvals",       icon: ShieldCheck },
@@ -52,6 +54,10 @@ export default function AppShell() {
   }
 
   const allowed = new Set(roleNavAccess[user.role]);
+  // team_attendance has a per-user grant path on top of role-based access.
+  // If the user is opted in via attendanceFollowupAccess, surface it even
+  // when their role's matrix entry doesn't include it.
+  if (canSeeTeamAttendance(user.role, user)) allowed.add("team_attendance");
   const visibleNav = navItems.filter((n) => allowed.has(n.key));
   const company = getCompany(user.homeCompanyId);
   const myNotifs = notifications.filter((n) => n.userId === user.id);

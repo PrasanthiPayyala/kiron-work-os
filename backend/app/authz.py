@@ -8,6 +8,14 @@ Python so every endpoint enforces the same row access the DB used to.
 GLOBAL_ROLES = {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"}
 # HR-style data (attendance, leave) added hr_admin to the elevated set.
 HR_ROLES = {"super_admin", "founder", "hr_admin"}
+# Roles that always see the Attendance Follow-up page (who's missed
+# today's check-in). Other users (e.g. TA partners on the employee role)
+# can be granted access individually via the
+# profiles.attendance_followup_access flag — see
+# can_view_attendance_followup below.
+ATTENDANCE_FOLLOWUP_ROLES = {
+    "super_admin", "founder", "founder_office_coordinator", "hr_admin",
+}
 # Who may create tasks (tasks_insert_auth).
 TASK_CREATE_ROLES = {"super_admin", "founder", "manager", "founder_office_coordinator", "hr_admin"}
 # Who may decide an approval regardless of being the named approver.
@@ -235,3 +243,22 @@ def can_edit_contact_category(roles: set[str], category: str) -> bool:
 def visible_categories(roles: set[str]) -> set[str]:
     """All categories the caller may see — used for server-side filtering."""
     return {cat for cat, allowed in CONTACT_CATEGORY_VIEW.items() if has_any_role(roles, allowed)}
+
+
+# ---------- Attendance follow-up ----------
+
+def can_view_attendance_followup(roles: set[str], profile: dict | None) -> bool:
+    """Allowed to see the Team Attendance / Follow-up page.
+
+    Roles in ATTENDANCE_FOLLOWUP_ROLES always have access. Anyone else
+    (including plain employees) needs the per-user opt-in flag
+    `profiles.attendance_followup_access` set true — granted by HR to
+    TA / recruitment staff who follow up with people who haven't
+    checked in. Passing profile=None disables the per-user grant
+    check and only the role gate applies.
+    """
+    if has_any_role(roles, ATTENDANCE_FOLLOWUP_ROLES):
+        return True
+    if profile and profile.get("attendance_followup_access") is True:
+        return True
+    return False
