@@ -321,8 +321,8 @@ def _run_call_reminders_sync() -> dict:
             rows = conn.execute(
                 text(
                     "SELECT c.id, c.task_id, c.scheduled_at, c.duration_mins, "
-                    "       c.meeting_link, c.notes, t.title AS task_title, "
-                    "       t.task_key AS task_key "
+                    "       c.kind, c.contact, c.meeting_link, c.notes, "
+                    "       t.title AS task_title, t.task_key AS task_key "
                     "FROM task_calls c "
                     "JOIN tasks t ON t.id = c.task_id "
                     "WHERE c.status = 'scheduled' "
@@ -381,6 +381,11 @@ def _run_call_reminders_sync() -> dict:
                         send_email, attendees, kind, sched_ist,
                         r["duration_mins"], r["meeting_link"], r["task_title"],
                         r["task_key"], r["notes"],
+                        # Defaulting kind here lets older c511842 rows
+                        # (no `kind` column populated) fall back to the
+                        # generic "Reminder:" subject without crashing.
+                        r.get("kind") or "phone_call",
+                        r.get("contact"),
                     )
                     conn.execute(
                         text(
@@ -425,46 +430,66 @@ def _run_call_reminders_sync() -> dict:
 def _send_reminder_emails(
     sender,
     attendees: list[dict],
-    kind: str,
+    when_kind: str,
     sched_ist: dt.datetime,
     duration_mins: int,
     meeting_link: str | None,
     task_title: str | None,
     task_key: str | None,
     notes: str | None,
+    reminder_kind: str,
+    contact: str | None,
 ) -> None:
     when_human = sched_ist.strftime("%A, %d %b %Y · %I:%M %p IST")
-    if kind == "morning_of":
-        subject = f"Today: {task_title or 'Call'} at {sched_ist.strftime('%I:%M %p')}"
-        lead = "You have a call later today."
-    elif kind == "t_minus_20":
-        subject = f"In 20 minutes: {task_title or 'Call'} at {sched_ist.strftime('%I:%M %p')}"
-        lead = "Your scheduled call is in 20 minutes."
-    else:
-        subject = f"Now: {task_title or 'Call'}"
-        lead = "Your scheduled call is starting now."
+    when_short = sched_ist.strftime("%I:%M %p")
 
+    # Verb + headline copy keyed off the reminder kind. ``contact`` is the
+    # user-supplied "who/where/what about" string. If it's missing, fall
+    # back to the task title so the subject is never bare.
+    if reminder_kind == "phone_call":
+        verb = "Call"
+        headline = contact or task_title or "Call"
+    elif reminder_kind == "in_person":
+        verb = "Meet"
+        headline = contact or task_title or "Meeting"
+    else:
+        verb = "Reminder"
+        headline = task_title or contact or "Reminder"
+
+    # Lead line + subject vary by *when* we're firing (morning / T-20 / T-0).
+    if when_kind == "morning_of":
+        subject = f"Today: {verb} {headline} — {when_short}"
+        lead = f"You have a {('call' if reminder_kind == 'phone_call' else 'meeting' if reminder_kind == 'in_person' else 'reminder')} later today."
+    elif when_kind == "t_minus_20":
+        subject = f"In 20 minutes: {verb} {headline} — {when_short}"
+        lead = f"Your scheduled {('call' if reminder_kind == 'phone_call' else 'meeting' if reminder_kind == 'in_person' else 'reminder')} is in 20 minutes."
+    else:
+        subject = f"Now: {verb} {headline}"
+        lead = f"Your scheduled {('call' if reminder_kind == 'phone_call' else 'meeting' if reminder_kind == 'in_person' else 'reminder')} is starting now."
+
+    contact_html = f"<p><strong>{contact}</strong></p>" if contact else ""
     link_html = (
         f'<p><a href="{meeting_link}" '
         f'style="display:inline-block;padding:10px 16px;background:#0f172a;'
-        f'color:#fff;text-decoration:none;border-radius:6px">Join the call</a></p>'
+        f'color:#fff;text-decoration:none;border-radius:6px">Open link</a></p>'
         if meeting_link else ""
     )
     notes_html = f"<p><em>Notes:</em> {notes}</p>" if notes else ""
     body_html = (
         f"<p>{lead}</p>"
-        f"<p><strong>{task_title or 'Call'}</strong>"
+        f"<p><strong>{task_title or 'Reminder'}</strong>"
         + (f" <span style='color:#666'>· {task_key}</span>" if task_key else "")
         + "</p>"
         f"<p>{when_human} · {duration_mins} minutes</p>"
-        + link_html + notes_html
+        + contact_html + link_html + notes_html
     )
     body_text = (
         f"{lead}\n\n"
-        f"{task_title or 'Call'}"
+        f"{task_title or 'Reminder'}"
         + (f" ({task_key})" if task_key else "")
         + f"\n{when_human} · {duration_mins} minutes\n"
-        + (f"Join: {meeting_link}\n" if meeting_link else "")
+        + (f"{contact}\n" if contact else "")
+        + (f"Link: {meeting_link}\n" if meeting_link else "")
         + (f"Notes: {notes}\n" if notes else "")
         + "\n— Kiron Work OS"
     )
@@ -472,7 +497,7 @@ def _send_reminder_emails(
         try:
             sender(a["email"], subject, body_text, body_html)
         except Exception:  # noqa: BLE001
-            log.exception("Failed to send %s reminder to %s", kind, a.get("email"))
+            log.exception("Failed to send %s reminder to %s", when_kind, a.get("email"))
 
 
 def _uniq(items: Iterable) -> list[str]:

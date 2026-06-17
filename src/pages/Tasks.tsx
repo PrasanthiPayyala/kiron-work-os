@@ -5,7 +5,7 @@ import { useDataStore } from "@/lib/dataStore";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { TaskStatusBadge, PriorityBadge, VisibilityBadge } from "@/components/StatusBadges";
 import { UserAvatar } from "@/components/UserAvatar";
-import { ListChecks, LayoutGrid, List as ListIcon, Plus, Cloud, Loader2, Mail, Check, Pencil, PhoneCall, X as XIcon, Link as LinkIcon } from "lucide-react";
+import { ListChecks, LayoutGrid, List as ListIcon, Plus, Cloud, Loader2, Mail, Check, Pencil, PhoneCall, X as XIcon, Phone, Handshake, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,7 +14,7 @@ import { taskStatusOut } from "@/lib/mappers";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AttachmentList } from "@/components/attachments/AttachmentList";
@@ -157,7 +157,8 @@ export default function Tasks() {
     date: "",
     time: "",
     duration: 30,
-    link: "",
+    kind: "phone_call" as "phone_call" | "in_person" | "other",
+    contact: "",
     notes: "",
     participantIds: [] as string[],
   });
@@ -180,7 +181,7 @@ export default function Tasks() {
 
   const openScheduleCall = () => {
     if (!active) return;
-    // Default to tomorrow 10:00 — sensible for "schedule a call later".
+    // Default to tomorrow 10:00 — sensible for "set a reminder later today / tomorrow".
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(10, 0, 0, 0);
@@ -193,13 +194,18 @@ export default function Tasks() {
       active.reportingManagerId,
       user?.id,
     ].filter((id): id is string => !!id);
-    // Dedup
     const partSet = Array.from(new Set(defaultParts));
+    // Phone-call pre-fill: name of the assignee (if it's not the creator).
+    // We don't have phone numbers in the User cache today, so name only.
+    const assignee = active.assigneeId && active.assigneeId !== user?.id
+      ? users.find((u) => u.id === active.assigneeId)
+      : null;
     setCallDraft({
       date: `${yyyy}-${mm}-${dd}`,
       time: "10:00",
       duration: 30,
-      link: "",
+      kind: "phone_call",
+      contact: assignee?.name ?? "",
       notes: "",
       participantIds: partSet,
     });
@@ -210,8 +216,9 @@ export default function Tasks() {
     if (!active) return;
     if (!callDraft.date || !callDraft.time) return toast.error("Pick a date and time");
     if (callDraft.participantIds.length === 0) return toast.error("Pick at least one participant");
-    // Combine date + time as local IST input → ISO string. The browser's
-    // toISOString() correctly applies the local offset.
+    // Combine date + time as local input → ISO string. Browser interprets
+    // the bare `YYYY-MM-DDTHH:MM:SS` as local time, so .toISOString()
+    // correctly back-applies the IST offset for a user on an IST laptop.
     const local = new Date(`${callDraft.date}T${callDraft.time}:00`);
     if (Number.isNaN(local.getTime())) return toast.error("Bad date/time");
     if (local.getTime() <= Date.now() - 60_000) return toast.error("Time must be in the future");
@@ -220,16 +227,24 @@ export default function Tasks() {
       await api.createTaskCall(active.id, {
         scheduled_at: local.toISOString(),
         duration_mins: callDraft.duration,
-        meeting_link: callDraft.link.trim() || null,
+        kind: callDraft.kind,
+        contact: callDraft.contact.trim() || null,
         notes: callDraft.notes.trim() || null,
         participant_ids: callDraft.participantIds,
       });
-      toast.success("Call scheduled — reminders will go out by email");
+      toast.success("Reminder set — emails will go out at the right time");
       setScheduleOpen(false);
       void loadCalls(active.id);
       void loadActivity(active.id);
     } catch (e) {
-      toast.error("Couldn't schedule", { description: String((e as Error).message ?? e) });
+      // Surface the server message as the toast title so a 4xx reason
+      // (validation / authz / missing table) is visible at a glance. Plain
+      // network errors fall back to the generic title.
+      if (e instanceof ApiError) {
+        toast.error(e.message || "Couldn't save reminder");
+      } else {
+        toast.error("Couldn't save reminder", { description: String((e as Error).message ?? e) });
+      }
     } finally {
       setScheduling(false);
     }
@@ -240,10 +255,11 @@ export default function Tasks() {
     setCancellingCallId(callId);
     try {
       await api.cancelTaskCall(callId);
-      toast.success("Call cancelled");
+      toast.success("Reminder cancelled");
       void loadCalls(active.id);
     } catch (e) {
-      toast.error("Couldn't cancel", { description: String((e as Error).message ?? e) });
+      if (e instanceof ApiError) toast.error(e.message);
+      else toast.error("Couldn't cancel", { description: String((e as Error).message ?? e) });
     } finally {
       setCancellingCallId(null);
     }
@@ -632,9 +648,9 @@ export default function Tasks() {
                 )}
                 <div>
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scheduled calls</p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Reminders</p>
                     <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={openScheduleCall}>
-                      <PhoneCall className="mr-1 h-3 w-3" /> Schedule a call
+                      <Bell className="mr-1 h-3 w-3" /> Add reminder
                     </Button>
                   </div>
                   <ul className="mt-2 space-y-2">
@@ -642,12 +658,17 @@ export default function Tasks() {
                       <li className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">Loading…</li>
                     )}
                     {!loadingCalls && upcomingCalls.length === 0 && (
-                      <li className="rounded-md border border-dashed border-border p-2.5 text-xs text-muted-foreground">No scheduled calls.</li>
+                      <li className="rounded-md border border-dashed border-border p-2.5 text-xs text-muted-foreground">No reminders set.</li>
                     )}
-                    {upcomingCalls.map((c) => (
+                    {upcomingCalls.map((c) => {
+                      // Pick the icon + verb by reminder kind. Old rows from
+                      // c511842 have no `kind` — they fall back to phone_call.
+                      const kind = c.kind ?? "phone_call";
+                      const Icon = kind === "in_person" ? Handshake : kind === "other" ? Bell : Phone;
+                      return (
                       <li key={c.id} className="rounded-md border border-border bg-surface-muted/40 p-2.5">
                         <div className="flex items-center gap-2">
-                          <PhoneCall className="h-3.5 w-3.5 text-primary" />
+                          <Icon className="h-3.5 w-3.5 text-primary" />
                           <span className="text-sm font-medium">{formatCallWhen(c.scheduled_at)}</span>
                           <span className="text-xs text-muted-foreground">· {c.duration_mins} min · {c.participant_ids.length} attendee{c.participant_ids.length === 1 ? "" : "s"}</span>
                           <Button
@@ -659,14 +680,11 @@ export default function Tasks() {
                             <span className="ml-1">Cancel</span>
                           </Button>
                         </div>
-                        {c.meeting_link && (
-                          <a href={c.meeting_link} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                            <LinkIcon className="h-3 w-3" /> Join link
-                          </a>
-                        )}
+                        {c.contact && <p className="mt-1 text-xs">{c.contact}</p>}
                         {c.notes && <p className="mt-1 text-xs text-muted-foreground">{c.notes}</p>}
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 </div>
                 <div>
@@ -855,15 +873,39 @@ export default function Tasks() {
         </DialogContent>
       </Dialog>
 
-      {/* Schedule a call dialog — opens from the chip in the task drawer.
-          Reminders are wired server-side: morning-of (09:00 IST), T-20,
-          and T-0 emails are sent automatically to every ticked participant. */}
+      {/* Reminder dialog — task-anchored nudge for any kind of follow-up.
+          Emails go to every ticked participant: morning-of (09:00 IST),
+          T-20, and T-0. No link required — the "What / who" field replaces
+          the old meeting-link field. */}
       <Dialog open={scheduleOpen} onOpenChange={(o) => !o && !scheduling && setScheduleOpen(false)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><PhoneCall className="h-4 w-4" /> Schedule a call</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><Bell className="h-4 w-4" /> Add reminder</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {/* Kind selector — drives the email subject + the contact field label. */}
+            <div>
+              <Label className="text-xs">Kind</Label>
+              <div className="mt-1 grid grid-cols-3 gap-1.5 rounded-md border border-border bg-background p-1">
+                {([
+                  { key: "phone_call", label: "Phone call", Icon: Phone },
+                  { key: "in_person",  label: "In-person",  Icon: Handshake },
+                  { key: "other",      label: "Other",       Icon: Bell },
+                ] as const).map(({ key, label, Icon }) => {
+                  const active = callDraft.kind === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setCallDraft({ ...callDraft, kind: key })}
+                      className={`flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted"}`}
+                    >
+                      <Icon className="h-3.5 w-3.5" /> {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Date *</Label>
@@ -881,11 +923,19 @@ export default function Tasks() {
               </div>
             </div>
             <div>
-              <Label className="text-xs">Meeting link (paste Zoom / Meet / Teams URL)</Label>
+              <Label className="text-xs">
+                {callDraft.kind === "phone_call" ? "Who to call (name / phone number)"
+                 : callDraft.kind === "in_person" ? "Where / with whom"
+                 : "Details"}
+              </Label>
               <Input
-                value={callDraft.link}
-                onChange={(e) => setCallDraft({ ...callDraft, link: e.target.value })}
-                placeholder="https://…"
+                value={callDraft.contact}
+                onChange={(e) => setCallDraft({ ...callDraft, contact: e.target.value })}
+                placeholder={
+                  callDraft.kind === "phone_call" ? "e.g. Karunya · +91 …"
+                  : callDraft.kind === "in_person" ? "e.g. Innomax office · meet with Rajesh"
+                  : "e.g. internal sync, link, anything"
+                }
                 className="mt-1 h-9"
               />
             </div>
@@ -896,11 +946,11 @@ export default function Tasks() {
                 onChange={(e) => setCallDraft({ ...callDraft, notes: e.target.value })}
                 rows={2}
                 className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm"
-                placeholder="What's this call about? (optional)"
+                placeholder="What's this about? (optional)"
               />
             </div>
             <div>
-              <Label className="text-xs">Participants ({callDraft.participantIds.length})</Label>
+              <Label className="text-xs">Who to remind ({callDraft.participantIds.length})</Label>
               <ul className="mt-1 max-h-44 divide-y divide-border overflow-y-auto rounded-md border border-border">
                 {users.filter((u) => u.isActive).map((u) => {
                   const checked = callDraft.participantIds.includes(u.id);
@@ -928,7 +978,7 @@ export default function Tasks() {
             <Button variant="outline" onClick={() => setScheduleOpen(false)} disabled={scheduling}>Cancel</Button>
             <Button onClick={submitSchedule} disabled={scheduling}>
               {scheduling && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-              Schedule
+              Set reminder
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -413,14 +413,17 @@ export interface Message {
   hiddenBy?: ID[];
 }
 
-// ---------- Task calls ----------
+// ---------- Task reminders (kind=phone_call|in_person|other) ----------
 export type TaskCallStatus = "scheduled" | "cancelled" | "done";
+export type TaskCallKind = "phone_call" | "in_person" | "other";
 
 export interface TaskCall {
   id: ID;
   taskId: ID;
   scheduledAt: ISODate;
   durationMins: number;
+  kind: TaskCallKind;
+  contact?: string | null;
   meetingLink?: string | null;
   notes?: string | null;
   status: TaskCallStatus;

@@ -244,6 +244,8 @@ export const api = {
   createTaskCall(taskId: string, payload: {
     scheduled_at: string;
     duration_mins: number;
+    kind: TaskCallKind;
+    contact?: string | null;
     meeting_link?: string | null;
     notes?: string | null;
     participant_ids: string[];
@@ -253,6 +255,8 @@ export const api = {
   updateTaskCall(callId: string, patch: Partial<{
     scheduled_at: string;
     duration_mins: number;
+    kind: TaskCallKind;
+    contact: string | null;
     meeting_link: string | null;
     notes: string | null;
     participant_ids: string[];
@@ -637,11 +641,15 @@ export interface ConversationCreated {
   reused?: boolean;
 }
 
+export type TaskCallKind = "phone_call" | "in_person" | "other";
+
 export interface TaskCallRow {
   id: string;
   task_id: string;
   scheduled_at: string;
   duration_mins: number;
+  kind: TaskCallKind;
+  contact: string | null;
   meeting_link: string | null;
   notes: string | null;
   status: "scheduled" | "cancelled" | "done";

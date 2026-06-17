@@ -1,19 +1,28 @@
-"""Scheduled task calls.
+"""Task-anchored reminders (originally called "calls").
 
-A "call" attaches to a task — a meeting touchpoint (kickoff, follow-up,
-sign-off, demo). Each call has a scheduled time, duration, optional
-meeting link (paste Zoom/Meet/Teams URL), notes, and a participants
-list. The scheduler (app/scheduler.py) sends three email reminders:
-``morning_of`` at 09:00 IST on the day, ``t_minus_20`` 20 minutes before
-the scheduled time, and ``t_zero`` at the scheduled time.
+A reminder attaches to a task — a nudge to call someone, meet them in
+person, or follow up some other way. The scheduler in app/scheduler.py
+fires three email reminders per non-cancelled row: ``morning_of`` at
+09:00 IST on the day, ``t_minus_20`` 20 minutes before the scheduled
+time, and ``t_zero`` at the scheduled time. The email wording adapts
+to the reminder's ``kind``.
+
+Schema (after migration 0017):
+- kind     'phone_call' | 'in_person' | 'other' — drives email copy
+- contact  free-text "who to call / where to meet / what about" —
+           replaces the old "meeting link" UI control. URLs detected
+           inside it (or in notes) are linkified in the email body.
+- meeting_link is kept for legacy rows from c511842 but the UI no
+  longer surfaces it.
 
 Authz mirrors the parent task — anyone who can update the task can
-schedule, edit, or cancel a call on it. Participants are pre-filled from
-the task's assignee + reviewer + reporting_manager, but the creator can
-add or remove anyone.
+schedule, edit, or cancel a reminder on it. Participants default to
+assignee + reviewer + reporting_manager + creator (deduped, active),
+the dialog lets the user untick anyone.
 """
 import datetime as dt
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -27,10 +36,14 @@ from ..util import row
 
 router = APIRouter(tags=["calls"])
 
+CallKind = Literal["phone_call", "in_person", "other"]
+
 
 class CallCreate(BaseModel):
     scheduled_at: dt.datetime
     duration_mins: int = Field(30, ge=5, le=600)
+    kind: CallKind = "phone_call"
+    contact: str | None = None
     meeting_link: str | None = None
     notes: str | None = None
     participant_ids: list[str] = Field(default_factory=list)
@@ -39,6 +52,8 @@ class CallCreate(BaseModel):
 class CallUpdate(BaseModel):
     scheduled_at: dt.datetime | None = None
     duration_mins: int | None = Field(None, ge=5, le=600)
+    kind: CallKind | None = None
+    contact: str | None = None
     meeting_link: str | None = None
     notes: str | None = None
     participant_ids: list[str] | None = None
@@ -102,12 +117,14 @@ def create_call(
     db.execute(
         text(
             "INSERT INTO task_calls (id, task_id, scheduled_at, duration_mins, "
-            "                        meeting_link, notes, created_by) "
-            "VALUES (:id, :tid, :at, :dur, :link, :notes, :cb)"
+            "                        kind, contact, meeting_link, notes, created_by) "
+            "VALUES (:id, :tid, :at, :dur, :kind, :contact, :link, :notes, :cb)"
         ),
         {
             "id": new_id, "tid": task_id, "at": body.scheduled_at,
-            "dur": body.duration_mins, "link": body.meeting_link,
+            "dur": body.duration_mins,
+            "kind": body.kind, "contact": body.contact,
+            "link": body.meeting_link,
             "notes": body.notes, "cb": user.id,
         },
     )
