@@ -129,14 +129,21 @@ def list_messages(
     db: Session = Depends(get_db),
 ):
     _require_member(db, conv_id, user)
-    params = {"c": conv_id, "lim": limit}
+    is_elevated = bool(user.roles & ELEVATED)
+    params: dict = {"c": conv_id, "lim": limit, "uid": user.id}
     where_before = ""
     if before:
         where_before = " AND created_at < :before"
         params["before"] = before
+    # Per-viewer hide: non-elevated viewers filter out messages they hid.
+    # Founder + super_admin see everything (with hidden_by attached below).
+    hide_filter = "" if is_elevated else (
+        " AND NOT EXISTS (SELECT 1 FROM message_hides h "
+        "WHERE h.message_id = messages.id AND h.user_id = :uid)"
+    )
     rows = db.execute(
         text(
-            "SELECT * FROM messages WHERE conversation_id = :c" + where_before +
+            "SELECT * FROM messages WHERE conversation_id = :c" + where_before + hide_filter +
             " ORDER BY created_at DESC LIMIT :lim"
         ),
         params,
@@ -144,6 +151,7 @@ def list_messages(
     # Pull attachments for these messages in one round-trip.
     msg_ids = [str(r["id"]) for r in rows]
     attachments: dict[str, list[dict]] = {}
+    hidden_by: dict[str, list[str]] = {}
     if msg_ids:
         att_rows = db.execute(
             text(
@@ -159,8 +167,26 @@ def list_messages(
                 "file_size": a["file_size"],
                 "mime_type": a["mime_type"],
             })
+        # Elevated viewers see who hid each message (audit marker).
+        if is_elevated:
+            hide_rows = db.execute(
+                text(
+                    "SELECT message_id, user_id FROM message_hides "
+                    "WHERE message_id = ANY(:ids)"
+                ),
+                {"ids": msg_ids},
+            ).mappings().all()
+            for h in hide_rows:
+                hidden_by.setdefault(str(h["message_id"]), []).append(str(h["user_id"]))
     return {
-        "messages": [{**row(r), "attachments": attachments.get(str(r["id"]), [])} for r in reversed(rows)],
+        "messages": [
+            {
+                **row(r),
+                "attachments": attachments.get(str(r["id"]), []),
+                **({"hidden_by": hidden_by.get(str(r["id"]), [])} if is_elevated else {}),
+            }
+            for r in reversed(rows)
+        ],
     }
 
 
@@ -224,6 +250,45 @@ def remove_member(
 
 
 # ---------- read state ----------
+
+# ---------- per-viewer hide (delete chat from my view) ----------
+# Founder + super_admin always see the chat regardless of hides — they
+# have the audit responsibility. Auto-unhide on new message arrives via
+# the trigger installed in migration 0016, so a hidden conversation
+# reappears the moment someone messages there again.
+
+
+@router.post("/{conv_id}/hide", status_code=status.HTTP_204_NO_CONTENT)
+def hide_conversation(
+    conv_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_member(db, conv_id, user)
+    db.execute(
+        text(
+            "INSERT INTO conversation_hides (conversation_id, user_id) VALUES (:c, :u) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"c": conv_id, "u": user.id},
+    )
+    db.commit()
+    return None
+
+
+@router.delete("/{conv_id}/hide", status_code=status.HTTP_204_NO_CONTENT)
+def unhide_conversation(
+    conv_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.execute(
+        text("DELETE FROM conversation_hides WHERE conversation_id = :c AND user_id = :u"),
+        {"c": conv_id, "u": user.id},
+    )
+    db.commit()
+    return None
+
 
 @router.post("/{conv_id}/read", status_code=status.HTTP_204_NO_CONTENT)
 def mark_read(

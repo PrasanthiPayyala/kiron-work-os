@@ -47,6 +47,11 @@ OPEN_STATUSES = [
 
 # Arbitrary 64-bit key for pg_try_advisory_lock. Picked once, never changes.
 _SLA_LOCK_KEY = 7301823461  # "KIRON_SLA"
+_CALL_LOCK_KEY = 7301823462  # "KIRON_CALLS"
+
+# IST = UTC+5:30. Hard-coded because the rest of the app already assumes IST
+# (attendance grace, working hours). Don't introduce zoneinfo here.
+_IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 _scheduler: AsyncIOScheduler | None = None
 
@@ -266,6 +271,210 @@ def _run_sla_check_sync() -> dict:
     return summary
 
 
+# ------------------------------------------------------------------
+# Call reminders (T-morning, T-20, T-0).
+#
+# Runs every minute (cheap query — index on scheduled_at WHERE status =
+# 'scheduled'). For each upcoming non-cancelled call we evaluate three
+# windows and send any reminder kind that hasn't been logged yet for
+# this (call, kind) pair. The reminder log is the dedup key — if we
+# already sent T-20 for call X, the row's there and we skip.
+#
+# Reminders go to every participant via the existing app/email.py
+# transport (cPanel SMTP 465 SSL — SMTP_HOST/USER/PASS in backend.env).
+# If SMTP_HOST is empty, email.py logs to stdout and we still mark the
+# reminder "sent" so we don't loop forever — that matches the existing
+# password-reset behaviour.
+# ------------------------------------------------------------------
+
+
+async def run_call_reminders() -> dict:
+    summary = await asyncio.to_thread(_run_call_reminders_sync)
+    return summary
+
+
+def _run_call_reminders_sync() -> dict:
+    from .email import send_email  # local to avoid pulling SMTP at module import
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    now_ist = now_utc.astimezone(_IST)
+    today_ist = now_ist.date()
+    summary = {
+        "ran_at": now_utc.isoformat(),
+        "scanned": 0,
+        "morning_of_sent": 0,
+        "t_minus_20_sent": 0,
+        "t_zero_sent": 0,
+        "skipped_lock_busy": False,
+    }
+    with engine.begin() as conn:
+        got = conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"), {"k": _CALL_LOCK_KEY},
+        ).scalar()
+        if not got:
+            summary["skipped_lock_busy"] = True
+            return summary
+        try:
+            # Pull scheduled calls from now-2min (just-fired T-0 grace) through
+            # end-of-day-IST + 1d so morning_of catches everything for today.
+            window_start = now_utc - dt.timedelta(minutes=2)
+            window_end = now_utc + dt.timedelta(hours=36)
+            rows = conn.execute(
+                text(
+                    "SELECT c.id, c.task_id, c.scheduled_at, c.duration_mins, "
+                    "       c.meeting_link, c.notes, t.title AS task_title, "
+                    "       t.task_key AS task_key "
+                    "FROM task_calls c "
+                    "JOIN tasks t ON t.id = c.task_id "
+                    "WHERE c.status = 'scheduled' "
+                    "  AND c.scheduled_at >= :ws AND c.scheduled_at <= :we "
+                    "ORDER BY c.scheduled_at ASC LIMIT 500"
+                ),
+                {"ws": window_start, "we": window_end},
+            ).mappings().all()
+            summary["scanned"] = len(rows)
+            if not rows:
+                return summary
+
+            call_ids = [str(r["id"]) for r in rows]
+            sent_rows = conn.execute(
+                text(
+                    "SELECT call_id, kind FROM task_call_reminders "
+                    "WHERE call_id = ANY(:ids)"
+                ),
+                {"ids": call_ids},
+            ).mappings().all()
+            sent: set[tuple[str, str]] = {
+                (str(s["call_id"]), s["kind"]) for s in sent_rows
+            }
+
+            # Participants for the batch — single round-trip.
+            part_rows = conn.execute(
+                text(
+                    "SELECT p.call_id, p.user_id, pr.email, pr.full_name "
+                    "FROM task_call_participants p "
+                    "JOIN profiles pr ON pr.id = p.user_id "
+                    "WHERE p.call_id = ANY(:ids) AND pr.is_active = true "
+                    "  AND COALESCE(pr.email, '') <> ''"
+                ),
+                {"ids": call_ids},
+            ).mappings().all()
+            parts_by_call: dict[str, list[dict]] = {}
+            for p in part_rows:
+                parts_by_call.setdefault(str(p["call_id"]), []).append({
+                    "email": p["email"], "name": p["full_name"],
+                })
+
+            for r in rows:
+                cid = str(r["id"])
+                sched = r["scheduled_at"]
+                if sched.tzinfo is None:
+                    sched = sched.replace(tzinfo=dt.timezone.utc)
+                sched_ist = sched.astimezone(_IST)
+                attendees = parts_by_call.get(cid, [])
+                if not attendees:
+                    continue
+
+                def fire(kind: str) -> None:
+                    if (cid, kind) in sent:
+                        return
+                    _send_reminder_emails(
+                        send_email, attendees, kind, sched_ist,
+                        r["duration_mins"], r["meeting_link"], r["task_title"],
+                        r["task_key"], r["notes"],
+                    )
+                    conn.execute(
+                        text(
+                            "INSERT INTO task_call_reminders (call_id, kind) "
+                            "VALUES (:c, :k) ON CONFLICT DO NOTHING"
+                        ),
+                        {"c": cid, "k": kind},
+                    )
+                    sent.add((cid, kind))
+                    summary[f"{kind}_sent"] += 1
+
+                # T-0 — call is happening now (within ±90s).
+                delta = (sched - now_utc).total_seconds()
+                if -30 <= delta <= 90:
+                    fire("t_zero")
+
+                # T-20 — 20 minutes before, with a generous window so a job
+                # that fires every minute always catches it.
+                if 19 * 60 <= delta <= 21 * 60:
+                    fire("t_minus_20")
+
+                # Morning-of — for calls happening later today (IST), once
+                # 9:00 IST has rolled over. Skip if the call is in less than
+                # 1 hour: T-20 will land soon enough on its own.
+                if (
+                    sched_ist.date() == today_ist
+                    and now_ist.hour >= 9
+                    and (sched - now_utc) > dt.timedelta(hours=1)
+                ):
+                    fire("morning_of")
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _CALL_LOCK_KEY})
+
+    log.info(
+        "Call reminders: scanned=%(scanned)d morning=%(morning_of_sent)d "
+        "t20=%(t_minus_20_sent)d t0=%(t_zero_sent)d",
+        summary,
+    )
+    return summary
+
+
+def _send_reminder_emails(
+    sender,
+    attendees: list[dict],
+    kind: str,
+    sched_ist: dt.datetime,
+    duration_mins: int,
+    meeting_link: str | None,
+    task_title: str | None,
+    task_key: str | None,
+    notes: str | None,
+) -> None:
+    when_human = sched_ist.strftime("%A, %d %b %Y · %I:%M %p IST")
+    if kind == "morning_of":
+        subject = f"Today: {task_title or 'Call'} at {sched_ist.strftime('%I:%M %p')}"
+        lead = "You have a call later today."
+    elif kind == "t_minus_20":
+        subject = f"In 20 minutes: {task_title or 'Call'} at {sched_ist.strftime('%I:%M %p')}"
+        lead = "Your scheduled call is in 20 minutes."
+    else:
+        subject = f"Now: {task_title or 'Call'}"
+        lead = "Your scheduled call is starting now."
+
+    link_html = (
+        f'<p><a href="{meeting_link}" '
+        f'style="display:inline-block;padding:10px 16px;background:#0f172a;'
+        f'color:#fff;text-decoration:none;border-radius:6px">Join the call</a></p>'
+        if meeting_link else ""
+    )
+    notes_html = f"<p><em>Notes:</em> {notes}</p>" if notes else ""
+    body_html = (
+        f"<p>{lead}</p>"
+        f"<p><strong>{task_title or 'Call'}</strong>"
+        + (f" <span style='color:#666'>· {task_key}</span>" if task_key else "")
+        + "</p>"
+        f"<p>{when_human} · {duration_mins} minutes</p>"
+        + link_html + notes_html
+    )
+    body_text = (
+        f"{lead}\n\n"
+        f"{task_title or 'Call'}"
+        + (f" ({task_key})" if task_key else "")
+        + f"\n{when_human} · {duration_mins} minutes\n"
+        + (f"Join: {meeting_link}\n" if meeting_link else "")
+        + (f"Notes: {notes}\n" if notes else "")
+        + "\n— Kiron Work OS"
+    )
+    for a in attendees:
+        try:
+            sender(a["email"], subject, body_text, body_html)
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to send %s reminder to %s", kind, a.get("email"))
+
+
 def _uniq(items: Iterable) -> list[str]:
     seen: list[str] = []
     out: set[str] = set()
@@ -304,9 +513,18 @@ def start_scheduler() -> None:
         # stay silent for a full interval before catching breaches.
         next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=30),
     )
+    _scheduler.add_job(
+        run_call_reminders,
+        trigger="interval",
+        minutes=1,
+        id="call_reminders",
+        coalesce=True,
+        max_instances=1,
+        next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=45),
+    )
     _scheduler.start()
     log.info(
-        "Scheduler started — SLA check every %d min (first run in 30s)",
+        "Scheduler started — SLA every %d min, call reminders every 1 min",
         settings.sla_check_interval_min,
     )
 

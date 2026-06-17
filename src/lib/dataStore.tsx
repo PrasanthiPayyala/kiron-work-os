@@ -48,6 +48,10 @@ type Ctx = Store & {
    * so we can't depend on it for visibility of the sender's own
    * messages. Idempotent on message id. */
   addMessage: (msg: Message) => void;
+  /** Optimistic per-viewer removal — used by Chat hides so the message
+   * disappears immediately while the server PATCH + refresh round-trips. */
+  removeMessageLocal: (messageId: string) => void;
+  removeConversationLocal: (conversationId: string) => void;
   getUser: (id?: string) => User | undefined;
   getCompany: (id?: string) => Company | undefined;
   getDepartment: (id?: string) => Department | undefined;
@@ -328,15 +332,35 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Optimistic local removal for per-viewer hides. The /bootstrap refresh
+  // is authoritative (server filters by message_hides + conversation_hides),
+  // but we splice locally so the UI updates without waiting for a round-trip.
+  const removeMessageLocal = useCallback((messageId: string) => {
+    setStore((prev) => ({
+      ...prev,
+      messages: prev.messages.filter((m) => m.id !== messageId),
+    }));
+  }, []);
+
+  const removeConversationLocal = useCallback((conversationId: string) => {
+    setStore((prev) => ({
+      ...prev,
+      conversations: prev.conversations.filter((c) => c.id !== conversationId),
+      messages: prev.messages.filter((m) => m.conversationId !== conversationId),
+    }));
+  }, []);
+
   const value = useMemo<Ctx>(() => ({
     ...store,
     loading,
     refresh: load,
     addMessage,
+    removeMessageLocal,
+    removeConversationLocal,
     getUser: (id?: string) => store.users.find((u) => u.id === id),
     getCompany: (id?: string) => store.companies.find((c) => c.id === id),
     getDepartment: (id?: string) => store.departments.find((d) => d.id === id),
-  }), [store, loading, load, addMessage]);
+  }), [store, loading, load, addMessage, removeMessageLocal, removeConversationLocal]);
 
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }

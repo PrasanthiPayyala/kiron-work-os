@@ -407,6 +407,28 @@ export interface Message {
    * the UI and replaced with "This message was deleted". */
   deletedAt?: ISODate | null;
   deletedBy?: ID | null;
+  /** Only sent to founder + super_admin. List of user ids who have hidden
+   * this message from their own view. UI renders a subtle "Hidden by X"
+   * marker so the audit layer is visible at a glance. */
+  hiddenBy?: ID[];
+}
+
+// ---------- Task calls ----------
+export type TaskCallStatus = "scheduled" | "cancelled" | "done";
+
+export interface TaskCall {
+  id: ID;
+  taskId: ID;
+  scheduledAt: ISODate;
+  durationMins: number;
+  meetingLink?: string | null;
+  notes?: string | null;
+  status: TaskCallStatus;
+  createdById?: ID | null;
+  createdAt: ISODate;
+  cancelledAt?: ISODate | null;
+  cancelledById?: ID | null;
+  participantIds: ID[];
 }
 
 // ---------- Misc ----------

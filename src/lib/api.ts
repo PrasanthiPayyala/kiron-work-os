@@ -237,6 +237,32 @@ export const api = {
     return request(`/tasks/${id}/activity`);
   },
 
+  // ---------- Task calls (scheduled meetings on a task) ----------
+  listTaskCalls(taskId: string): Promise<TaskCallRow[]> {
+    return request(`/tasks/${taskId}/calls`);
+  },
+  createTaskCall(taskId: string, payload: {
+    scheduled_at: string;
+    duration_mins: number;
+    meeting_link?: string | null;
+    notes?: string | null;
+    participant_ids: string[];
+  }): Promise<TaskCallRow> {
+    return request(`/tasks/${taskId}/calls`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateTaskCall(callId: string, patch: Partial<{
+    scheduled_at: string;
+    duration_mins: number;
+    meeting_link: string | null;
+    notes: string | null;
+    participant_ids: string[];
+  }>): Promise<TaskCallRow> {
+    return request(`/calls/${callId}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  cancelTaskCall(callId: string): Promise<TaskCallRow> {
+    return request(`/calls/${callId}/cancel`, { method: "POST" });
+  },
+
   // ---------- Projects (online-only; managers don't typically create projects offline) ----------
   createProject(payload: {
     title: string;
@@ -462,6 +488,24 @@ export const api = {
   deleteMessage(messageId: string): Promise<MessagePayload | { id: string; already_deleted: boolean }> {
     return request(`/messages/${messageId}`, { method: "DELETE" });
   },
+  /** Per-viewer message hide (the employee-facing "Delete" action). The
+   * message stays in the DB and is still visible to other employees in the
+   * same chat AND to founder + super_admin (with an audit marker). Calling
+   * twice is a no-op. */
+  hideMessage(messageId: string): Promise<void> {
+    return request(`/messages/${messageId}/hide`, { method: "POST" });
+  },
+  unhideMessage(messageId: string): Promise<void> {
+    return request(`/messages/${messageId}/hide`, { method: "DELETE" });
+  },
+  /** Per-viewer conversation hide (the "Delete chat from my view"). The
+   * conversation reappears automatically when a new message lands. */
+  hideConversation(conversationId: string): Promise<void> {
+    return request(`/conversations/${conversationId}/hide`, { method: "POST" });
+  },
+  unhideConversation(conversationId: string): Promise<void> {
+    return request(`/conversations/${conversationId}/hide`, { method: "DELETE" });
+  },
 
   createConversation(payload: {
     channel_type: "direct" | "team_group" | "company_group" | "project_group" | "announcement";
@@ -591,6 +635,21 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface TaskCallRow {
+  id: string;
+  task_id: string;
+  scheduled_at: string;
+  duration_mins: number;
+  meeting_link: string | null;
+  notes: string | null;
+  status: "scheduled" | "cancelled" | "done";
+  created_by: string | null;
+  created_at: string;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  participant_ids: string[];
 }
 
 // Raw snake_case rows, same shape the Supabase client returned.

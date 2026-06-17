@@ -5,7 +5,7 @@ import { useDataStore } from "@/lib/dataStore";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { TaskStatusBadge, PriorityBadge, VisibilityBadge } from "@/components/StatusBadges";
 import { UserAvatar } from "@/components/UserAvatar";
-import { ListChecks, LayoutGrid, List as ListIcon, Plus, Cloud, Loader2, Mail, Check, Pencil } from "lucide-react";
+import { ListChecks, LayoutGrid, List as ListIcon, Plus, Cloud, Loader2, Mail, Check, Pencil, PhoneCall, X as XIcon, Link as LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,6 +20,8 @@ import { toast } from "sonner";
 import { AttachmentList } from "@/components/attachments/AttachmentList";
 import { LinkedEmails } from "@/components/mail/LinkedEmails";
 import type { Task, TaskStatus } from "@/types";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { TaskCallRow } from "@/lib/api";
 
 const kanbanCols: { key: TaskStatus; label: string }[] = [
   { key: "created", label: "Created" },
@@ -140,6 +142,123 @@ export default function Tasks() {
       setMarking(false);
     }
   };
+
+  // ---------------- Scheduled calls on the open task ----------------
+  // Calls live in their own table (task_calls) so a task can have more
+  // than one touchpoint over its lifetime. The backend scheduler fires
+  // email reminders at morning-of (09:00 IST), T-20, and T-0 for each
+  // call that hasn't been cancelled.
+  const [calls, setCalls] = useState<TaskCallRow[]>([]);
+  const [loadingCalls, setLoadingCalls] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+  const [cancellingCallId, setCancellingCallId] = useState<string | null>(null);
+  const [callDraft, setCallDraft] = useState({
+    date: "",
+    time: "",
+    duration: 30,
+    link: "",
+    notes: "",
+    participantIds: [] as string[],
+  });
+
+  const loadCalls = async (taskId: string) => {
+    setLoadingCalls(true);
+    try {
+      setCalls(await api.listTaskCalls(taskId));
+    } catch {
+      setCalls([]);
+    } finally {
+      setLoadingCalls(false);
+    }
+  };
+
+  useEffect(() => {
+    if (active) void loadCalls(active.id);
+    else setCalls([]);
+  }, [active?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openScheduleCall = () => {
+    if (!active) return;
+    // Default to tomorrow 10:00 — sensible for "schedule a call later".
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(10, 0, 0, 0);
+    const yyyy = tomorrow.getFullYear();
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const dd = String(tomorrow.getDate()).padStart(2, "0");
+    const defaultParts = [
+      active.assigneeId,
+      active.reviewerId,
+      active.reportingManagerId,
+      user?.id,
+    ].filter((id): id is string => !!id);
+    // Dedup
+    const partSet = Array.from(new Set(defaultParts));
+    setCallDraft({
+      date: `${yyyy}-${mm}-${dd}`,
+      time: "10:00",
+      duration: 30,
+      link: "",
+      notes: "",
+      participantIds: partSet,
+    });
+    setScheduleOpen(true);
+  };
+
+  const submitSchedule = async () => {
+    if (!active) return;
+    if (!callDraft.date || !callDraft.time) return toast.error("Pick a date and time");
+    if (callDraft.participantIds.length === 0) return toast.error("Pick at least one participant");
+    // Combine date + time as local IST input → ISO string. The browser's
+    // toISOString() correctly applies the local offset.
+    const local = new Date(`${callDraft.date}T${callDraft.time}:00`);
+    if (Number.isNaN(local.getTime())) return toast.error("Bad date/time");
+    if (local.getTime() <= Date.now() - 60_000) return toast.error("Time must be in the future");
+    setScheduling(true);
+    try {
+      await api.createTaskCall(active.id, {
+        scheduled_at: local.toISOString(),
+        duration_mins: callDraft.duration,
+        meeting_link: callDraft.link.trim() || null,
+        notes: callDraft.notes.trim() || null,
+        participant_ids: callDraft.participantIds,
+      });
+      toast.success("Call scheduled — reminders will go out by email");
+      setScheduleOpen(false);
+      void loadCalls(active.id);
+      void loadActivity(active.id);
+    } catch (e) {
+      toast.error("Couldn't schedule", { description: String((e as Error).message ?? e) });
+    } finally {
+      setScheduling(false);
+    }
+  };
+
+  const cancelCall = async (callId: string) => {
+    if (!active) return;
+    setCancellingCallId(callId);
+    try {
+      await api.cancelTaskCall(callId);
+      toast.success("Call cancelled");
+      void loadCalls(active.id);
+    } catch (e) {
+      toast.error("Couldn't cancel", { description: String((e as Error).message ?? e) });
+    } finally {
+      setCancellingCallId(null);
+    }
+  };
+
+  const formatCallWhen = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString(undefined, {
+      weekday: "short", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  };
+
+  const upcomingCalls = calls.filter((c) => c.status === "scheduled");
 
   useEffect(() => {
     if (searchParams.get("from_email") === "1") {
@@ -512,6 +631,45 @@ export default function Tasks() {
                   </div>
                 )}
                 <div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scheduled calls</p>
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={openScheduleCall}>
+                      <PhoneCall className="mr-1 h-3 w-3" /> Schedule a call
+                    </Button>
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {loadingCalls && (
+                      <li className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">Loading…</li>
+                    )}
+                    {!loadingCalls && upcomingCalls.length === 0 && (
+                      <li className="rounded-md border border-dashed border-border p-2.5 text-xs text-muted-foreground">No scheduled calls.</li>
+                    )}
+                    {upcomingCalls.map((c) => (
+                      <li key={c.id} className="rounded-md border border-border bg-surface-muted/40 p-2.5">
+                        <div className="flex items-center gap-2">
+                          <PhoneCall className="h-3.5 w-3.5 text-primary" />
+                          <span className="text-sm font-medium">{formatCallWhen(c.scheduled_at)}</span>
+                          <span className="text-xs text-muted-foreground">· {c.duration_mins} min · {c.participant_ids.length} attendee{c.participant_ids.length === 1 ? "" : "s"}</span>
+                          <Button
+                            size="sm" variant="ghost" className="ml-auto h-6 px-1.5 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => void cancelCall(c.id)}
+                            disabled={cancellingCallId === c.id}
+                          >
+                            {cancellingCallId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XIcon className="h-3 w-3" />}
+                            <span className="ml-1">Cancel</span>
+                          </Button>
+                        </div>
+                        {c.meeting_link && (
+                          <a href={c.meeting_link} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                            <LinkIcon className="h-3 w-3" /> Join link
+                          </a>
+                        )}
+                        {c.notes && <p className="mt-1 text-xs text-muted-foreground">{c.notes}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Activity</p>
                   <ul className="mt-2 space-y-2">
                     {loadingActivity && (
@@ -692,6 +850,85 @@ export default function Tasks() {
             <Button onClick={handleCreate} disabled={creating}>
               {creating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
               Create task
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule a call dialog — opens from the chip in the task drawer.
+          Reminders are wired server-side: morning-of (09:00 IST), T-20,
+          and T-0 emails are sent automatically to every ticked participant. */}
+      <Dialog open={scheduleOpen} onOpenChange={(o) => !o && !scheduling && setScheduleOpen(false)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><PhoneCall className="h-4 w-4" /> Schedule a call</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Date *</Label>
+                <Input type="date" value={callDraft.date} onChange={(e) => setCallDraft({ ...callDraft, date: e.target.value })} className="mt-1 h-9" />
+              </div>
+              <div>
+                <Label className="text-xs">Time *</Label>
+                <Input type="time" value={callDraft.time} onChange={(e) => setCallDraft({ ...callDraft, time: e.target.value })} className="mt-1 h-9" />
+              </div>
+              <div>
+                <Label className="text-xs">Duration (min)</Label>
+                <Input type="number" min={5} max={600} step={5} value={callDraft.duration}
+                  onChange={(e) => setCallDraft({ ...callDraft, duration: Math.max(5, Number(e.target.value) || 30) })}
+                  className="mt-1 h-9" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Meeting link (paste Zoom / Meet / Teams URL)</Label>
+              <Input
+                value={callDraft.link}
+                onChange={(e) => setCallDraft({ ...callDraft, link: e.target.value })}
+                placeholder="https://…"
+                className="mt-1 h-9"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Notes / agenda</Label>
+              <textarea
+                value={callDraft.notes}
+                onChange={(e) => setCallDraft({ ...callDraft, notes: e.target.value })}
+                rows={2}
+                className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm"
+                placeholder="What's this call about? (optional)"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Participants ({callDraft.participantIds.length})</Label>
+              <ul className="mt-1 max-h-44 divide-y divide-border overflow-y-auto rounded-md border border-border">
+                {users.filter((u) => u.isActive).map((u) => {
+                  const checked = callDraft.participantIds.includes(u.id);
+                  return (
+                    <li
+                      key={u.id}
+                      onClick={() => setCallDraft({
+                        ...callDraft,
+                        participantIds: checked
+                          ? callDraft.participantIds.filter((id) => id !== u.id)
+                          : [...callDraft.participantIds, u.id],
+                      })}
+                      className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-surface-muted"
+                    >
+                      <Checkbox checked={checked} />
+                      <span className="flex-1 truncate">{u.name}</span>
+                      <span className="text-[11px] text-muted-foreground">{u.email}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScheduleOpen(false)} disabled={scheduling}>Cancel</Button>
+            <Button onClick={submitSchedule} disabled={scheduling}>
+              {scheduling && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              Schedule
             </Button>
           </DialogFooter>
         </DialogContent>

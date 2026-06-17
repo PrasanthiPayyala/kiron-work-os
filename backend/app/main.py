@@ -15,6 +15,7 @@ from .routers import (
     auth,
     bank_accounts,
     bootstrap,
+    calls,
     chat,
     companies,
     contacts,
@@ -68,6 +69,7 @@ app.include_router(bank_accounts.router)
 app.include_router(contacts.router)
 app.include_router(users.router)
 app.include_router(holidays.router)
+app.include_router(calls.router)
 app.include_router(ws.router)
 
 

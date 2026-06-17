@@ -410,6 +410,7 @@ export function mapMessage(r: DbMessage): Message {
     attachments,
     deletedAt: (r as any).deleted_at ?? null,
     deletedBy: (r as any).deleted_by ?? null,
+    hiddenBy: Array.isArray((r as any).hidden_by) ? (r as any).hidden_by : undefined,
   };
 }
 

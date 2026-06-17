@@ -144,3 +144,60 @@ def delete(
 
     background.add_task(ws_router.message_deleted, payload, str(msg["conversation_id"]))
     return payload
+
+
+# ----------------------------------------------------------------------
+# Per-viewer hides (delete-from-my-view).
+#
+# Employees see exactly what they haven't hidden. Founder + super_admin
+# see everything regardless of hides — that's the audit layer. The UI
+# also surfaces a "Hidden by X" tag to those two roles so the audit
+# trail is visible at a glance.
+#
+# Hiding is silent: no broadcast, no tombstone for others, no warning
+# dialog on the client. The user simply doesn't see the row anymore.
+# ----------------------------------------------------------------------
+
+
+@router.post("/{message_id}/hide", status_code=status.HTTP_204_NO_CONTENT)
+def hide_message(
+    message_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    msg = db.execute(
+        text("SELECT conversation_id FROM messages WHERE id = :id"),
+        {"id": message_id},
+    ).mappings().first()
+    if not msg:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+    # Only members of the conversation (or elevated) can interact with it.
+    if not (_is_member(db, str(msg["conversation_id"]), user.id) or user.roles & CONV_ELEVATED):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not a member of this conversation")
+    db.execute(
+        text(
+            "INSERT INTO message_hides (message_id, user_id) VALUES (:m, :u) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"m": message_id, "u": user.id},
+    )
+    db.commit()
+    return None
+
+
+@router.delete("/{message_id}/hide", status_code=status.HTTP_204_NO_CONTENT)
+def unhide_message(
+    message_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.execute(
+        text("DELETE FROM message_hides WHERE message_id = :m AND user_id = :u"),
+        {"m": message_id, "u": user.id},
+    )
+    db.commit()
+    return None
+
+
+# Conversation-level hide endpoints live in routers/conversations.py
+# (same prefix as the existing GET /conversations endpoints).

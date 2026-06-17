@@ -20,15 +20,11 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   MessageSquare, Send, Hash, Megaphone, Users, Plus, Paperclip,
-  Download, X, UserPlus, Loader2, FileText, MoreHorizontal, Trash2,
+  Download, X, UserPlus, Loader2, FileText, MoreHorizontal, Trash2, Eye,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import type { Conversation } from "@/types";
 
 const groupKinds = [
@@ -64,14 +60,16 @@ function unreadCountFor(conv: Conversation, msgsForConv: { senderId: string; cre
 
 export default function Chat() {
   const { user, role } = useAuth();
-  const { conversations, messages, users, getUser, refresh, addMessage } = useDataStore();
-  // Super_admin + founder can delete anyone's message (matches backend
-  // DELETE_ANYONE_ROLES). Sender can always delete their own — the per-
-  // message check still happens below.
-  const canModerate = role === "super_admin" || role === "founder";
+  const {
+    conversations, messages, users, getUser, refresh, addMessage,
+    removeMessageLocal, removeConversationLocal,
+  } = useDataStore();
+  // Founder + super_admin keep the audit view — they see everything that
+  // employees hide, with a subtle marker on each hidden message. Everyone
+  // else just gets "Delete" (per-viewer hide; no warning dialog).
+  const isFounderAudit = role === "super_admin" || role === "founder";
   const [active, setActive] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [confirmDeleteMsg, setConfirmDeleteMsg] = useState<string | null>(null);
   const [pending, setPending] = useState<AttachmentRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -117,18 +115,41 @@ export default function Chat() {
 
   const removePending = (id: string) => setPending((p) => p.filter((a) => a.id !== id));
 
-  const runDelete = async () => {
-    if (!confirmDeleteMsg) return;
+  // Per-viewer hide. No confirmation dialog — the user picks Delete from
+  // the 3-dot menu and the message disappears from their view. Other
+  // employees still see it; founder + super_admin see it with a marker.
+  // Optimistic: splice locally, then refresh to authoritative server state.
+  const hideMessageLocally = async (messageId: string) => {
+    removeMessageLocal(messageId);
     try {
-      await api.deleteMessage(confirmDeleteMsg);
-      // The realtime broadcast patches the row for every member of the
-      // conversation; this caller sees it as soon as the WS event arrives.
-      // For the rare WS-blip case, a refresh() ensures eventual consistency.
+      await api.hideMessage(messageId);
       void refresh();
     } catch (e) {
+      // Rollback the optimistic removal isn't easy without re-bootstrapping;
+      // surface the error and let refresh() restore the row.
       toast.error(e instanceof ApiError ? e.message : "Couldn't delete");
-    } finally {
-      setConfirmDeleteMsg(null);
+      void refresh();
+    }
+  };
+
+  const hideConversationLocally = async (conversationId: string) => {
+    removeConversationLocal(conversationId);
+    if (active === conversationId) setActive(null);
+    try {
+      await api.hideConversation(conversationId);
+      void refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't delete chat");
+      void refresh();
+    }
+  };
+
+  const unhideMessage = async (messageId: string) => {
+    try {
+      await api.unhideMessage(messageId);
+      void refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't restore");
     }
   };
 
@@ -201,11 +222,11 @@ export default function Chat() {
                         ? getUser(c.memberIds.find((id) => id !== user?.id))?.name ?? c.name
                         : c.name;
                     return (
-                      <li key={c.id}>
+                      <li key={c.id} className="group/conv relative">
                         <button
                           onClick={() => setActive(c.id)}
                           className={cn(
-                            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 pr-7 text-left text-sm",
                             active === c.id ? "bg-primary-soft text-primary" : "hover:bg-surface-muted",
                           )}
                         >
@@ -218,6 +239,25 @@ export default function Chat() {
                             </span>
                           )}
                         </button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 hover:bg-background group-hover/conv:opacity-100"
+                              aria-label="Chat actions"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="h-3.5 w-3.5" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52">
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => void hideConversationLocally(c.id)}
+                            >
+                              <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete chat from my view
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </li>
                     );
                   })}
@@ -256,7 +296,16 @@ export default function Chat() {
                   const u = getUser(m.senderId);
                   const isMine = m.senderId === user?.id;
                   const isDeleted = !!m.deletedAt;
-                  const canDelete = !isDeleted && (isMine || canModerate);
+                  // Hidden = founder/super_admin viewing a message someone
+                  // else has deleted from their own view. The body still
+                  // renders; we just add a small marker.
+                  const hiddenBy = m.hiddenBy ?? [];
+                  const isHiddenForFounder = isFounderAudit && hiddenBy.length > 0;
+                  // Hidden by me — only relevant when the founder OR an
+                  // employee toggles "Show hidden" and an entry they hid
+                  // resurfaces. Today the founder marker covers founders;
+                  // employees only see hidden ones via the unhide flow.
+                  const iHidThis = !!user && hiddenBy.includes(user.id);
                   return (
                     <div key={m.id} className={cn("group flex gap-2.5", isMine && "flex-row-reverse")}>
                       <UserAvatar userId={m.senderId} size="sm" />
@@ -264,7 +313,7 @@ export default function Chat() {
                         <div className={cn("flex items-baseline gap-2", isMine && "justify-end")}>
                           <span className="text-sm font-semibold">{u?.name ?? "Unknown"}</span>
                           <span className="text-[10px] text-muted-foreground">{formatTime(m.createdAt)}</span>
-                          {canDelete && (
+                          {!isDeleted && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <button
@@ -275,12 +324,18 @@ export default function Chat() {
                                 </button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align={isMine ? "end" : "start"} className="w-44">
-                                <DropdownMenuItem
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() => setConfirmDeleteMsg(m.id)}
-                                >
-                                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete message
-                                </DropdownMenuItem>
+                                {iHidThis ? (
+                                  <DropdownMenuItem onClick={() => void unhideMessage(m.id)}>
+                                    <Eye className="mr-2 h-3.5 w-3.5" /> Restore to my view
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => void hideMessageLocally(m.id)}
+                                  >
+                                    <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+                                  </DropdownMenuItem>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           )}
@@ -319,6 +374,14 @@ export default function Chat() {
                               </li>
                             ))}
                           </ul>
+                        )}
+                        {isHiddenForFounder && (
+                          <p className={cn(
+                            "mt-1 text-[10px] italic text-muted-foreground",
+                            isMine && "text-right",
+                          )}>
+                            Hidden from view by {hiddenBy.map((id) => getUser(id)?.name ?? "Someone").join(", ")}
+                          </p>
                         )}
                           </>
                         )}
@@ -393,23 +456,6 @@ export default function Chat() {
         onCreated={(id) => { setActive(id); refresh(); }}
       />
 
-      <AlertDialog open={!!confirmDeleteMsg} onOpenChange={(o) => !o && setConfirmDeleteMsg(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this message?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Other people in the conversation will see "This message was deleted" in its place.
-              The original text is kept in the audit log but is no longer visible. This can't be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={runDelete} className="bg-destructive hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

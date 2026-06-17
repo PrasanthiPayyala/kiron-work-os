@@ -97,10 +97,37 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
 
     # --- conversations / members / messages ---
     all_convs = _rows(db, "SELECT * FROM conversations")
-    if has_any_role(roles, CONV_ELEVATED):
+    is_elevated = has_any_role(roles, CONV_ELEVATED)
+    # Per-viewer hides (delete chat from my view). Founder + super_admin
+    # see everything regardless — that's the audit layer the founders
+    # asked for. The trigger on messages INSERT auto-clears the hide so
+    # a new inbound message reopens the chat.
+    hidden_conv_ids: set[str] = set()
+    hidden_msg_ids: set[str] = set()
+    if not is_elevated:
+        hidden_conv_ids = {
+            r["conversation_id"]
+            for r in _rows(
+                db,
+                "SELECT conversation_id FROM conversation_hides WHERE user_id = :uid",
+                {"uid": uid},
+            )
+        }
+        hidden_msg_ids = {
+            r["message_id"]
+            for r in _rows(
+                db,
+                "SELECT message_id FROM message_hides WHERE user_id = :uid",
+                {"uid": uid},
+            )
+        }
+    if is_elevated:
         conversations = all_convs
     else:
-        conversations = [c for c in all_convs if c["id"] in member_conv_ids]
+        conversations = [
+            c for c in all_convs
+            if c["id"] in member_conv_ids and c["id"] not in hidden_conv_ids
+        ]
     visible_conv_ids = {c["id"] for c in conversations}
     conv_members = _rows(
         db,
@@ -113,6 +140,23 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "SELECT * FROM messages WHERE conversation_id = ANY(:ids) ORDER BY created_at ASC",
         {"ids": list(visible_conv_ids)} if visible_conv_ids else {"ids": []},
     )
+    if not is_elevated and hidden_msg_ids:
+        messages = [m for m in messages if m["id"] not in hidden_msg_ids]
+    # For elevated viewers, decorate every message with the list of users
+    # who hid it from their own view — that's the audit signal the UI uses
+    # to render "Karunya hid this from her view" on the bubble.
+    if is_elevated and messages:
+        msg_ids = [m["id"] for m in messages]
+        hide_rows = _rows(
+            db,
+            "SELECT message_id, user_id FROM message_hides WHERE message_id = ANY(:ids)",
+            {"ids": msg_ids},
+        )
+        by_msg: dict[str, list[str]] = {}
+        for h in hide_rows:
+            by_msg.setdefault(h["message_id"], []).append(h["user_id"])
+        for m in messages:
+            m["hidden_by"] = by_msg.get(m["id"], [])
     # Pull attachments for the visible messages in one round-trip so chat
     # bubbles render with file chips on reload + when WS broadcasts are missed
     # (recipient tab closed / network blip, no replay). Same shape mapMessage
