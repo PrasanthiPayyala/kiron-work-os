@@ -87,7 +87,7 @@ export default function TeamAttendance() {
     <div>
       <PageHeader
         title="Team Attendance"
-        description="Who actually needs a nudge today — late no-shows past their grace window, or anyone who checked out early without a half-day."
+        description="Today's check-in status. Need follow-up = late no check-in, or checked out before end-of-day without WFH / half day / field work / approved leave."
         icon={<ClipboardCheck className="h-5 w-5" />}
         actions={
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void load(date)} disabled={loading}>
@@ -125,7 +125,7 @@ export default function TeamAttendance() {
           {notYetArrived.length > 0 && (
             <div className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-muted/50 px-2.5 py-1 text-[11px] text-muted-foreground">
               <Clock className="h-3 w-3" />
-              {notYetArrived.length} not yet within follow-up window
+              {notYetArrived.length} yet to check in
             </div>
           )}
         </div>

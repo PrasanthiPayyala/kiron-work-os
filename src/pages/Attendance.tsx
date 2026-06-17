@@ -324,7 +324,10 @@ export default function Attendance() {
     if (!user) return;
     if (todayLog) return toast.info("Already checked in for today");
     setBusy("checkin");
-    const status: AttendanceStatus = todayMode === "wfh" ? "wfh" : todayMode;
+    const status: AttendanceStatus = todayMode;
+    // Map UI enum to DB enum — "wfh" is "work_from_home" on the backend.
+    // Field work uses 'field_work' directly (matches the DB enum value
+    // added in migration 0015).
     const dbStatus = status === "wfh" ? "work_from_home" : status;
     try {
       await api.checkIn({
@@ -336,6 +339,7 @@ export default function Attendance() {
       toast.success(
         status === "wfh" ? "Checked in (WFH)" :
         status === "half_day" ? "Checked in (half day)" :
+        status === "field_work" ? "Checked in (field work)" :
         "Checked in",
       );
       refresh();
@@ -403,9 +407,10 @@ export default function Attendance() {
                       Check in button records. */}
                   <div className="flex flex-wrap gap-1.5">
                     {([
-                      { value: "present",  label: "In office" },
-                      { value: "wfh",      label: "WFH" },
-                      { value: "half_day", label: "Half day" },
+                      { value: "present",    label: "In office" },
+                      { value: "wfh",        label: "WFH" },
+                      { value: "half_day",   label: "Half day" },
+                      { value: "field_work", label: "Field work" },
                     ] as { value: AttendanceStatus; label: string }[]).map(({ value, label }) => (
                       <Button
                         key={value}

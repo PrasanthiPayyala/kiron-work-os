@@ -325,6 +325,7 @@ export type AttendanceStatus =
   | "holiday"
   | "weekly_off"
   | "wfh"
+  | "field_work"
   | "leave";
 
 export interface AttendanceLog {

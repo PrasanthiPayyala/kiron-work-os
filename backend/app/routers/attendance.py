@@ -99,11 +99,13 @@ def _saturday_working_today(today: _dt.date, profile: dict, company: dict | None
 
 
 IST = _dt.timezone(_dt.timedelta(hours=5, minutes=30))
-# Grace windows so the follow-up list only contains REAL late / early
-# offenders. Without these we'd flag the entire team at 9 a.m. before
-# anybody walks in.
-GRACE_LATE_MINUTES = 60   # late only if now > work_start + 60 min
-GRACE_EARLY_MINUTES = 30  # early only if check_out < work_end - 30 min
+# Grace windows — small + intentionally invisible in the UI. 20 minutes
+# covers ~10 min of typical arrival slack + ~10 min for the app sign-in
+# itself. No end-of-day grace: leaving even a minute before work_end
+# needs an approved leave or a marked status (half_day / WFH /
+# field_work). Tune these if behavior shifts; do not surface to users.
+GRACE_LATE_MINUTES = 20
+GRACE_EARLY_MINUTES = 0
 
 
 def _effective_time(profile_val, company_val, default: _dt.time) -> _dt.time:
@@ -272,7 +274,10 @@ def followup(
         if co:
             co_dt = co if co.tzinfo else co.replace(tzinfo=IST)
             row_data["check_out_at"] = co.isoformat() if co else None
-            excused = att_status in {"half_day", "work_from_home"}
+            # Field work, WFH, and half-day all excuse an early checkout —
+            # the employee marked their day with intent. Approved leaves
+            # for the date already routed people into on_leave above.
+            excused = att_status in {"half_day", "work_from_home", "field_work"}
             if co_dt < early_cutoff and not excused:
                 minutes_early = int((early_cutoff - co_dt).total_seconds() // 60)
                 row_data["reason"] = "left_early"
