@@ -280,16 +280,32 @@ def _run_sla_check_sync() -> dict:
 # this (call, kind) pair. The reminder log is the dedup key — if we
 # already sent T-20 for call X, the row's there and we skip.
 #
-# Reminders go to every participant via the existing app/email.py
-# transport (cPanel SMTP 465 SSL — SMTP_HOST/USER/PASS in backend.env).
-# If SMTP_HOST is empty, email.py logs to stdout and we still mark the
-# reminder "sent" so we don't loop forever — that matches the existing
-# password-reset behaviour.
+# Primary channel is the in-app notifications pipeline: we INSERT into
+# ``notifications`` (notification_type = 'reminder') and broadcast the
+# row over the existing WebSocket hub. The topbar bell badge + the
+# /notifications page + the desktop browser-Notification handler on the
+# client all consume that stream, so reminders pop up live with no
+# extra wiring per surface.
+#
+# Email is best-effort secondary — fires the same wording out over
+# app/email.py if SMTP is configured. If SMTP_HOST is empty, email.py
+# logs to stdout. Either way we mark the reminder kind as fired so the
+# scheduler doesn't loop forever on the same window.
 # ------------------------------------------------------------------
 
 
 async def run_call_reminders() -> dict:
     summary = await asyncio.to_thread(_run_call_reminders_sync)
+    # Broadcast each freshly-inserted notification over WS so the client
+    # can light up the bell + fire a browser desktop toast in real time.
+    payloads = summary.pop("broadcast_payloads", [])
+    if payloads:
+        from .routers import ws as ws_router
+        for p in payloads:
+            try:
+                await ws_router.notification_new(p)
+            except Exception:  # noqa: BLE001
+                log.exception("WS broadcast failed for reminder notification %s", p.get("id"))
     return summary
 
 
@@ -298,13 +314,16 @@ def _run_call_reminders_sync() -> dict:
     now_utc = dt.datetime.now(dt.timezone.utc)
     now_ist = now_utc.astimezone(_IST)
     today_ist = now_ist.date()
-    summary = {
+    broadcast_payloads: list[dict] = []
+    summary: dict = {
         "ran_at": now_utc.isoformat(),
         "scanned": 0,
         "morning_of_sent": 0,
         "t_minus_20_sent": 0,
         "t_zero_sent": 0,
+        "notifications_inserted": 0,
         "skipped_lock_busy": False,
+        "broadcast_payloads": broadcast_payloads,
     }
     with engine.begin() as conn:
         got = conn.execute(
@@ -347,21 +366,27 @@ def _run_call_reminders_sync() -> dict:
                 (str(s["call_id"]), s["kind"]) for s in sent_rows
             }
 
-            # Participants for the batch — single round-trip.
+            # Participants for the batch — single round-trip. We pull
+            # user_id (for the notification insert) and email (for the
+            # secondary email channel). Inactive users + users without an
+            # email are still notified in-app — we just skip them from
+            # the email loop. Email is dropped only when the column is
+            # blank.
             part_rows = conn.execute(
                 text(
                     "SELECT p.call_id, p.user_id, pr.email, pr.full_name "
                     "FROM task_call_participants p "
                     "JOIN profiles pr ON pr.id = p.user_id "
-                    "WHERE p.call_id = ANY(:ids) AND pr.is_active = true "
-                    "  AND COALESCE(pr.email, '') <> ''"
+                    "WHERE p.call_id = ANY(:ids) AND pr.is_active = true"
                 ),
                 {"ids": call_ids},
             ).mappings().all()
             parts_by_call: dict[str, list[dict]] = {}
             for p in part_rows:
                 parts_by_call.setdefault(str(p["call_id"]), []).append({
-                    "email": p["email"], "name": p["full_name"],
+                    "user_id": str(p["user_id"]),
+                    "email": p["email"],
+                    "name": p["full_name"],
                 })
 
             for r in rows:
@@ -377,16 +402,61 @@ def _run_call_reminders_sync() -> dict:
                 def fire(kind: str) -> None:
                     if (cid, kind) in sent:
                         return
-                    _send_reminder_emails(
-                        send_email, attendees, kind, sched_ist,
-                        r["duration_mins"], r["meeting_link"], r["task_title"],
-                        r["task_key"], r["notes"],
-                        # Defaulting kind here lets older c511842 rows
-                        # (no `kind` column populated) fall back to the
-                        # generic "Reminder:" subject without crashing.
-                        r.get("kind") or "phone_call",
-                        r.get("contact"),
+                    reminder_kind = r.get("kind") or "phone_call"
+                    title, body = _reminder_copy(
+                        kind, reminder_kind, sched_ist,
+                        r["duration_mins"], r["task_title"],
+                        r.get("contact"), r.get("task_key"),
                     )
+                    # In-app notification — one row per participant. The
+                    # WS hub broadcasts each to the right user.
+                    link = f"/tasks?task={r['task_id']}"
+                    result = conn.execute(
+                        text(
+                            "INSERT INTO notifications "
+                            "  (user_id, notification_type, title, body, link) "
+                            "SELECT u.user_id, 'reminder'::public.notification_type, "
+                            "       u.title, u.body, u.link "
+                            "FROM unnest("
+                            "  CAST(:user_ids AS uuid[]), "
+                            "  CAST(:titles   AS text[]), "
+                            "  CAST(:bodies   AS text[]), "
+                            "  CAST(:links    AS text[])"
+                            ") AS u(user_id, title, body, link) "
+                            "RETURNING id, user_id, notification_type, title, body, link, is_read, created_at"
+                        ),
+                        {
+                            "user_ids": [a["user_id"] for a in attendees],
+                            "titles":   [title] * len(attendees),
+                            "bodies":   [body]  * len(attendees),
+                            "links":    [link]  * len(attendees),
+                        },
+                    ).mappings().all()
+                    for row_ in result:
+                        broadcast_payloads.append({
+                            "id": str(row_["id"]),
+                            "user_id": str(row_["user_id"]),
+                            "notification_type": str(row_["notification_type"]),
+                            "title": row_["title"],
+                            "body": row_["body"],
+                            "link": row_["link"],
+                            "is_read": row_["is_read"],
+                            "created_at": row_["created_at"].isoformat() if hasattr(row_["created_at"], "isoformat") else str(row_["created_at"]),
+                        })
+                    summary["notifications_inserted"] += len(result)
+
+                    # Email is now secondary. Send only to attendees whose
+                    # profile has an email set; failures are logged but
+                    # never block the in-app fire.
+                    email_attendees = [a for a in attendees if a.get("email")]
+                    if email_attendees:
+                        _send_reminder_emails(
+                            send_email, email_attendees, kind, sched_ist,
+                            r["duration_mins"], r["meeting_link"], r["task_title"],
+                            r["task_key"], r["notes"],
+                            reminder_kind, r.get("contact"),
+                        )
+
                     conn.execute(
                         text(
                             "INSERT INTO task_call_reminders (call_id, kind) "
@@ -425,6 +495,43 @@ def _run_call_reminders_sync() -> dict:
         summary,
     )
     return summary
+
+
+def _reminder_copy(
+    when_kind: str,
+    reminder_kind: str,
+    sched_ist: dt.datetime,
+    duration_mins: int,
+    task_title: str | None,
+    contact: str | None,
+    task_key: str | None,
+) -> tuple[str, str]:
+    """Render the (title, body) used for both the in-app notification
+    row and the desktop browser-Notification toast. Mirrors the email
+    subject/lead shape so the audit story stays consistent."""
+    when_short = sched_ist.strftime("%I:%M %p")
+    if reminder_kind == "phone_call":
+        verb = "Call"
+        headline = contact or task_title or "Call"
+    elif reminder_kind == "in_person":
+        verb = "Meet"
+        headline = contact or task_title or "Meeting"
+    else:
+        verb = "Reminder"
+        headline = task_title or contact or "Reminder"
+
+    if when_kind == "morning_of":
+        title = f"Today: {verb} {headline} — {when_short}"
+    elif when_kind == "t_minus_20":
+        title = f"In 20 minutes: {verb} {headline} — {when_short}"
+    else:
+        title = f"Now: {verb} {headline}"
+
+    body = sched_ist.strftime("%A, %d %b · %I:%M %p IST")
+    body += f" · {duration_mins} min"
+    if task_key:
+        body += f" · {task_key}"
+    return title, body
 
 
 def _send_reminder_emails(

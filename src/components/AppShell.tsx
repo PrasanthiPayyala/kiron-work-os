@@ -1,5 +1,7 @@
 import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { desktopPermission, requestDesktopPermission, type DesktopPermission } from "@/lib/desktopNotifications";
+import { toast } from "sonner";
 import { useAuth, roleNavAccess, roleLabel, canSeeTeamAttendance, type NavKey } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -69,6 +71,27 @@ export default function AppShell() {
   const { canInstall, install } = usePwaInstall();
   const { needRefresh, update } = useServiceWorkerUpdate();
   const [updateDismissed, setUpdateDismissed] = useState(false);
+
+  // Desktop / OS-level notification permission. The "Enable" row only
+  // appears while still in the `default` state — once granted or denied
+  // the user has made their call and the prompt would be noise.
+  const [notifPerm, setNotifPerm] = useState<DesktopPermission>("default");
+  useEffect(() => {
+    setNotifPerm(desktopPermission());
+  }, []);
+  const enableDesktopNotifs = async () => {
+    const next = await requestDesktopPermission();
+    setNotifPerm(next);
+    if (next === "granted") {
+      toast.success("Desktop notifications are on", {
+        description: "Reminders and other alerts will pop up even when this tab is in the background.",
+      });
+    } else if (next === "denied") {
+      toast.error("Permission denied", {
+        description: "You can re-enable in your browser's site settings if you change your mind.",
+      });
+    }
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background font-body">
@@ -284,6 +307,17 @@ export default function AppShell() {
                   )}
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {notifPerm === "default" && (
+                  <div className="px-2 py-2">
+                    <p className="mb-1.5 text-xs text-muted-foreground">
+                      Get reminders and alerts as desktop pop-ups, even when this tab is in the background.
+                    </p>
+                    <Button size="sm" className="w-full" onClick={enableDesktopNotifs}>
+                      <Bell className="mr-1.5 h-3.5 w-3.5" /> Enable desktop notifications
+                    </Button>
+                  </div>
+                )}
+                {notifPerm === "default" && <DropdownMenuSeparator />}
                 {myNotifs.length === 0 && (
                   <p className="px-2 py-3 text-sm text-muted-foreground">You're all caught up.</p>
                 )}

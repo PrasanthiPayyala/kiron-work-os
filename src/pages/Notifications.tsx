@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Bell, CheckCheck, AlertTriangle, Clock, ShieldCheck, AtSign,
-  Megaphone, RefreshCw, ArrowRight,
+  Megaphone, RefreshCw, ArrowRight, Phone,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
@@ -31,6 +31,8 @@ const iconFor = (kind: Notification["kind"]) => {
       return Megaphone;
     case "recurring_upcoming":
       return RefreshCw;
+    case "reminder":
+      return Phone;
     default:
       return Bell;
   }
@@ -47,6 +49,8 @@ const accentFor = (kind: Notification["kind"]) => {
     case "mention":
       return "text-accent bg-accent/10";
     case "announcement":
+      return "text-primary bg-primary-soft";
+    case "reminder":
       return "text-primary bg-primary-soft";
     default:
       return "text-muted-foreground bg-surface-muted";

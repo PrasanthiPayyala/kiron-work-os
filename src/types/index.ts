@@ -456,7 +456,9 @@ export interface Notification {
     | "pending_approval"
     | "recurring_upcoming"
     | "mention"
-    | "announcement";
+    | "announcement"
+    | "reminder"
+    | "general";
   title: string;
   body?: string;
   link?: string;

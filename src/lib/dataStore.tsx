@@ -18,6 +18,7 @@ import {
 import { offlineDB, replaceTable, setMeta, getMeta, clearAllData } from "@/lib/offline/db";
 import { drainQueue } from "@/lib/offline/mutationQueue";
 import { onRealtime } from "@/lib/ws";
+import { showDesktopNotification } from "@/lib/desktopNotifications";
 import type {
   Company, Department, User, Project, Task, Approval,
   AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role, Holiday,
@@ -311,6 +312,18 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
         setStore((prev) => {
           if (prev.notifications.some((x) => x.id === n.id)) return prev;
           return { ...prev, notifications: [n, ...prev.notifications] };
+        });
+        // Fire an OS-level desktop toast when the tab is in the
+        // background. desktopPermission must be granted; otherwise this
+        // is a silent no-op. Foreground tab keeps just the in-app bell.
+        showDesktopNotification({
+          title: n.title,
+          body: n.body,
+          link: n.link,
+          // Same task → same tag → notifications collapse instead of
+          // stacking three corner toasts when a reminder fires multiple
+          // windows quickly.
+          tag: n.link ?? n.id,
         });
       } else if (ev.type === "approval.changed") {
         const a = mapApproval(ev.data as Parameters<typeof mapApproval>[0]);
