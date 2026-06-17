@@ -111,7 +111,7 @@ export const roleNavAccess: Record<Role, NavKey[]> = {
   manager:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts"],
   employee:                   ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people"],
   intern:                     ["dashboard","my_work","projects","tasks","attendance","leave","chat","people"],
-  hr_admin:                   ["dashboard","attendance","team_attendance","leave","approvals","reports","people","contacts","settings","chat"],
+  hr_admin:                   ["dashboard","my_work","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","settings"],
 };
 
 /** Capability check for the Team Attendance / Follow-up page. Roles in

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { PageHeader } from "@/components/PageHeader";
@@ -56,6 +56,24 @@ export default function MyWork() {
   const [active, setActive] = useState<Task | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
+
+  type ActivityRow = Awaited<ReturnType<typeof api.listTaskActivity>>[number];
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [loadingActivity, setLoadingActivity] = useState(false);
+
+  useEffect(() => {
+    if (!active) {
+      setActivity([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingActivity(true);
+    api.listTaskActivity(active.id)
+      .then((rows) => { if (!cancelled) setActivity(rows); })
+      .catch(() => { if (!cancelled) setActivity([]); })
+      .finally(() => { if (!cancelled) setLoadingActivity(false); });
+    return () => { cancelled = true; };
+  }, [active?.id]);
 
   const mine = useMemo(
     () => tasks.filter((t) => t.assigneeId === user?.id),
@@ -246,6 +264,30 @@ export default function MyWork() {
                 </div>
               </div>
 
+              <div className="mt-5">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Activity</p>
+                <ul className="mt-2 space-y-2">
+                  {loadingActivity && (
+                    <li className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">Loading…</li>
+                  )}
+                  {!loadingActivity && activity.length === 0 && (
+                    <li className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">No updates yet.</li>
+                  )}
+                  {activity.map((a) => {
+                    const actor = a.actor_user_id ? getUser(a.actor_user_id) : null;
+                    const body = a.message || a.note || "";
+                    return (
+                      <li key={a.id} className="rounded-md border border-border p-2.5">
+                        <p className="text-xs text-muted-foreground">
+                          {a.created_at}{actor ? ` · ${actor.name}` : ""}{a.activity_type && a.activity_type !== "comment" ? ` · ${a.activity_type.replace("_", " ")}` : ""}
+                        </p>
+                        {body && <p className="mt-1 whitespace-pre-wrap text-sm">{body}</p>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+
               <div className="mt-5 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                 <div>Reviewer: {getUser(active.reviewerId)?.name ?? "—"}</div>
                 <div>Reporting: {getUser(active.reportingManagerId)?.name ?? "—"}</div>
@@ -270,15 +312,17 @@ function Section({ title, items, onPick }: { title: string; items: Task[]; onPic
         {items.length === 0 && (
           <p className="p-6 text-center text-sm text-muted-foreground">Nothing here.</p>
         )}
-        {items.map((t) => (
+        {items.map((t) => {
+          const done = t.status === "done";
+          return (
           <li
             key={t.id}
             onClick={() => onPick(t)}
-            className="flex cursor-pointer items-center gap-3 p-3.5 hover:bg-surface-muted/40"
+            className={`flex cursor-pointer items-center gap-3 p-3.5 hover:bg-surface-muted/40 ${done ? "opacity-70" : ""}`}
           >
             <UserAvatar userId={t.assigneeId} size="sm" />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{t.key} · {t.title}</p>
+              <p className={`truncate text-sm font-medium ${done ? "line-through text-muted-foreground" : ""}`}>{t.key} · {t.title}</p>
               <div className="mt-1 flex items-center gap-2">
                 <CompanyBadge companyId={t.companyId} size="xs" />
                 <PriorityBadge priority={t.priority} />
@@ -287,7 +331,8 @@ function Section({ title, items, onPick }: { title: string; items: Task[]; onPic
             </div>
             <span className="text-xs text-muted-foreground">{t.dueDate ?? "—"}</span>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );

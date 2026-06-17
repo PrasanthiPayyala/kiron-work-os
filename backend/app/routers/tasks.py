@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..authz import can_create_task, can_update_task
+from ..authz import can_create_task, can_update_task, can_view_task
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
@@ -95,6 +95,33 @@ def update_task(
     db.execute(text(f"UPDATE tasks SET {set_clause} WHERE id = :id"), params)
     db.commit()
     return _get_task(db, task_id)
+
+
+@router.get("/{task_id}/activity")
+def list_activity(
+    task_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = _get_task(db, task_id)
+    member_project_ids = {
+        r[0] for r in db.execute(
+            text("SELECT project_id FROM project_members WHERE user_id = :uid"),
+            {"uid": user.id},
+        ).all()
+    }
+    if not can_view_task(task, user.id, user.roles, member_project_ids):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to view this task")
+    rows = db.execute(
+        text(
+            "SELECT id, task_id, actor_user_id, activity_type, message, note, "
+            "       old_value, new_value, created_at "
+            "FROM task_activity WHERE task_id = :id "
+            "ORDER BY created_at DESC LIMIT 200"
+        ),
+        {"id": task_id},
+    ).mappings().all()
+    return [row(r) for r in rows]
 
 
 @router.post("/{task_id}/activity", status_code=status.HTTP_201_CREATED)

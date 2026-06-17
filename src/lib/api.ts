@@ -223,6 +223,19 @@ export const api = {
   createTask: withOffline("createTask", raw.createTask),
   updateTask: withOffline("updateTask", raw.updateTask),
   addTaskActivity: withOffline("addTaskActivity", raw.addTaskActivity),
+  listTaskActivity(id: string): Promise<Array<{
+    id: string;
+    task_id: string;
+    actor_user_id: string | null;
+    activity_type: string;
+    message: string | null;
+    note: string | null;
+    old_value: unknown;
+    new_value: unknown;
+    created_at: string;
+  }>> {
+    return request(`/tasks/${id}/activity`);
+  },
 
   // ---------- Projects (online-only; managers don't typically create projects offline) ----------
   createProject(payload: {

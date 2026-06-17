@@ -5,11 +5,12 @@ import { useDataStore } from "@/lib/dataStore";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { TaskStatusBadge, PriorityBadge, VisibilityBadge } from "@/components/StatusBadges";
 import { UserAvatar } from "@/components/UserAvatar";
-import { ListChecks, LayoutGrid, List as ListIcon, Plus, Cloud, Loader2, Mail } from "lucide-react";
+import { ListChecks, LayoutGrid, List as ListIcon, Plus, Cloud, Loader2, Mail, Check, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { taskStatusOut } from "@/lib/mappers";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
@@ -53,6 +54,92 @@ export default function Tasks() {
   // Post-update (comment) state for the open task in the Sheet detail view.
   const [updateText, setUpdateText] = useState("");
   const [posting, setPosting] = useState(false);
+
+  type ActivityRow = Awaited<ReturnType<typeof api.listTaskActivity>>[number];
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [loadingActivity, setLoadingActivity] = useState(false);
+
+  const loadActivity = async (taskId: string) => {
+    setLoadingActivity(true);
+    try {
+      const rows = await api.listTaskActivity(taskId);
+      setActivity(rows);
+    } catch {
+      setActivity([]);
+    } finally {
+      setLoadingActivity(false);
+    }
+  };
+
+  // Fetch activity whenever a task drawer opens or after a successful post.
+  useEffect(() => {
+    if (active) {
+      void loadActivity(active.id);
+      setEditingDetails(false);
+    } else {
+      setActivity([]);
+      setUpdateText("");
+    }
+  }, [active?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Inline edit for reviewer / reporting manager / due date — fields most
+  // commonly forgotten at create time. Reviewer needs this to take action.
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [detailsDraft, setDetailsDraft] = useState({
+    reviewer_id: "",
+    reporting_manager_id: "",
+    due_date: "",
+  });
+  const [marking, setMarking] = useState(false);
+
+  const openDetailsEdit = () => {
+    if (!active) return;
+    setDetailsDraft({
+      reviewer_id: active.reviewerId ?? "",
+      reporting_manager_id: active.reportingManagerId ?? "",
+      due_date: active.dueDate ?? "",
+    });
+    setEditingDetails(true);
+  };
+
+  const saveDetails = async () => {
+    if (!active) return;
+    setSavingDetails(true);
+    try {
+      const patch: Record<string, unknown> = {
+        reviewer_id: detailsDraft.reviewer_id || null,
+        reporting_manager_id: detailsDraft.reporting_manager_id || null,
+        due_at: detailsDraft.due_date
+          ? new Date(`${detailsDraft.due_date}T23:59:00`).toISOString()
+          : null,
+      };
+      await api.updateTask(active.id, patch);
+      toast.success("Details updated");
+      setEditingDetails(false);
+      refresh();
+    } catch (e) {
+      toast.error("Couldn't save", { description: String((e as Error).message ?? e) });
+    } finally {
+      setSavingDetails(false);
+    }
+  };
+
+  const markComplete = async () => {
+    if (!active) return;
+    setMarking(true);
+    try {
+      await api.updateTask(active.id, { status: taskStatusOut("done") });
+      toast.success("Task marked complete");
+      setActive({ ...active, status: "done" });
+      void loadActivity(active.id);
+      refresh();
+    } catch (e) {
+      toast.error("Couldn't mark complete", { description: String((e as Error).message ?? e) });
+    } finally {
+      setMarking(false);
+    }
+  };
 
   useEffect(() => {
     if (searchParams.get("from_email") === "1") {
@@ -174,6 +261,7 @@ export default function Tasks() {
       });
       setUpdateText("");
       toast.success("Update posted");
+      void loadActivity(active.id);
       refresh();
     } catch (e) {
       toast.error("Couldn't post update", { description: String((e as Error).message ?? e) });
@@ -277,17 +365,20 @@ export default function Tasks() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((t) => (
-                  <tr key={t.id} className="cursor-pointer border-b border-border last:border-0 hover:bg-surface-muted/40" onClick={() => setActive(t)}>
+                {filtered.map((t) => {
+                  const done = t.status === "done";
+                  return (
+                  <tr key={t.id} className={`cursor-pointer border-b border-border last:border-0 hover:bg-surface-muted/40 ${done ? "text-muted-foreground" : ""}`} onClick={() => setActive(t)}>
                     <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{t.key}</td>
-                    <td className="px-4 py-2.5 font-medium">{t.title}</td>
+                    <td className={`px-4 py-2.5 font-medium ${done ? "line-through" : ""}`}>{t.title}</td>
                     <td className="px-4 py-2.5"><CompanyBadge companyId={t.companyId} size="xs" /></td>
                     <td className="px-4 py-2.5"><div className="flex items-center gap-2"><UserAvatar userId={t.assigneeId} size="xs" /><span className="text-xs">{getUser(t.assigneeId)?.name}</span></div></td>
                     <td className="px-4 py-2.5"><PriorityBadge priority={t.priority} /></td>
                     <td className="px-4 py-2.5"><TaskStatusBadge status={t.status} /></td>
                     <td className="px-4 py-2.5 text-muted-foreground">{t.dueDate ?? "—"}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -302,13 +393,16 @@ export default function Tasks() {
                     <span className="text-xs text-muted-foreground">{items.length}</span>
                   </div>
                   <div className="space-y-2">
-                    {items.map((t) => (
-                      <button key={t.id} onClick={() => setActive(t)} className="w-full rounded-lg border border-border bg-surface p-2.5 text-left shadow-card hover:border-primary/30">
+                    {items.map((t) => {
+                      const done = t.status === "done";
+                      return (
+                      <button key={t.id} onClick={() => setActive(t)} className={`w-full rounded-lg border border-border bg-surface p-2.5 text-left shadow-card hover:border-primary/30 ${done ? "opacity-70" : ""}`}>
                         <div className="flex items-center justify-between gap-2"><span className="font-mono text-[10px] text-muted-foreground">{t.key}</span><PriorityBadge priority={t.priority} /></div>
-                        <p className="mt-1.5 text-sm font-medium leading-snug">{t.title}</p>
+                        <p className={`mt-1.5 text-sm font-medium leading-snug ${done ? "line-through text-muted-foreground" : ""}`}>{t.title}</p>
                         <div className="mt-2 flex items-center justify-between"><CompanyBadge companyId={t.companyId} size="xs" showName={false} /><UserAvatar userId={t.assigneeId} size="xs" /></div>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -330,19 +424,86 @@ export default function Tasks() {
                 <SheetTitle className="text-left font-display">{active.title}</SheetTitle>
               </SheetHeader>
               <div className="mt-4 space-y-4 text-sm">
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <TaskStatusBadge status={active.status} />
                   <PriorityBadge priority={active.priority} />
                   <VisibilityBadge visibility={active.visibility} />
                   {active.recurrence && <span className="rounded-md border border-border bg-surface-muted px-2 py-0.5 text-xs capitalize">Recurring · {active.recurrence.cadence}</span>}
+                  {active.status !== "done" && (
+                    <Button size="sm" variant="default" className="ml-auto h-7" onClick={markComplete} disabled={marking}>
+                      {marking ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Check className="mr-1 h-3.5 w-3.5" />}
+                      Mark complete
+                    </Button>
+                  )}
                 </div>
-                <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3">
-                  <Field label="Assignee" value={getUser(active.assigneeId)?.name} avatarId={active.assigneeId} />
-                  <Field label="Reviewer" value={getUser(active.reviewerId)?.name} avatarId={active.reviewerId} />
-                  <Field label="Reporting manager" value={getUser(active.reportingManagerId)?.name} avatarId={active.reportingManagerId} />
-                  <Field label="Created by" value={getUser(active.createdById)?.name} avatarId={active.createdById} />
-                  <Field label="Due" value={active.dueDate ?? "—"} />
-                  <Field label="SLA" value={active.slaHours ? `${active.slaHours}h` : "—"} />
+                <div className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Details</p>
+                    {!editingDetails && (
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={openDetailsEdit}>
+                        <Pencil className="mr-1 h-3 w-3" /> Edit
+                      </Button>
+                    )}
+                  </div>
+                  {!editingDetails ? (
+                    <div className="mt-2 grid grid-cols-2 gap-3">
+                      <Field label="Assignee" value={getUser(active.assigneeId)?.name} avatarId={active.assigneeId} />
+                      <Field label="Reviewer" value={getUser(active.reviewerId)?.name ?? "Not set"} avatarId={active.reviewerId} />
+                      <Field label="Reporting manager" value={getUser(active.reportingManagerId)?.name ?? "Not set"} avatarId={active.reportingManagerId} />
+                      <Field label="Created by" value={getUser(active.createdById)?.name} avatarId={active.createdById} />
+                      <Field label="Due" value={active.dueDate ?? "Not set"} />
+                      <Field label="SLA" value={active.slaHours ? `${active.slaHours}h` : "—"} />
+                    </div>
+                  ) : (
+                    <div className="mt-2 grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Reviewer</Label>
+                        <Select
+                          value={detailsDraft.reviewer_id || "__none__"}
+                          onValueChange={(v) => setDetailsDraft({ ...detailsDraft, reviewer_id: v === "__none__" ? "" : v })}
+                        >
+                          <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Not set</SelectItem>
+                            {users.filter((u) => u.isActive).map((u) => (
+                              <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Reporting manager</Label>
+                        <Select
+                          value={detailsDraft.reporting_manager_id || "__none__"}
+                          onValueChange={(v) => setDetailsDraft({ ...detailsDraft, reporting_manager_id: v === "__none__" ? "" : v })}
+                        >
+                          <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Not set</SelectItem>
+                            {users.filter((u) => u.isActive).map((u) => (
+                              <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Due date</Label>
+                        <Input
+                          type="date"
+                          value={detailsDraft.due_date}
+                          onChange={(e) => setDetailsDraft({ ...detailsDraft, due_date: e.target.value })}
+                          className="mt-1 h-9"
+                        />
+                      </div>
+                      <div className="col-span-2 flex items-center justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={() => setEditingDetails(false)} disabled={savingDetails}>Cancel</Button>
+                        <Button size="sm" onClick={saveDetails} disabled={savingDetails}>
+                          {savingDetails && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {active.labels && active.labels.length > 0 && (
                   <div>
@@ -353,8 +514,25 @@ export default function Tasks() {
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Activity</p>
                   <ul className="mt-2 space-y-2">
-                    <li className="rounded-md border border-border p-2.5"><p className="text-xs text-muted-foreground">{active.updatedAt}</p><p className="text-sm">Status moved to <strong className="capitalize">{active.status.replace("_"," ")}</strong></p></li>
-                    <li className="rounded-md border border-border p-2.5"><p className="text-xs text-muted-foreground">{active.createdAt}</p><p className="text-sm">Task created by {getUser(active.createdById)?.name}</p></li>
+                    {loadingActivity && (
+                      <li className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">Loading…</li>
+                    )}
+                    {!loadingActivity && activity.length === 0 && (
+                      <li className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">No updates yet — post one below.</li>
+                    )}
+                    {activity.map((a) => {
+                      const actor = a.actor_user_id ? getUser(a.actor_user_id) : null;
+                      const body = a.message || a.note || "";
+                      return (
+                        <li key={a.id} className="rounded-md border border-border p-2.5">
+                          <p className="text-xs text-muted-foreground">
+                            {a.created_at}{actor ? ` · ${actor.name}` : ""}{a.activity_type && a.activity_type !== "comment" ? ` · ${a.activity_type.replace("_", " ")}` : ""}
+                          </p>
+                          {body && <p className="mt-1 whitespace-pre-wrap text-sm">{body}</p>}
+                        </li>
+                      );
+                    })}
+                    <li className="rounded-md border border-border border-dashed p-2.5"><p className="text-xs text-muted-foreground">{active.createdAt}</p><p className="text-sm">Task created by {getUser(active.createdById)?.name}</p></li>
                   </ul>
                 </div>
                 <div>
