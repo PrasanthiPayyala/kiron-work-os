@@ -172,7 +172,17 @@ export default function Chat() {
         {/* Left: conversation list */}
         <aside className="overflow-y-auto scrollbar-quiet p-3">
           {groupKinds.map(({ key, label, icon: Icon }) => {
-            const items = conversations.filter((c) => c.kind === key);
+            // Latest activity first per the user's expectation. Falls back
+            // to created_at via name comparison if lastMessageAt is missing
+            // (brand-new conversations with no messages yet).
+            const items = conversations
+              .filter((c) => c.kind === key)
+              .slice()
+              .sort((a, b) => {
+                const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+                const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+                return tb - ta;
+              });
             if (!items.length) return null;
             return (
               <div key={key} className="mb-4">

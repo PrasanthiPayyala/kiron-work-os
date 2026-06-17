@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { useUnreadMailCount } from "@/hooks/useUnreadMailCount";
+import { useUnreadChatCount } from "@/hooks/useUnreadChatCount";
 import { usePwaInstall, useOnlineStatus, useServiceWorkerUpdate } from "@/lib/pwa";
 import { SyncIndicator } from "@/components/SyncIndicator";
 import { Download, Wifi, WifiOff, RefreshCw } from "lucide-react";
@@ -63,6 +64,7 @@ export default function AppShell() {
   const myNotifs = notifications.filter((n) => n.userId === user.id);
   const unreadNotifs = myNotifs.filter((n) => !n.read).length;
   const unreadMail = useUnreadMailCount();
+  const unreadChat = useUnreadChatCount();
   const online = useOnlineStatus();
   const { canInstall, install } = usePwaInstall();
   const { needRefresh, update } = useServiceWorkerUpdate();
@@ -124,6 +126,9 @@ export default function AppShell() {
                     {!collapsed && dimmed && <WifiOff className="ml-auto h-3 w-3 text-muted-foreground" />}
                     {!collapsed && !dimmed && item.key === "mail" && unreadMail > 0 && (
                       <span className="ml-auto rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{unreadMail}</span>
+                    )}
+                    {!collapsed && !dimmed && item.key === "chat" && unreadChat > 0 && (
+                      <span className="ml-auto rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{unreadChat > 99 ? "99+" : unreadChat}</span>
                     )}
                   </NavLink>
                 </li>
