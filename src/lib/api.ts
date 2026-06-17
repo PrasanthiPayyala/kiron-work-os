@@ -310,16 +310,19 @@ export const api = {
   },
 
   // ---------- Attendance follow-up (Team Attendance page) ----------
-  /** Returns today's missing / checked-in / on-leave / off-today buckets
-   * for HR / TA follow-up. Server enforces who can call this — 403 if
-   * the caller isn't in ATTENDANCE_FOLLOWUP_ROLES and doesn't have the
-   * per-user opt-in flag. */
+  /** Buckets the day's roster for HR / TA follow-up. Server enforces
+   * who can call (403 if not allowed). `need_followup` is the only
+   * actionable list — late check-in or early checkout without a half-
+   * day / WFH excuse. `not_yet_arrived` is shown as info, not as a
+   * todo, so HR isn't pulled into the office at 9 a.m. */
   attendanceFollowup(date?: string): Promise<{
     date: string;
     iso_weekday: number;
-    totals: { missing: number; checked_in: number; on_leave: number; off_today: number };
-    missing: Record<string, unknown>[];
-    checked_in: Record<string, unknown>[];
+    now: string;
+    totals: { need_followup: number; present: number; not_yet_arrived: number; on_leave: number; off_today: number };
+    need_followup: Record<string, unknown>[];
+    present: Record<string, unknown>[];
+    not_yet_arrived: Record<string, unknown>[];
     on_leave: Record<string, unknown>[];
     off_today: Record<string, unknown>[];
   }> {

@@ -1,13 +1,8 @@
-// Team Attendance / Follow-up — shows today's missing check-ins so HR
-// and TA staff can reach out to people who are working but haven't
-// checked in yet. Buckets:
-//   - missing: should be here today but haven't checked in
-//   - checked_in: already checked in
-//   - on_leave: on approved leave today
-//   - off_today: schedule says today is off (weekend / Saturday pattern)
-//
-// Access via roleNavAccess + per-user attendanceFollowupAccess flag —
-// ProtectedRoute already gates it; the page just renders.
+// Team Attendance / Follow-up — only the rows that need HR's attention
+// today land in `need_followup` (late + no-show past grace, or early
+// checkout without a half-day/WFH excuse). People who simply haven't
+// arrived yet sit in `not_yet_arrived` as an info count so HR isn't
+// chasing the team at 9 a.m.
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { useDataStore } from "@/lib/dataStore";
@@ -17,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2 } from "lucide-react";
+import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 
 type Row = {
@@ -29,21 +24,29 @@ type Row = {
   home_company_id?: string | null;
   reporting_manager_id?: string | null;
   check_in_at?: string | null;
+  check_out_at?: string | null;
   check_in_status?: string | null;
   leave_type?: string | null;
+  reason?: "missed_check_in" | "left_early";
+  minutes_early?: number;
+  expected_by?: string;
 };
 
 type FollowupResponse = {
   date: string;
   iso_weekday: number;
-  totals: { missing: number; checked_in: number; on_leave: number; off_today: number };
-  missing: Row[];
-  checked_in: Row[];
+  now: string;
+  totals: { need_followup: number; present: number; not_yet_arrived: number; on_leave: number; off_today: number };
+  need_followup: Row[];
+  present: Row[];
+  not_yet_arrived: Row[];
   on_leave: Row[];
   off_today: Row[];
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
+const fmtTime = (iso?: string | null) =>
+  iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
 
 export default function TeamAttendance() {
   const { companies, getUser, getCompany } = useDataStore();
@@ -74,8 +77,9 @@ export default function TeamAttendance() {
   const filterByCompany = (rows: Row[]) =>
     companyFilter === "all" ? rows : rows.filter((r) => r.home_company_id === companyFilter);
 
-  const missing = useMemo(() => filterByCompany(data?.missing ?? []), [data, companyFilter]);
-  const checkedIn = useMemo(() => filterByCompany(data?.checked_in ?? []), [data, companyFilter]);
+  const needFollowup = useMemo(() => filterByCompany(data?.need_followup ?? []), [data, companyFilter]);
+  const present = useMemo(() => filterByCompany(data?.present ?? []), [data, companyFilter]);
+  const notYetArrived = useMemo(() => filterByCompany(data?.not_yet_arrived ?? []), [data, companyFilter]);
   const onLeave = useMemo(() => filterByCompany(data?.on_leave ?? []), [data, companyFilter]);
   const offToday = useMemo(() => filterByCompany(data?.off_today ?? []), [data, companyFilter]);
 
@@ -83,7 +87,7 @@ export default function TeamAttendance() {
     <div>
       <PageHeader
         title="Team Attendance"
-        description="Today's check-in status, so you can follow up with anyone who's working but hasn't checked in."
+        description="Who actually needs a nudge today — late no-shows past their grace window, or anyone who checked out early without a half-day."
         icon={<ClipboardCheck className="h-5 w-5" />}
         actions={
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void load(date)} disabled={loading}>
@@ -117,17 +121,24 @@ export default function TeamAttendance() {
               ))}
             </SelectContent>
           </Select>
+
+          {notYetArrived.length > 0 && (
+            <div className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-muted/50 px-2.5 py-1 text-[11px] text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              {notYetArrived.length} not yet within follow-up window
+            </div>
+          )}
         </div>
 
-        <Tabs defaultValue="missing">
+        <Tabs defaultValue="need_followup">
           <TabsList>
-            <TabsTrigger value="missing" className="gap-1.5">
+            <TabsTrigger value="need_followup" className="gap-1.5">
               Need follow-up
-              <Badge variant={missing.length > 0 ? "destructive" : "secondary"} className="ml-1 text-[10px]">{missing.length}</Badge>
+              <Badge variant={needFollowup.length > 0 ? "destructive" : "secondary"} className="ml-1 text-[10px]">{needFollowup.length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="checked_in" className="gap-1.5">
-              Checked in
-              <Badge variant="secondary" className="ml-1 text-[10px]">{checkedIn.length}</Badge>
+            <TabsTrigger value="present" className="gap-1.5">
+              Present
+              <Badge variant="secondary" className="ml-1 text-[10px]">{present.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="on_leave" className="gap-1.5">
               On leave
@@ -139,11 +150,17 @@ export default function TeamAttendance() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="missing">
-            <PersonList rows={missing} getCompany={getCompany} getUser={getUser} emptyText="Everyone working today has checked in. 🎉" highlight />
+          <TabsContent value="need_followup">
+            <PersonList
+              rows={needFollowup}
+              getCompany={getCompany}
+              getUser={getUser}
+              emptyText="Nobody to chase right now. ✓"
+              variant="alert"
+            />
           </TabsContent>
-          <TabsContent value="checked_in">
-            <PersonList rows={checkedIn} getCompany={getCompany} getUser={getUser} emptyText="No one checked in yet." />
+          <TabsContent value="present">
+            <PersonList rows={present} getCompany={getCompany} getUser={getUser} emptyText="No check-ins yet." />
           </TabsContent>
           <TabsContent value="on_leave">
             <PersonList rows={onLeave} getCompany={getCompany} getUser={getUser} emptyText="No one on leave today." />
@@ -158,13 +175,13 @@ export default function TeamAttendance() {
 }
 
 function PersonList({
-  rows, getCompany, getUser, emptyText, highlight,
+  rows, getCompany, getUser, emptyText, variant,
 }: {
   rows: Row[];
   getCompany: ReturnType<typeof useDataStore>["getCompany"];
   getUser: ReturnType<typeof useDataStore>["getUser"];
   emptyText: string;
-  highlight?: boolean;
+  variant?: "alert";
 }) {
   if (rows.length === 0) {
     return <p className="mt-4 text-center text-sm text-muted-foreground">{emptyText}</p>;
@@ -174,19 +191,26 @@ function PersonList({
       {rows.map((r) => {
         const co = r.home_company_id ? getCompany(r.home_company_id) : null;
         const mgr = r.reporting_manager_id ? getUser(r.reporting_manager_id) : null;
+        const reasonChip = r.reason === "missed_check_in"
+          ? <Badge variant="destructive" className="gap-1 text-[10px]"><AlertTriangle className="h-2.5 w-2.5" />Missed check-in</Badge>
+          : r.reason === "left_early"
+            ? <Badge variant="destructive" className="gap-1 text-[10px]"><LogOut className="h-2.5 w-2.5" />Left {r.minutes_early}m early</Badge>
+            : null;
         return (
-          <li key={r.user_id} className={`flex flex-wrap items-center justify-between gap-3 p-3.5 ${highlight ? "first:rounded-t-lg last:rounded-b-lg" : ""}`}>
+          <li key={r.user_id} className={`flex flex-wrap items-center justify-between gap-3 p-3.5 ${variant === "alert" ? "" : ""}`}>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <p className="font-medium">{r.name}</p>
-                {r.check_in_status && <Badge variant="outline" className="text-[10px] capitalize">{r.check_in_status.replace("_", " ")}</Badge>}
+                {reasonChip}
+                {r.check_in_status && !r.reason && <Badge variant="outline" className="text-[10px] capitalize">{r.check_in_status.replace("_", " ")}</Badge>}
                 {r.leave_type && <Badge variant="secondary" className="text-[10px] capitalize">{r.leave_type.replace("_", " ")}</Badge>}
               </div>
               <p className="truncate text-xs text-muted-foreground">
                 {r.designation && <>{r.designation} · </>}
                 {co && <>{co.shortName || co.name}</>}
                 {mgr && <> · Manager: {mgr.name}</>}
-                {r.check_in_at && <> · Checked in {new Date(r.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</>}
+                {r.check_in_at && <> · In {fmtTime(r.check_in_at)}</>}
+                {r.check_out_at && <> · Out {fmtTime(r.check_out_at)}</>}
               </p>
             </div>
             <div className="flex items-center gap-1.5">

@@ -98,23 +98,46 @@ def _saturday_working_today(today: _dt.date, profile: dict, company: dict | None
     return week_of_month in list(sat_weeks)
 
 
+IST = _dt.timezone(_dt.timedelta(hours=5, minutes=30))
+# Grace windows so the follow-up list only contains REAL late / early
+# offenders. Without these we'd flag the entire team at 9 a.m. before
+# anybody walks in.
+GRACE_LATE_MINUTES = 60   # late only if now > work_start + 60 min
+GRACE_EARLY_MINUTES = 30  # early only if check_out < work_end - 30 min
+
+
+def _effective_time(profile_val, company_val, default: _dt.time) -> _dt.time:
+    """Per-user time override > company default > caller-supplied fallback."""
+    if profile_val is not None:
+        return profile_val if isinstance(profile_val, _dt.time) else _dt.time.fromisoformat(str(profile_val))
+    if company_val is not None:
+        return company_val if isinstance(company_val, _dt.time) else _dt.time.fromisoformat(str(company_val))
+    return default
+
+
 @router.get("/followup")
 def followup(
-    date: Optional[str] = Query(None, description="YYYY-MM-DD. Defaults to today (server local date, IST)."),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD in IST. Defaults to today."),
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Returns three buckets for the given date: people who SHOULD be
-    here today but haven't checked in (`missing`), people who have
-    (`checked_in`), and people on approved leave (`on_leave`). Used by
-    the Team Attendance page so HR / TA can follow up.
+    """Buckets the day's roster into actionable lists for HR / TA follow-up:
 
-    Authz: caller must be in ATTENDANCE_FOLLOWUP_ROLES or have the
-    per-user opt-in flag set on their own profile (granted by HR for
-    TA / recruitment staff)."""
+      * `need_followup` — people who should be here today AND haven't
+        checked in past their grace window, OR checked out early
+        without a half-day / WFH / approved leave excuse.
+      * `present` — checked in (still in OR already checked out
+        normally + on time).
+      * `not_yet_arrived` — should be here but their work_start + grace
+        window hasn't elapsed yet (too early to chase — shown as a
+        small info count, not as actionable rows).
+      * `on_leave` — approved leave covering this date.
+      * `off_today` — schedule says today is off (weekend / Saturday-
+        of-month pattern).
 
-    # Self-profile lookup is needed because the per-user opt-in flag
-    # lives on the profile row, not on the JWT claims.
+    Authz: caller in ATTENDANCE_FOLLOWUP_ROLES or per-user opt-in flag.
+    """
+
     me = db.execute(
         text("SELECT attendance_followup_access FROM profiles WHERE id = :id"),
         {"id": user.id},
@@ -123,26 +146,39 @@ def followup(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to see the attendance follow-up")
 
     try:
-        target = _dt.date.fromisoformat(date) if date else _dt.date.today()
+        target = _dt.date.fromisoformat(date) if date else _dt.datetime.now(IST).date()
     except ValueError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "date must be YYYY-MM-DD")
 
     iso_day = target.isoweekday()
+    now_ist = _dt.datetime.now(IST)
+    today_ist = now_ist.date()
 
-    # Active employees (exclude exited / inactive). Pull every field the
-    # UI renders for the row + the schedule override fields needed to
-    # decide if today is a working day for them.
+    # For past dates, treat "now" as end-of-target-day so everyone is
+    # past their work_start + grace (nobody is "not yet arrived").
+    if target < today_ist:
+        reference_now = _dt.datetime.combine(target, _dt.time(23, 59), IST)
+    elif target > today_ist:
+        # Future date — nothing has happened yet. Set reference to start
+        # of that day so nobody is late.
+        reference_now = _dt.datetime.combine(target, _dt.time(0, 0), IST)
+    else:
+        reference_now = now_ist
+
     profiles = db.execute(
         text(
             "SELECT id, full_name, email, designation, home_company_id, "
             "       reporting_manager_id, work_days, saturday_weeks_working, "
-            "       phone "
+            "       work_start, work_end, phone "
             "FROM profiles WHERE is_active = true"
         )
     ).mappings().all()
 
     companies = db.execute(
-        text("SELECT id, work_days, saturday_weeks_working FROM companies")
+        text(
+            "SELECT id, work_days, saturday_weeks_working, work_start, work_end "
+            "FROM companies"
+        )
     ).mappings().all()
     co_by_id = {str(c["id"]): dict(c) for c in companies}
 
@@ -157,7 +193,7 @@ def followup(
 
     leave_today = db.execute(
         text(
-            "SELECT user_id, leave_type, start_date, end_date "
+            "SELECT user_id, leave_type, days, start_date, end_date "
             "FROM leave_requests "
             "WHERE status = 'approved' AND start_date <= :d AND end_date >= :d"
         ),
@@ -165,8 +201,9 @@ def followup(
     ).mappings().all()
     leave_by_user = {str(l["user_id"]): dict(l) for l in leave_today}
 
-    missing: list[dict] = []
-    checked_in: list[dict] = []
+    need_followup: list[dict] = []
+    present: list[dict] = []
+    not_yet_arrived: list[dict] = []
     on_leave: list[dict] = []
     off_today: list[dict] = []
 
@@ -175,15 +212,12 @@ def followup(
         company = co_by_id.get(str(p.get("home_company_id"))) if p.get("home_company_id") else None
         work_days = _effective_work_days(dict(p), company)
 
-        # Schedule eligibility — is today a working day for this person?
+        # Is today a working day for this person?
         is_work_day = iso_day in work_days
-        if is_work_day and iso_day == 6:
-            # Saturday-of-month pattern can shrink the set further.
-            if not _saturday_working_today(target, dict(p), company):
-                is_work_day = False
+        if is_work_day and iso_day == 6 and not _saturday_working_today(target, dict(p), company):
+            is_work_day = False
 
-        # Common payload fields rendered in the UI.
-        row_data = {
+        row_data: dict = {
             "user_id": pid,
             "name": p.get("full_name"),
             "email": p.get("email"),
@@ -194,7 +228,8 @@ def followup(
         }
 
         if pid in leave_by_user:
-            row_data["leave_type"] = leave_by_user[pid]["leave_type"]
+            lv = leave_by_user[pid]
+            row_data["leave_type"] = lv["leave_type"]
             on_leave.append(row_data)
             continue
 
@@ -202,26 +237,66 @@ def followup(
             off_today.append(row_data)
             continue
 
-        if pid in att_by_user:
-            att = att_by_user[pid]
-            ci = att.get("check_in_at")
-            row_data["check_in_at"] = ci.isoformat() if ci else None
-            row_data["check_in_status"] = att.get("status")
-            checked_in.append(row_data)
+        # Resolve their work-window for the target date in IST.
+        work_start_t = _effective_time(p.get("work_start"), company.get("work_start") if company else None, _dt.time(9, 30))
+        work_end_t = _effective_time(p.get("work_end"), company.get("work_end") if company else None, _dt.time(18, 30))
+        work_start_dt = _dt.datetime.combine(target, work_start_t, IST)
+        work_end_dt = _dt.datetime.combine(target, work_end_t, IST)
+        late_cutoff = work_start_dt + _dt.timedelta(minutes=GRACE_LATE_MINUTES)
+        early_cutoff = work_end_dt - _dt.timedelta(minutes=GRACE_EARLY_MINUTES)
+
+        att = att_by_user.get(pid)
+        if not att:
+            # Hasn't checked in. Was the cutoff hit?
+            if reference_now < late_cutoff:
+                row_data["expected_by"] = late_cutoff.isoformat()
+                not_yet_arrived.append(row_data)
+            else:
+                row_data["reason"] = "missed_check_in"
+                row_data["expected_by"] = late_cutoff.isoformat()
+                need_followup.append(row_data)
+            continue
+
+        ci = att.get("check_in_at")
+        co = att.get("check_out_at")
+        att_status = att.get("status")
+        row_data["check_in_at"] = ci.isoformat() if ci else None
+        row_data["check_in_status"] = att_status
+
+        # Early checkout follow-up — only meaningful if they have a
+        # check_out and it's before the early_cutoff. Excused if the
+        # attendance status itself marks half-day / WFH, or if there's
+        # an approved leave for today (the on_leave bucket already
+        # caught full leaves; this guards against half-day leaves the
+        # excuse path missed).
+        if co:
+            co_dt = co if co.tzinfo else co.replace(tzinfo=IST)
+            row_data["check_out_at"] = co.isoformat() if co else None
+            excused = att_status in {"half_day", "work_from_home"}
+            if co_dt < early_cutoff and not excused:
+                minutes_early = int((early_cutoff - co_dt).total_seconds() // 60)
+                row_data["reason"] = "left_early"
+                row_data["minutes_early"] = minutes_early
+                need_followup.append(row_data)
+            else:
+                present.append(row_data)
         else:
-            missing.append(row_data)
+            present.append(row_data)
 
     return {
         "date": target.isoformat(),
         "iso_weekday": iso_day,
+        "now": reference_now.isoformat(),
         "totals": {
-            "missing": len(missing),
-            "checked_in": len(checked_in),
+            "need_followup": len(need_followup),
+            "present": len(present),
+            "not_yet_arrived": len(not_yet_arrived),
             "on_leave": len(on_leave),
             "off_today": len(off_today),
         },
-        "missing": missing,
-        "checked_in": checked_in,
+        "need_followup": need_followup,
+        "present": present,
+        "not_yet_arrived": not_yet_arrived,
         "on_leave": on_leave,
         "off_today": off_today,
     }
