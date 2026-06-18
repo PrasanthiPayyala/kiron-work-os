@@ -50,7 +50,7 @@ Server format: mail.yourdomain.com
 Username: full email address
 
 ## Remaining build order
-(empty — Supabase → FastAPI migration complete; mail module + task attachments are still Supabase-bound and need either a rebuild or feature-flag-off before team rollout)
+(empty — Supabase → FastAPI migration complete; Mail module feature-flagged off in commit 52d8023 and the entire `src/integrations/supabase/` + `src/components/mail/` + `src/lib/mail/` + `src/pages/Mail.tsx` tree deleted. The 12 mail edge functions in `supabase/functions/` are left in the repo as dormant artifacts; whenever Mail comes back (v1.1+) it'll be rebuilt on FastAPI with `aioimaplib` / `aiosmtplib` background workers.)
 
 ## Shipped (was on the build order)
 - Password reset flow (ResetPassword.tsx, UpdatePassword.tsx)
