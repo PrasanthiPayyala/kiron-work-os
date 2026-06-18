@@ -285,6 +285,10 @@ export function mapProject(r: DbProject, memberIds: string[] = []): Project {
     visibility: visIn(r.visibility),
     isStrategic: r.is_strategic ?? false,
     tags: r.tags ?? [],
+    kind: ((r as any).kind ?? "internal") as Project["kind"],
+    techStack: Array.isArray((r as any).tech_stack) ? (r as any).tech_stack : [],
+    teamId: (r as any).team_id ?? null,
+    progressMode: ((r as any).progress_mode ?? "manual") as Project["progressMode"],
   };
 }
 
@@ -437,6 +441,22 @@ export function mapNotification(r: DbNotif): Notification {
     link: r.link ?? undefined,
     read: r.is_read ?? false,
     createdAt: r.created_at ?? "",
+  };
+}
+
+// ---------- Project milestones ----------
+export function mapProjectMilestone(r: any): import("@/types").ProjectMilestone {
+  return {
+    id: r.id,
+    projectId: r.project_id,
+    title: r.title,
+    description: r.description ?? null,
+    dueDate: r.due_date ?? null,
+    status: r.status as import("@/types").MilestoneStatus,
+    position: r.position ?? 0,
+    createdAt: r.created_at ?? "",
+    createdById: r.created_by ?? null,
+    completedAt: r.completed_at ?? null,
   };
 }
 

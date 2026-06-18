@@ -8,7 +8,9 @@ import { CompanyBadge } from "@/components/CompanyBadge";
 import { ProjectStatusBadge, RiskBadge, TaskStatusBadge, PriorityBadge } from "@/components/StatusBadges";
 import { UserAvatarStack, UserAvatar } from "@/components/UserAvatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, FolderKanban, Pencil, Trash2, UserPlus, X, Loader2 } from "lucide-react";
+import { ArrowLeft, FolderKanban, Pencil, Trash2, UserPlus, X, Loader2, Plus, CheckCircle2, Circle, ChevronRight, RefreshCw, Calendar } from "lucide-react";
+import { useEffect } from "react";
+import type { MilestoneRow } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,11 +107,33 @@ export default function ProjectDetail() {
             <div className="mt-2"><UserAvatarStack userIds={project.memberIds} max={5} /></div>
           </div>
           <div className="rounded-xl border border-border bg-surface p-4 shadow-card">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Progress</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Progress</p>
+              {project.progressMode === "auto" && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.recomputeProjectProgress(project.id);
+                      toast.success("Progress recomputed");
+                      refresh();
+                    } catch (e) {
+                      toast.error(e instanceof ApiError ? e.message : "Couldn't recompute");
+                    }
+                  }}
+                  className="rounded p-1 text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                  title="Recompute from tasks"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             <p className="mt-2 font-display text-xl font-semibold">{project.progress}%</p>
             <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
               <div className="h-full bg-primary" style={{ width: `${project.progress}%` }} />
             </div>
+            {project.progressMode === "auto" && (
+              <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">auto (from tasks)</p>
+            )}
           </div>
           <div className="rounded-xl border border-border bg-surface p-4 shadow-card">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Due</p>
@@ -133,9 +157,26 @@ export default function ProjectDetail() {
           <TabsContent value="overview" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <h3 className="font-display text-sm font-semibold">About this project</h3>
             <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{project.description || "No description yet."}</p>
+
+            <ProjectMeta project={project} />
+
+            {project.techStack && project.techStack.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Tech stack</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {project.techStack.map((t) => (
+                    <span key={t} className="rounded-md bg-primary-soft px-2 py-0.5 text-xs font-medium text-primary">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {project.tags && project.tags.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {project.tags.map((t) => <span key={t} className="rounded-md bg-surface-muted px-2 py-0.5 text-xs">#{t}</span>)}
+              <div className="mt-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Tags</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {project.tags.map((t) => <span key={t} className="rounded-md bg-surface-muted px-2 py-0.5 text-xs">#{t}</span>)}
+                </div>
               </div>
             )}
           </TabsContent>
@@ -173,7 +214,11 @@ export default function ProjectDetail() {
             </div>
           </TabsContent>
 
-          {["discussion", "timeline", "approvals", "reports"].map((k) => (
+          <TabsContent value="timeline" className="rounded-xl border border-border bg-surface p-5 shadow-card">
+            <MilestonesPanel projectId={project.id} canManage={!!canManage} />
+          </TabsContent>
+
+          {["discussion", "approvals", "reports"].map((k) => (
             <TabsContent key={k} value={k} className="rounded-xl border border-border bg-surface p-8 text-center text-sm text-muted-foreground shadow-card">
               {k.charAt(0).toUpperCase() + k.slice(1)} — coming next iteration.
             </TabsContent>
@@ -457,5 +502,264 @@ function EditProjectSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ===================== Project meta line =====================
+// Inlined under Overview tab — shows the new phase-3 metadata that
+// didn't have a card slot up top (kind, team link, progress mode).
+
+function ProjectMeta({ project }: { project: Project }) {
+  const { teams } = useDataStore();
+  const team = project.teamId ? teams.find((t) => t.id === project.teamId) : null;
+  const kindLabel: Record<string, string> = {
+    internal: "Internal", client: "Client", rnd: "R&D",
+    hackathon: "Hackathon", other: "Other",
+  };
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <div>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Kind</p>
+        <p className="mt-0.5 text-sm">{kindLabel[project.kind] ?? project.kind}</p>
+      </div>
+      {team && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Team</p>
+          <a
+            href={`/teams/${team.id}`}
+            className="mt-0.5 text-sm text-primary hover:underline"
+          >
+            {team.name}
+          </a>
+        </div>
+      )}
+      <div>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Progress mode</p>
+        <p className="mt-0.5 text-sm capitalize">
+          {project.progressMode === "auto" ? "Auto (from tasks)" : "Manual"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ===================== Milestones panel =====================
+// Replaces the old Timeline placeholder. A milestone is a named
+// phase within the project. The owner / manager can add, edit
+// (status / title / due), and remove. Other members see read-only.
+
+function MilestonesPanel({ projectId, canManage }: { projectId: string; canManage: boolean }) {
+  const [rows, setRows] = useState<MilestoneRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setRows(await api.listMilestones(projectId));
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't load milestones");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, [projectId]);
+
+  const flipStatus = async (m: MilestoneRow) => {
+    if (!canManage) return;
+    // Cycle: planned → in_progress → done → planned. Skipped stays as is.
+    const next: MilestoneRow["status"] =
+      m.status === "planned" ? "in_progress" :
+      m.status === "in_progress" ? "done" :
+      m.status === "done" ? "planned" : "planned";
+    try {
+      await api.updateMilestone(m.id, { status: next });
+      void load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't update");
+    }
+  };
+
+  const remove = async (id: string) => {
+    if (!canManage) return;
+    if (!confirm("Delete this milestone?")) return;
+    try {
+      await api.deleteMilestone(id);
+      void load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't delete");
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <h3 className="font-display text-sm font-semibold">Milestones</h3>
+        {canManage && (
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+            <Plus className="mr-1.5 h-4 w-4" /> Add milestone
+          </Button>
+        )}
+      </div>
+
+      {loading && <p className="mt-4 text-sm text-muted-foreground">Loading…</p>}
+      {!loading && rows.length === 0 && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          No milestones yet. {canManage ? "Add one to mark a phase of this project." : ""}
+        </p>
+      )}
+
+      <ul className="mt-4 space-y-2">
+        {rows.map((m) => {
+          const Icon = m.status === "done" ? CheckCircle2
+                     : m.status === "in_progress" ? ChevronRight
+                     : Circle;
+          const accent = m.status === "done" ? "text-success" :
+                          m.status === "in_progress" ? "text-primary" :
+                          m.status === "skipped" ? "text-muted-foreground line-through" :
+                          "text-muted-foreground";
+          return (
+            <li
+              key={m.id}
+              className={cn(
+                "flex items-start gap-3 rounded-md border border-border p-3",
+                m.status === "done" && "bg-success/5",
+              )}
+            >
+              <button
+                onClick={() => void flipStatus(m)}
+                disabled={!canManage}
+                className={cn("mt-0.5 shrink-0", canManage && "hover:opacity-80")}
+                title={canManage ? "Click to advance status" : ""}
+              >
+                <Icon className={cn("h-5 w-5", accent)} />
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className={cn("text-sm font-medium", m.status === "skipped" && "line-through text-muted-foreground")}>
+                  {m.title}
+                </p>
+                {m.description && (
+                  <p className="mt-0.5 text-xs text-muted-foreground whitespace-pre-wrap">{m.description}</p>
+                )}
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="rounded bg-surface-muted px-1.5 py-0.5 uppercase tracking-wide">
+                    {m.status.replace("_", " ")}
+                  </span>
+                  {m.due_date && (
+                    <span className="inline-flex items-center gap-1">
+                      <Calendar className="h-3 w-3" /> {m.due_date}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {canManage && (
+                <button
+                  onClick={() => void remove(m.id)}
+                  className="rounded p-1 text-muted-foreground hover:bg-surface-muted hover:text-destructive"
+                  title="Delete milestone"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {adding && (
+        <AddMilestoneDialog
+          projectId={projectId}
+          onClose={() => setAdding(false)}
+          onSaved={() => { setAdding(false); void load(); }}
+          nextPosition={rows.length}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddMilestoneDialog({
+  projectId, onClose, onSaved, nextPosition,
+}: {
+  projectId: string;
+  onClose: () => void;
+  onSaved: () => void;
+  nextPosition: number;
+}) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [status, setStatus] = useState<MilestoneRow["status"]>("planned");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!title.trim()) return toast.error("Title is required");
+    setBusy(true);
+    try {
+      await api.createMilestone(projectId, {
+        title: title.trim(),
+        description: description.trim() || null,
+        due_date: dueDate || null,
+        status,
+        position: nextPosition,
+      });
+      toast.success("Milestone added");
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New milestone</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Title *</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9" placeholder="e.g. Kickoff, Auth done, Beta launch" autoFocus />
+          </div>
+          <div>
+            <Label className="text-xs">Description</Label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Due date</Label>
+              <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="mt-1 h-9" />
+            </div>
+            <div>
+              <Label className="text-xs">Status</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as MilestoneRow["status"])}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="planned">Planned</SelectItem>
+                  <SelectItem value="in_progress">In progress</SelectItem>
+                  <SelectItem value="done">Done</SelectItem>
+                  <SelectItem value="skipped">Skipped</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !title.trim()}>
+            {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+            Add
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

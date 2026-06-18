@@ -199,6 +199,9 @@ export type Visibility =
 
 export type ProjectStatus = "planning" | "active" | "on_hold" | "completed" | "at_risk";
 
+export type ProjectKind = "internal" | "client" | "rnd" | "hackathon" | "other";
+export type ProgressMode = "manual" | "auto";
+
 export interface Project {
   id: ID;
   name: string;
@@ -215,6 +218,25 @@ export interface Project {
   visibility: Visibility;
   isStrategic?: boolean;
   tags?: string[];
+  kind: ProjectKind;
+  techStack: string[];
+  teamId?: ID | null;
+  progressMode: ProgressMode;
+}
+
+export type MilestoneStatus = "planned" | "in_progress" | "done" | "skipped";
+
+export interface ProjectMilestone {
+  id: ID;
+  projectId: ID;
+  title: string;
+  description?: string | null;
+  dueDate?: ISODate | null;
+  status: MilestoneStatus;
+  position: number;
+  createdAt: ISODate;
+  createdById?: ID | null;
+  completedAt?: ISODate | null;
 }
 
 export type TaskStatus =

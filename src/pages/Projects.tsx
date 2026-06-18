@@ -118,12 +118,31 @@ export default function Projects() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <CompanyBadge companyId={p.companyId} size="xs" />
+                      <div className="flex items-center gap-1.5">
+                        <CompanyBadge companyId={p.companyId} size="xs" />
+                        {p.kind && p.kind !== "internal" && (
+                          <span className="rounded-md bg-surface-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {p.kind === "rnd" ? "R&D" : p.kind}
+                          </span>
+                        )}
+                      </div>
                       <h3 className="mt-2 font-display text-base font-semibold leading-tight">{p.name}</h3>
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.description}</p>
                     </div>
                     <RiskBadge risk={p.risk} />
                   </div>
+                  {p.techStack && p.techStack.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {p.techStack.slice(0, 5).map((t) => (
+                        <span key={t} className="rounded bg-primary-soft px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                          {t}
+                        </span>
+                      ))}
+                      {p.techStack.length > 5 && (
+                        <span className="text-[10px] text-muted-foreground">+{p.techStack.length - 5}</span>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-3 flex items-center justify-between">
                     <ProjectStatusBadge status={p.status} />
                     <span className="text-xs text-muted-foreground">Due {p.dueDate || "—"}</span>
@@ -196,7 +215,7 @@ function NewProjectDialog({
   open, onClose, defaultCompanyId, onCreated,
 }: { open: boolean; onClose: () => void; defaultCompanyId: string; onCreated: (id: string) => void }) {
   const { user } = useAuth();
-  const { companies, users } = useDataStore();
+  const { companies, users, teams } = useDataStore();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [companyId, setCompanyId] = useState(defaultCompanyId);
@@ -208,6 +227,12 @@ function NewProjectDialog({
   const [ownerId, setOwnerId] = useState(user?.id ?? "");
   const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
   const [memberQuery, setMemberQuery] = useState("");
+  // New phase-3 fields. Tech stack input is comma-separated; we split
+  // on save to keep the data model tidy (string[] on the wire).
+  const [kind, setKind] = useState("internal");
+  const [techStackInput, setTechStackInput] = useState("");
+  const [teamId, setTeamId] = useState<string>("");
+  const [progressMode, setProgressMode] = useState<"manual" | "auto">("manual");
   const [busy, setBusy] = useState(false);
 
   // Reset state when the dialog opens, so subsequent uses start fresh.
@@ -219,6 +244,7 @@ function NewProjectDialog({
       setStartDate(""); setDueDate("");
       setOwnerId(user?.id ?? "");
       setMemberIds(new Set()); setMemberQuery("");
+      setKind("internal"); setTechStackInput(""); setTeamId(""); setProgressMode("manual");
     }
   }, [open, defaultCompanyId, user?.id]);
 
@@ -242,6 +268,10 @@ function NewProjectDialog({
     if (!companyId) return toast.error("Pick a company");
     setBusy(true);
     try {
+      const techStack = techStackInput
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       const created = await api.createProject({
         title: title.trim(),
         description: description.trim() || null,
@@ -253,6 +283,10 @@ function NewProjectDialog({
         start_date: startDate || null,
         due_date: dueDate || null,
         member_ids: Array.from(memberIds),
+        kind,
+        tech_stack: techStack,
+        team_id: teamId || null,
+        progress_mode: progressMode,
       });
       toast.success("Project created");
       onCreated(created.id as string);
@@ -336,6 +370,50 @@ function NewProjectDialog({
           <div>
             <Label className="text-xs">Due date</Label>
             <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="mt-1 h-9" />
+          </div>
+          <div>
+            <Label className="text-xs">Kind</Label>
+            <Select value={kind} onValueChange={setKind}>
+              <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="internal">Internal</SelectItem>
+                <SelectItem value="client">Client</SelectItem>
+                <SelectItem value="rnd">R&amp;D</SelectItem>
+                <SelectItem value="hackathon">Hackathon</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Progress mode</Label>
+            <Select value={progressMode} onValueChange={(v) => setProgressMode(v as "manual" | "auto")}>
+              <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="manual">Manual (you set %)</SelectItem>
+                <SelectItem value="auto">Auto (computed from tasks)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="col-span-2">
+            <Label className="text-xs">Team (optional)</Label>
+            <Select value={teamId || "__none__"} onValueChange={(v) => setTeamId(v === "__none__" ? "" : v)}>
+              <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">No team link</SelectItem>
+                {teams.filter((t) => t.isActive).map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="col-span-2">
+            <Label className="text-xs">Tech stack (comma-separated)</Label>
+            <Input
+              value={techStackInput}
+              onChange={(e) => setTechStackInput(e.target.value)}
+              placeholder="e.g. React, FastAPI, Postgres, Razorpay"
+              className="mt-1 h-9"
+            />
           </div>
           <div className="col-span-2">
             <Label className="text-xs">Initial members</Label>

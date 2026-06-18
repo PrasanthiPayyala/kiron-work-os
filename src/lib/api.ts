@@ -379,6 +379,10 @@ export const api = {
     due_date?: string | null;
     tags?: string[];
     member_ids?: string[];
+    kind?: string;
+    tech_stack?: string[];
+    team_id?: string | null;
+    progress_mode?: "manual" | "auto";
   }): Promise<Record<string, unknown>> {
     return request("/projects", { method: "POST", body: JSON.stringify(payload) });
   },
@@ -396,6 +400,35 @@ export const api = {
   },
   removeProjectMember(projectId: string, userId: string): Promise<void> {
     return request(`/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+  },
+  recomputeProjectProgress(projectId: string): Promise<Record<string, unknown>> {
+    return request(`/projects/${projectId}/recompute-progress`, { method: "POST" });
+  },
+
+  // ---------- Project milestones ----------
+  listMilestones(projectId: string): Promise<MilestoneRow[]> {
+    return request(`/projects/${projectId}/milestones`);
+  },
+  createMilestone(projectId: string, payload: {
+    title: string;
+    description?: string | null;
+    due_date?: string | null;
+    status?: "planned" | "in_progress" | "done" | "skipped";
+    position?: number;
+  }): Promise<MilestoneRow> {
+    return request(`/projects/${projectId}/milestones`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateMilestone(milestoneId: string, patch: Partial<{
+    title: string;
+    description: string | null;
+    due_date: string | null;
+    status: "planned" | "in_progress" | "done" | "skipped";
+    position: number;
+  }>): Promise<MilestoneRow> {
+    return request(`/projects/milestones/${milestoneId}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteMilestone(milestoneId: string): Promise<void> {
+    return request(`/projects/milestones/${milestoneId}`, { method: "DELETE" });
   },
 
   // ---------- Users (admin: super_admin / hr_admin) ----------
@@ -734,6 +767,19 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface MilestoneRow {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  status: "planned" | "in_progress" | "done" | "skipped";
+  position: number;
+  created_at: string;
+  created_by: string | null;
+  completed_at: string | null;
 }
 
 export interface VaultRow {
