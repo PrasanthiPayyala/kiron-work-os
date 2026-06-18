@@ -439,6 +439,54 @@ export const api = {
     return request("/leave/balances/initialize", { method: "POST" });
   },
 
+  // ---------- Documents / Knowledge base ----------
+  listDocuments(): Promise<DocumentRow[]> {
+    return request("/documents");
+  },
+  getDocument(id: string): Promise<DocumentDetailRow> {
+    return request(`/documents/${id}`);
+  },
+  createDocument(payload: {
+    title: string;
+    body?: string;
+    category?: string;
+    company_id?: string | null;
+    visibility?: "company" | "group_wide" | "private";
+    tags?: string[];
+  }): Promise<DocumentDetailRow> {
+    return request("/documents", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateDocument(id: string, patch: Partial<{
+    title: string;
+    body: string;
+    category: string;
+    company_id: string | null;
+    visibility: "company" | "group_wide" | "private";
+    tags: string[];
+    is_active: boolean;
+    change_note: string;
+  }>): Promise<DocumentDetailRow> {
+    return request(`/documents/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteDocument(id: string): Promise<void> {
+    return request(`/documents/${id}`, { method: "DELETE" });
+  },
+  listDocumentVersions(id: string): Promise<DocumentVersionRow[]> {
+    return request(`/documents/${id}/versions`);
+  },
+  listDocumentAccess(id: string): Promise<DocumentAccessRow[]> {
+    return request(`/documents/${id}/access`);
+  },
+  grantDocumentAccess(id: string, kind: "user" | "role", principalId: string, accessLevel: "view" | "edit" = "view"): Promise<void> {
+    return request(`/documents/${id}/access`, {
+      method: "POST",
+      body: JSON.stringify({ kind, principal_id: principalId, access_level: accessLevel }),
+    });
+  },
+  revokeDocumentAccess(id: string, kind: "user" | "role", principalId: string): Promise<void> {
+    return request(`/documents/${id}/access/${kind}/${principalId}`, { method: "DELETE" });
+  },
+
   // ---------- Project milestones ----------
   listMilestones(projectId: string): Promise<MilestoneRow[]> {
     return request(`/projects/${projectId}/milestones`);
@@ -801,6 +849,45 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface DocumentRow {
+  id: string;
+  title: string;
+  slug: string;
+  category: string;
+  owner_id: string | null;
+  company_id: string | null;
+  visibility: "company" | "group_wide" | "private";
+  tags: string[] | null;
+  is_active: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  updated_by: string | null;
+}
+
+export interface DocumentDetailRow extends DocumentRow {
+  body: string;
+  can_edit?: boolean;
+}
+
+export interface DocumentVersionRow {
+  id: string;
+  version: number;
+  title: string;
+  change_note: string | null;
+  edited_at: string;
+  edited_by: string | null;
+}
+
+export interface DocumentAccessRow {
+  principal_kind: "user" | "role";
+  principal_id: string;
+  access_level: "view" | "edit";
+  granted_at: string;
+  granted_by: string | null;
 }
 
 export interface LeavePolicyRow {

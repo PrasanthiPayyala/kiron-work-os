@@ -20,6 +20,7 @@ from .routers import (
     companies,
     contacts,
     conversations,
+    documents,
     files,
     holidays,
     leave,
@@ -71,6 +72,7 @@ app.include_router(projects.router)
 app.include_router(companies.router)
 app.include_router(bank_accounts.router)
 app.include_router(contacts.router)
+app.include_router(documents.router)
 app.include_router(users.router)
 app.include_router(holidays.router)
 app.include_router(calls.router)
