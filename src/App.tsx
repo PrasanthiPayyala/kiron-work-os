@@ -42,6 +42,7 @@ import Assets from "./pages/Assets";
 import AssetDetail from "./pages/AssetDetail";
 import Vendors from "./pages/Vendors";
 import VendorDetail from "./pages/VendorDetail";
+import Compliance from "./pages/Compliance";
 import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
@@ -139,6 +140,14 @@ const App = () => (
                   element={
                     <ProtectedRoute require="vendors">
                       <VendorDetail />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/compliance"
+                  element={
+                    <ProtectedRoute require="compliance">
+                      <Compliance />
                     </ProtectedRoute>
                   }
                 />

@@ -19,6 +19,7 @@ from .routers import (
     calls,
     chat,
     companies,
+    compliance,
     contacts,
     conversations,
     documents,
@@ -82,6 +83,7 @@ app.include_router(calls.router)
 app.include_router(teams.router)
 app.include_router(vault.router)
 app.include_router(vendors.router)
+app.include_router(compliance.router)
 app.include_router(ws.router)
 
 

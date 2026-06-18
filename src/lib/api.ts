@@ -591,6 +591,63 @@ export const api = {
     return request(`/vendors/payments/${paymentId}`, { method: "DELETE" });
   },
 
+  // ---------- Compliance ----------
+  listComplianceObligations(): Promise<ComplianceObligationRow[]> {
+    return request("/compliance/obligations");
+  },
+  createComplianceObligation(payload: {
+    company_id: string;
+    kind: string;
+    name: string;
+    cadence: "monthly" | "quarterly" | "half_yearly" | "yearly";
+    due_day: number;
+    due_month_offset: number;
+    assigned_to_user_id?: string | null;
+    reminder_days_before?: number;
+    notes?: string | null;
+  }): Promise<ComplianceObligationRow> {
+    return request("/compliance/obligations", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateComplianceObligation(id: string, patch: Partial<ComplianceObligationRow>): Promise<ComplianceObligationRow> {
+    return request(`/compliance/obligations/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteComplianceObligation(id: string): Promise<void> {
+    return request(`/compliance/obligations/${id}`, { method: "DELETE" });
+  },
+  listComplianceOccurrences(opts?: {
+    company_id?: string;
+    status?: "pending" | "filed" | "skipped";
+    from?: string;
+    to?: string;
+  }): Promise<ComplianceOccurrenceRow[]> {
+    const q = new URLSearchParams();
+    if (opts?.company_id) q.set("company_id", opts.company_id);
+    if (opts?.status) q.set("status", opts.status);
+    if (opts?.from) q.set("from", opts.from);
+    if (opts?.to) q.set("to", opts.to);
+    const s = q.toString();
+    return request(`/compliance/occurrences${s ? `?${s}` : ""}`);
+  },
+  fileComplianceOccurrence(id: string, payload?: {
+    reference?: string;
+    amount?: number;
+    notes?: string;
+  }): Promise<ComplianceOccurrenceRow> {
+    return request(`/compliance/occurrences/${id}/file`, { method: "POST", body: JSON.stringify(payload ?? {}) });
+  },
+  skipComplianceOccurrence(id: string): Promise<ComplianceOccurrenceRow> {
+    return request(`/compliance/occurrences/${id}/skip`, { method: "POST" });
+  },
+  reopenComplianceOccurrence(id: string): Promise<ComplianceOccurrenceRow> {
+    return request(`/compliance/occurrences/${id}/reopen`, { method: "POST" });
+  },
+  deleteComplianceOccurrence(id: string): Promise<void> {
+    return request(`/compliance/occurrences/${id}`, { method: "DELETE" });
+  },
+  generateComplianceOccurrences(): Promise<{ created: number; until: string }> {
+    return request("/compliance/generate", { method: "POST" });
+  },
+
   // ---------- Project milestones ----------
   listMilestones(projectId: string): Promise<MilestoneRow[]> {
     return request(`/projects/${projectId}/milestones`);
@@ -953,6 +1010,45 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface ComplianceObligationRow {
+  id: string;
+  company_id: string;
+  kind: string;
+  name: string;
+  cadence: "monthly" | "quarterly" | "half_yearly" | "yearly";
+  due_day: number;
+  due_month_offset: number;
+  assigned_to_user_id: string | null;
+  assigned_contact_id: string | null;
+  reminder_days_before: number;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComplianceOccurrenceRow {
+  id: string;
+  obligation_id: string;
+  period_label: string;
+  period_start: string;
+  period_end: string;
+  due_date: string;
+  status: "pending" | "filed" | "skipped";
+  filed_at: string | null;
+  filed_by: string | null;
+  reference: string | null;
+  amount: number | null;
+  notes: string | null;
+  created_at: string;
+  // Joined fields from /compliance/occurrences:
+  company_id?: string;
+  kind?: string;
+  obligation_name?: string;
+  assigned_to_user_id?: string | null;
+  reminder_days_before?: number;
 }
 
 export interface VendorRow {

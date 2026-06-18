@@ -49,6 +49,7 @@ OPEN_STATUSES = [
 _SLA_LOCK_KEY = 7301823461  # "KIRON_SLA"
 _CALL_LOCK_KEY = 7301823462  # "KIRON_CALLS"
 _VENDOR_LOCK_KEY = 7301823463  # "KIRON_VENDORS"
+_COMPLIANCE_LOCK_KEY = 7301823464  # "KIRON_COMPLIANCE"
 
 # IST = UTC+5:30. Hard-coded because the rest of the app already assumes IST
 # (attendance grace, working hours). Don't introduce zoneinfo here.
@@ -692,6 +693,233 @@ def _run_vendor_renewal_sync() -> dict:
     return summary
 
 
+# ------------------------------------------------------------------
+# Compliance reminders.
+#
+# Runs every hour. Two passes:
+# 1. Generation — for every active obligation, insert any missing
+#    occurrences whose due_date is within the next 120 days. Idempotent
+#    via the (obligation_id, due_date) UNIQUE constraint.
+# 2. Reminders — for each pending occurrence, compute days_to_due.
+#    Fire kind 'T_N' when days_to_due == reminder_days_before,
+#    'T_3' when days_to_due == 3, 'T_0' when days_to_due == 0, and
+#    'overdue' when days_to_due < 0. Each kind logged once per
+#    occurrence via compliance_reminders dedup.
+# ------------------------------------------------------------------
+
+
+async def run_compliance_reminders() -> dict:
+    summary = await asyncio.to_thread(_run_compliance_reminders_sync)
+    payloads = summary.pop("broadcast_payloads", [])
+    if payloads:
+        from .routers import ws as ws_router
+        for p in payloads:
+            try:
+                await ws_router.notification_new(p)
+            except Exception:  # noqa: BLE001
+                log.exception("WS broadcast failed for compliance notification %s", p.get("id"))
+    return summary
+
+
+def _run_compliance_reminders_sync() -> dict:
+    from .email import send_email
+    from .routers.compliance import _generate_for_obligation
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    today = now_utc.astimezone(_IST).date()
+    broadcast_payloads: list[dict] = []
+    summary: dict = {
+        "ran_at": now_utc.isoformat(),
+        "generated": 0,
+        "fired": 0,
+        "skipped_lock_busy": False,
+        "broadcast_payloads": broadcast_payloads,
+    }
+    with engine.begin() as conn:
+        got = conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"), {"k": _COMPLIANCE_LOCK_KEY},
+        ).scalar()
+        if not got:
+            summary["skipped_lock_busy"] = True
+            return summary
+        try:
+            until = today + dt.timedelta(days=120)
+            # We need a real Session for the generator. The router
+            # helper takes one; reuse it here for consistency rather
+            # than reimplementing the period math.
+            from sqlalchemy.orm import Session as _Session
+            session = _Session(bind=conn)
+            try:
+                obs = conn.execute(
+                    text("SELECT * FROM compliance_obligations WHERE is_active = true")
+                ).mappings().all()
+                for ob in obs:
+                    summary["generated"] += _generate_for_obligation(session, row(ob), until)
+            finally:
+                # session shares conn; flush implicit. No close needed.
+                pass
+
+            # Now scan pending occurrences within the relevant window.
+            rows = conn.execute(
+                text(
+                    "SELECT c.id, c.due_date, c.period_label, "
+                    "       o.id AS obligation_id, o.name AS obligation_name, "
+                    "       o.kind, o.company_id, o.assigned_to_user_id, "
+                    "       o.reminder_days_before "
+                    "FROM compliance_occurrences c "
+                    "JOIN compliance_obligations o ON o.id = c.obligation_id "
+                    "WHERE c.status = 'pending' "
+                    "  AND o.is_active = true "
+                    "  AND c.due_date <= :far "
+                    "ORDER BY c.due_date ASC LIMIT 500"
+                ),
+                {"far": today + dt.timedelta(days=60)},
+            ).mappings().all()
+            if not rows:
+                return summary
+
+            occ_ids = [str(r["id"]) for r in rows]
+            sent_rows = conn.execute(
+                text(
+                    "SELECT occurrence_id, kind FROM compliance_reminders "
+                    "WHERE occurrence_id = ANY(:ids)"
+                ),
+                {"ids": occ_ids},
+            ).mappings().all()
+            sent: set[tuple[str, str]] = {
+                (str(r["occurrence_id"]), r["kind"]) for r in sent_rows
+            }
+
+            # Super-admin fan-out keeps high-stakes filings from sliding
+            # past an unassigned obligation.
+            super_admins = conn.execute(
+                text(
+                    "SELECT p.id, p.email, p.full_name FROM profiles p "
+                    "JOIN user_roles ur ON ur.user_id = p.id "
+                    "WHERE ur.role = 'super_admin' AND p.is_active = true"
+                )
+            ).mappings().all()
+
+            for r in rows:
+                days_to_due = (r["due_date"] - today).days
+                kinds_to_fire: list[str] = []
+                rdb = r["reminder_days_before"] or 7
+                # T_N at reminder_days_before. Skip if it's also 3 or 0
+                # since those have dedicated rows.
+                if days_to_due == rdb and rdb not in (3, 0):
+                    kinds_to_fire.append("T_N")
+                if days_to_due == 3:
+                    kinds_to_fire.append("T_3")
+                if days_to_due == 0:
+                    kinds_to_fire.append("T_0")
+                if days_to_due < 0:
+                    # Overdue fires once. Subsequent days are quiet —
+                    # we'd rather respect the user than spam them every
+                    # morning when they already know it slipped.
+                    kinds_to_fire.append("overdue")
+                kinds_to_fire = [k for k in kinds_to_fire if (str(r["id"]), k) not in sent]
+                if not kinds_to_fire:
+                    continue
+
+                if days_to_due < 0:
+                    title_prefix = f"OVERDUE by {abs(days_to_due)}d:"
+                elif days_to_due == 0:
+                    title_prefix = "Due today:"
+                else:
+                    title_prefix = f"Due in {days_to_due}d:"
+                title = f"{title_prefix} {r['obligation_name']} — {r['period_label']}"
+                body = f"Due {r['due_date']}"
+                link = f"/compliance"
+
+                # Recipients: assignee + every super_admin.
+                recipients: dict[str, dict] = {}
+                if r["assigned_to_user_id"]:
+                    arow = conn.execute(
+                        text("SELECT id, email, full_name FROM profiles WHERE id = :u"),
+                        {"u": r["assigned_to_user_id"]},
+                    ).mappings().first()
+                    if arow:
+                        recipients[str(arow["id"])] = {
+                            "id": str(arow["id"]),
+                            "email": arow.get("email"),
+                            "name": arow.get("full_name"),
+                        }
+                for sa in super_admins:
+                    recipients[str(sa["id"])] = {
+                        "id": str(sa["id"]),
+                        "email": sa.get("email"),
+                        "name": sa.get("full_name"),
+                    }
+                if not recipients:
+                    continue
+
+                for kind in kinds_to_fire:
+                    result = conn.execute(
+                        text(
+                            "INSERT INTO notifications "
+                            "  (user_id, notification_type, title, body, link) "
+                            "SELECT u.user_id, 'reminder'::public.notification_type, "
+                            "       u.title, u.body, u.link "
+                            "FROM unnest("
+                            "  CAST(:user_ids AS uuid[]), "
+                            "  CAST(:titles   AS text[]), "
+                            "  CAST(:bodies   AS text[]), "
+                            "  CAST(:links    AS text[])"
+                            ") AS u(user_id, title, body, link) "
+                            "RETURNING id, user_id, notification_type, title, body, link, is_read, created_at"
+                        ),
+                        {
+                            "user_ids": list(recipients.keys()),
+                            "titles":   [title] * len(recipients),
+                            "bodies":   [body]  * len(recipients),
+                            "links":    [link]  * len(recipients),
+                        },
+                    ).mappings().all()
+                    for n in result:
+                        broadcast_payloads.append({
+                            "id": str(n["id"]),
+                            "user_id": str(n["user_id"]),
+                            "notification_type": str(n["notification_type"]),
+                            "title": n["title"],
+                            "body": n["body"],
+                            "link": n["link"],
+                            "is_read": n["is_read"],
+                            "created_at": n["created_at"].isoformat() if hasattr(n["created_at"], "isoformat") else str(n["created_at"]),
+                        })
+
+                    # Email best-effort
+                    for u in recipients.values():
+                        if not u.get("email"):
+                            continue
+                        body_text = (
+                            f"{title}\n\n{body}\n\n"
+                            f"— Kiron Work OS"
+                        )
+                        body_html = (
+                            f"<p><strong>{title}</strong></p><p>{body}</p>"
+                        )
+                        try:
+                            send_email(u["email"], title, body_text, body_html)
+                        except Exception:  # noqa: BLE001
+                            log.exception("Compliance email failed for %s", u.get("email"))
+
+                    conn.execute(
+                        text(
+                            "INSERT INTO compliance_reminders (occurrence_id, kind) "
+                            "VALUES (:o, :k) ON CONFLICT DO NOTHING"
+                        ),
+                        {"o": str(r["id"]), "k": kind},
+                    )
+                    summary["fired"] += 1
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _COMPLIANCE_LOCK_KEY})
+
+    log.info(
+        "Compliance reminders: generated=%(generated)d fired=%(fired)d",
+        summary,
+    )
+    return summary
+
+
 def _reminder_copy(
     when_kind: str,
     reminder_kind: str,
@@ -861,6 +1089,17 @@ def start_scheduler() -> None:
         coalesce=True,
         max_instances=1,
         next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=2),
+    )
+    # Compliance — runs hourly. Generation is cheap (UNIQUE-key
+    # dedup); reminders are idempotent via compliance_reminders.
+    _scheduler.add_job(
+        run_compliance_reminders,
+        trigger="interval",
+        hours=1,
+        id="compliance_reminders",
+        coalesce=True,
+        max_instances=1,
+        next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=3),
     )
     _scheduler.start()
     log.info(
