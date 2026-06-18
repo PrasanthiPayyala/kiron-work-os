@@ -288,6 +288,39 @@ export default function Attendance() {
     ? getEffectiveSchedule(user, getCompany(user.homeCompanyId))
     : { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30", saturdayWeeksWorking: null };
 
+  // ---- Team attendance widget visibility ----
+  // Bootstrap only returns *other people's* attendance to HR_ROLES
+  // (super_admin / founder / hr_admin), founder_office_coordinator
+  // (GLOBAL_ROLES override), and to managers for their direct reports.
+  // Everyone else only sees their own row — so the old widget that
+  // looped over the first 8 users defaulted every colleague to
+  // "absent", which read as a real-time bug. Two-tier fix:
+  //   1. Hide the section unless the viewer has team visibility.
+  //   2. For viewers without full visibility (manager + TA grantees),
+  //      list only users the bootstrap actually returned rows for —
+  //      i.e. their direct reports — so "absent" means "didn't check
+  //      in", not "I have no idea".
+  const fullTeamVisibility = !!user && [
+    "super_admin", "founder", "hr_admin", "founder_office_coordinator",
+  ].includes(user.role);
+  const canSeeTeamWidget = !!user && (
+    fullTeamVisibility
+    || user.role === "manager"
+    || user.attendanceFollowupAccess === true
+  );
+  const teamWidgetUsers = useMemo(() => {
+    if (!user || !canSeeTeamWidget) return [];
+    if (fullTeamVisibility) {
+      return users.filter((u) => u.isActive && u.id !== user.id).slice(0, 8);
+    }
+    // Manager / per-user TA grant: show only the people the backend
+    // actually delivered attendance rows for.
+    const idsVisible = new Set(attendance.map((a) => a.userId));
+    return users
+      .filter((u) => u.isActive && u.id !== user.id && idsVisible.has(u.id))
+      .slice(0, 8);
+  }, [user, canSeeTeamWidget, fullTeamVisibility, attendance, users]);
+
   // Holidays that apply to this user — their company-specific rows + the
   // global (company_id NULL) ones. Indexed by date so the grid lookup is O(1).
   const holidayByDate = useMemo(() => {
@@ -503,32 +536,34 @@ export default function Attendance() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-surface shadow-card">
-          <div className="border-b border-border p-4">
-            <h3 className="font-display text-sm font-semibold">Team attendance — today</h3>
+        {canSeeTeamWidget && teamWidgetUsers.length > 0 && (
+          <div className="rounded-xl border border-border bg-surface shadow-card">
+            <div className="border-b border-border p-4">
+              <h3 className="font-display text-sm font-semibold">Team attendance — today</h3>
+            </div>
+            <ul className="divide-y divide-border">
+              {teamWidgetUsers.map((u) => {
+                const log = attendance.find((a) => a.userId === u.id && a.date === today);
+                const mins = minutesBetween(log?.checkIn, log?.checkOut);
+                return (
+                  <li key={u.id} className="flex items-center gap-3 p-3">
+                    <UserAvatar userId={u.id} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{u.name}</p>
+                      <p className="text-xs text-muted-foreground">{u.designation}</p>
+                    </div>
+                    <AttendanceBadge status={log?.status ?? "absent"} />
+                    {log?.checkIn && (
+                      <span className="ml-3 hidden text-xs text-muted-foreground md:inline">
+                        {log.checkIn} → {log.checkOut ?? "now"} · {formatHM(mins)}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
-          <ul className="divide-y divide-border">
-            {users.slice(0, 8).map((u) => {
-              const log = attendance.find((a) => a.userId === u.id && a.date === today);
-              const mins = minutesBetween(log?.checkIn, log?.checkOut);
-              return (
-                <li key={u.id} className="flex items-center gap-3 p-3">
-                  <UserAvatar userId={u.id} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{u.name}</p>
-                    <p className="text-xs text-muted-foreground">{u.designation}</p>
-                  </div>
-                  <AttendanceBadge status={log?.status ?? "absent"} />
-                  {log?.checkIn && (
-                    <span className="ml-3 hidden text-xs text-muted-foreground md:inline">
-                      {log.checkIn} → {log.checkOut ?? "now"} · {formatHM(mins)}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        )}
       </div>
     </div>
   );
