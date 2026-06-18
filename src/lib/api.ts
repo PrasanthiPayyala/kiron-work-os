@@ -689,6 +689,65 @@ export const api = {
     return request(`/expenses/${id}/reopen`, { method: "POST" });
   },
 
+  // ---------- Salary / Payroll ----------
+  listSalaryStructures(): Promise<SalaryStructureRow[]> {
+    return request("/salary/structures");
+  },
+  getCurrentSalaryStructure(userId: string): Promise<SalaryStructureRow | null> {
+    return request(`/salary/structures/${userId}/current`);
+  },
+  createSalaryStructure(payload: {
+    user_id: string;
+    effective_from: string;
+    basic?: number; hra?: number; conveyance?: number;
+    medical?: number; lta?: number; special_allowance?: number;
+    other_earnings?: number;
+    employer_pf?: number; employer_esi?: number; employer_other?: number;
+    tds_regime?: "old" | "new";
+    notes?: string | null;
+  }): Promise<SalaryStructureRow> {
+    return request("/salary/structures", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateSalaryStructure(id: string, patch: Partial<SalaryStructureRow>): Promise<SalaryStructureRow> {
+    return request(`/salary/structures/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+
+  listPayrollRuns(): Promise<PayrollRunRow[]> {
+    return request("/salary/payroll-runs");
+  },
+  createPayrollRun(payload: { company_id: string; period: string; notes?: string | null }): Promise<PayrollRunRow & { payslips_generated: number }> {
+    return request("/salary/payroll-runs", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updatePayrollRun(id: string, patch: { notes?: string | null }): Promise<PayrollRunRow> {
+    return request(`/salary/payroll-runs/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deletePayrollRun(id: string): Promise<void> {
+    return request(`/salary/payroll-runs/${id}`, { method: "DELETE" });
+  },
+  finalizePayrollRun(id: string): Promise<PayrollRunRow> {
+    return request(`/salary/payroll-runs/${id}/finalize`, { method: "POST" });
+  },
+  markPayrollRunPaid(id: string, payload?: { payment_reference?: string; payment_mode?: string }): Promise<PayrollRunRow> {
+    return request(`/salary/payroll-runs/${id}/mark-paid`, { method: "POST", body: JSON.stringify(payload ?? {}) });
+  },
+
+  listPayslips(opts?: { run_id?: string; user_id?: string }): Promise<PayslipRow[]> {
+    const q = new URLSearchParams();
+    if (opts?.run_id) q.set("run_id", opts.run_id);
+    if (opts?.user_id) q.set("user_id", opts.user_id);
+    const s = q.toString();
+    return request(`/salary/payslips${s ? `?${s}` : ""}`);
+  },
+  getPayslip(id: string): Promise<PayslipRow> {
+    return request(`/salary/payslips/${id}`);
+  },
+  updatePayslip(id: string, patch: Partial<PayslipRow>): Promise<PayslipRow> {
+    return request(`/salary/payslips/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  markPayslipPaid(id: string, payload?: { payment_reference?: string; payment_mode?: string }): Promise<PayslipRow> {
+    return request(`/salary/payslips/${id}/mark-paid`, { method: "POST", body: JSON.stringify(payload ?? {}) });
+  },
+
   // ---------- Project milestones ----------
   listMilestones(projectId: string): Promise<MilestoneRow[]> {
     return request(`/projects/${projectId}/milestones`);
@@ -1051,6 +1110,57 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface SalaryStructureRow {
+  id: string;
+  user_id: string;
+  effective_from: string;
+  effective_to: string | null;
+  basic: number; hra: number; conveyance: number;
+  medical: number; lta: number; special_allowance: number;
+  other_earnings: number;
+  employer_pf: number; employer_esi: number; employer_other: number;
+  tds_regime: "old" | "new";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PayrollRunRow {
+  id: string;
+  company_id: string;
+  period: string; // YYYY-MM
+  status: "draft" | "finalized" | "paid";
+  notes: string | null;
+  created_at: string;
+  created_by: string | null;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  paid_at: string | null;
+  paid_by: string | null;
+}
+
+export interface PayslipRow {
+  id: string;
+  payroll_run_id: string;
+  user_id: string;
+  period: string;
+  basic: number; hra: number; conveyance: number;
+  medical: number; lta: number; special_allowance: number;
+  other_earnings: number;
+  gross_earnings: number;
+  pf_employee: number; esi_employee: number; pt_employee: number;
+  tds: number; other_deductions: number;
+  total_deductions: number;
+  net_pay: number;
+  status: "draft" | "finalized" | "paid";
+  paid_at: string | null;
+  paid_by: string | null;
+  payment_reference: string | null;
+  payment_mode: string | null;
+  notes: string | null;
+  created_at: string;
 }
 
 export interface ExpenseClaimRow {

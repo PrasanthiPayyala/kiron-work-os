@@ -44,6 +44,8 @@ import Vendors from "./pages/Vendors";
 import VendorDetail from "./pages/VendorDetail";
 import Compliance from "./pages/Compliance";
 import Expenses from "./pages/Expenses";
+import Salary from "./pages/Salary";
+import PayslipView from "./pages/PayslipView";
 import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
@@ -153,6 +155,8 @@ const App = () => (
                   }
                 />
                 <Route path="/expenses" element={<Expenses />} />
+                <Route path="/salary" element={<Salary />} />
+                <Route path="/salary/payslips/:id" element={<PayslipView />} />
                 <Route
                   path="/vault"
                   element={

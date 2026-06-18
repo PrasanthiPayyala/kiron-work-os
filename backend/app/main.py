@@ -30,6 +30,7 @@ from .routers import (
     leave_balances,
     notifications,
     projects,
+    salary,
     tasks,
     teams,
     users,
@@ -86,6 +87,7 @@ app.include_router(vault.router)
 app.include_router(vendors.router)
 app.include_router(compliance.router)
 app.include_router(expenses.router)
+app.include_router(salary.router)
 app.include_router(ws.router)
 
 
