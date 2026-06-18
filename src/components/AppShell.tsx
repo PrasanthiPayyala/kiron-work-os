@@ -9,7 +9,7 @@ import { CompanyBadge } from "@/components/CompanyBadge";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Briefcase, FolderKanban, ListChecks, CalendarCheck, Plane,
-  MessageSquare, ShieldCheck, BarChart3, Users, Crown, Settings, Mail, BookUser,
+  MessageSquare, ShieldCheck, BarChart3, Users, Crown, Settings, BookUser,
   ClipboardCheck, UsersRound, KeyRound, FileText, Laptop, Store, Scale, Receipt, IndianRupee, BookOpen,
   Search, Bell, Plus, ChevronLeft, ChevronRight, LogOut, ChevronDown, X,
 } from "lucide-react";
@@ -19,7 +19,6 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { useUnreadMailCount } from "@/hooks/useUnreadMailCount";
 import { useUnreadChatCount } from "@/hooks/useUnreadChatCount";
 import { usePwaInstall, useOnlineStatus, useServiceWorkerUpdate } from "@/lib/pwa";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -31,7 +30,6 @@ const navItems: { key: NavKey; label: string; to: string; icon: typeof LayoutDas
   { key: "projects",       label: "Projects",       to: "/projects",        icon: FolderKanban },
   { key: "tasks",          label: "Tasks",          to: "/tasks",           icon: ListChecks },
   { key: "teams",          label: "Teams",          to: "/teams",           icon: UsersRound },
-  { key: "mail",           label: "Mail",           to: "/mail",            icon: Mail },
   { key: "attendance",     label: "Attendance",     to: "/attendance",      icon: CalendarCheck },
   { key: "team_attendance",label: "Team Attendance",to: "/team-attendance", icon: ClipboardCheck },
   { key: "leave",          label: "Leave",          to: "/leave",           icon: Plane },
@@ -74,7 +72,6 @@ export default function AppShell() {
   const company = getCompany(user.homeCompanyId);
   const myNotifs = notifications.filter((n) => n.userId === user.id);
   const unreadNotifs = myNotifs.filter((n) => !n.read).length;
-  const unreadMail = useUnreadMailCount();
   const unreadChat = useUnreadChatCount();
   const online = useOnlineStatus();
   const { canInstall, install } = usePwaInstall();
@@ -137,7 +134,7 @@ export default function AppShell() {
             {visibleNav.map((item) => {
               const Icon = item.icon;
               const active = location.pathname === item.to || (item.to !== "/dashboard" && location.pathname.startsWith(item.to));
-              const needsNetwork = item.key === "mail" || item.key === "chat";
+              const needsNetwork = item.key === "chat";
               const dimmed = needsNetwork && !online;
               return (
                 <li key={item.key}>
@@ -156,9 +153,6 @@ export default function AppShell() {
                     <Icon className={cn("h-[18px] w-[18px] shrink-0", active && "text-primary")} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
                     {!collapsed && dimmed && <WifiOff className="ml-auto h-3 w-3 text-muted-foreground" />}
-                    {!collapsed && !dimmed && item.key === "mail" && unreadMail > 0 && (
-                      <span className="ml-auto rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{unreadMail}</span>
-                    )}
                     {!collapsed && !dimmed && item.key === "chat" && unreadChat > 0 && (
                       <span className="ml-auto rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{unreadChat > 99 ? "99+" : unreadChat}</span>
                     )}
@@ -281,21 +275,6 @@ export default function AppShell() {
             >
               <Plus className="h-4 w-4" /> Quick add
             </Button>
-
-            {allowed.has("mail") && (
-              <button
-                onClick={() => navigate("/mail")}
-                className="relative flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface hover:bg-muted"
-                aria-label="Mail"
-              >
-                <Mail className="h-4 w-4" />
-                {unreadMail > 0 && (
-                  <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">
-                    {unreadMail > 99 ? "99+" : unreadMail}
-                  </span>
-                )}
-              </button>
-            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

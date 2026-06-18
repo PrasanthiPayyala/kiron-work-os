@@ -23,7 +23,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { AttachmentList } from "@/components/attachments/AttachmentList";
-import { LinkedEmails } from "@/components/mail/LinkedEmails";
 import type { Project, ProjectStatus, Risk } from "@/types";
 
 const GLOBAL_ROLES = new Set(["super_admin", "founder", "founder_office_coordinator", "founder_office_support"]);
@@ -202,16 +201,7 @@ export default function ProjectDetail() {
           </TabsContent>
 
           <TabsContent value="files" className="rounded-xl border border-border bg-surface p-5 shadow-card">
-            <div className="grid gap-6 md:grid-cols-2">
-              <div>
-                <h3 className="mb-3 font-display text-sm font-semibold">Attachments</h3>
-                <AttachmentList entityType="project" entityId={project.id} />
-              </div>
-              <div>
-                <h3 className="mb-3 font-display text-sm font-semibold">Linked emails</h3>
-                <LinkedEmails entityType="project" entityId={project.id} />
-              </div>
-            </div>
+            <AttachmentList entityType="project" entityId={project.id} />
           </TabsContent>
 
           <TabsContent value="timeline" className="rounded-xl border border-border bg-surface p-5 shadow-card">

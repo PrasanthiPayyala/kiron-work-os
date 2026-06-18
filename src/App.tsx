@@ -29,7 +29,6 @@ import PersonProfile from "./pages/PersonProfile";
 import Interns from "./pages/Interns";
 import FounderOffice from "./pages/FounderOffice";
 import Settings from "./pages/Settings";
-import Mail from "./pages/Mail";
 import Notifications from "./pages/Notifications";
 import Contacts from "./pages/Contacts";
 import Teams from "./pages/Teams";
@@ -89,7 +88,6 @@ const App = () => (
                 <Route path="/projects" element={<Projects />} />
                 <Route path="/projects/:id" element={<ProjectDetail />} />
                 <Route path="/tasks" element={<Tasks />} />
-                <Route path="/mail" element={<ProtectedRoute require="mail"><Mail /></ProtectedRoute>} />
                 <Route path="/attendance" element={<Attendance />} />
                 <Route
                   path="/team-attendance"

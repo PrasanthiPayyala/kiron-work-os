@@ -96,14 +96,14 @@ export function useAuth() {
 export type NavKey =
   | "dashboard" | "my_work" | "projects" | "tasks" | "attendance"
   | "leave" | "chat" | "approvals" | "reports" | "people"
-  | "founder_office" | "settings" | "mail" | "contacts" | "team_attendance"
+  | "founder_office" | "settings" | "contacts" | "team_attendance"
   | "teams" | "vault" | "documents" | "assets" | "vendors" | "compliance" | "expenses" | "salary" | "ledger";
 
-// "mail" is intentionally absent from every role for v1 — the IMAP module is
-// still Supabase-bound and would throw if anyone clicked it. The Mail.tsx
-// route and edge functions stay in the repo so we can flip it back on once
-// the FastAPI rebuild lands; just re-add "mail" to whichever roles should
-// see it then.
+// Mail is feature-flagged off for v1 — the IMAP/SMTP stack is still
+// Supabase-bound. The Mail.tsx page + 12 edge functions + mail/*
+// components stay in the repo so we can revive the module after a FastAPI
+// rebuild; the route, sidebar entry, topbar badge, NavKey union, and the
+// email-to-task hook in Tasks.tsx are all removed for now.
 export const roleNavAccess: Record<Role, NavKey[]> = {
   super_admin:                ["dashboard","my_work","projects","tasks","teams","attendance","team_attendance","leave","expenses","salary","ledger","chat","approvals","reports","people","contacts","documents","vault","assets","vendors","compliance","founder_office","settings"],
   founder:                    ["dashboard","my_work","projects","tasks","teams","attendance","team_attendance","leave","expenses","salary","ledger","chat","approvals","reports","people","contacts","documents","vault","assets","vendors","compliance","founder_office","settings"],

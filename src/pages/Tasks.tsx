@@ -5,7 +5,7 @@ import { useDataStore } from "@/lib/dataStore";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { TaskStatusBadge, PriorityBadge, VisibilityBadge } from "@/components/StatusBadges";
 import { UserAvatar } from "@/components/UserAvatar";
-import { ListChecks, LayoutGrid, List as ListIcon, Plus, Cloud, Loader2, Mail, Check, Pencil, PhoneCall, X as XIcon, Phone, Handshake, Bell } from "lucide-react";
+import { ListChecks, LayoutGrid, List as ListIcon, Plus, Loader2, Check, Pencil, PhoneCall, X as XIcon, Phone, Handshake, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,10 +15,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
 import { api, ApiError } from "@/lib/api";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AttachmentList } from "@/components/attachments/AttachmentList";
-import { LinkedEmails } from "@/components/mail/LinkedEmails";
 import type { Task, TaskStatus } from "@/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { TaskCallRow } from "@/lib/api";
@@ -40,9 +38,7 @@ export default function Tasks() {
   const [company, setCompany] = useState<string>("all");
   const [q, setQ] = useState("");
   const [active, setActive] = useState<Task | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [fromEmail, setFromEmail] = useState<{ messageId: string; accountId?: string; title: string; description: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({
     title: "",
@@ -277,23 +273,6 @@ export default function Tasks() {
   const upcomingCalls = calls.filter((c) => c.status === "scheduled");
 
   useEffect(() => {
-    if (searchParams.get("from_email") === "1") {
-      const messageId = searchParams.get("message_id") || "";
-      const title = searchParams.get("title") || "";
-      const description = searchParams.get("description") || "";
-      if (messageId) {
-        setFromEmail({ messageId, title, description });
-        setDraft({
-          title, description, priority: "medium",
-          company_id: user?.homeCompanyId ?? "",
-          assignee_id: user?.id ?? "",
-        });
-      }
-      // clear params so refresh doesn't reopen
-      const next = new URLSearchParams(searchParams);
-      ["from_email", "message_id", "title", "description"].forEach((k) => next.delete(k));
-      setSearchParams(next, { replace: true });
-    }
     // ?create=1 lands here from the topbar Quick Add — open the dialog
     // immediately and clear the param so it doesn't re-fire on reload.
     if (searchParams.get("create") === "1") {
@@ -304,48 +283,6 @@ export default function Tasks() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, setSearchParams, user?.id]);
-
-  const handleCreateFromEmail = async () => {
-    if (!fromEmail || !user) return;
-    if (!draft.title.trim()) return toast.error("Title is required");
-    setCreating(true);
-    try {
-      const task = await api.createTask({
-        title: draft.title,
-        description: draft.description || null,
-        priority: draft.priority,
-        status: "created",
-        company_id: user.homeCompanyId,
-        assignee_id: user.id,
-      });
-      // Linking the source email lives in the mail module (later phase). Best-effort
-      // so task creation still succeeds before mail is migrated off Supabase.
-      try {
-        const { data: msg } = await supabase
-          .from("email_messages")
-          .select("account_id")
-          .eq("id", fromEmail.messageId)
-          .maybeSingle();
-        if (msg?.account_id && task?.id) {
-          await supabase.from("email_links").insert({
-            message_id: fromEmail.messageId,
-            account_id: msg.account_id,
-            entity_type: "task",
-            entity_id: task.id as string,
-            linked_by: user.id,
-          });
-        }
-      } catch {
-        /* mail not migrated yet */
-      }
-      toast.success("Task created from email");
-      setFromEmail(null);
-    } catch (e) {
-      toast.error("Failed to create task", { description: String((e as Error).message ?? e) });
-    } finally {
-      setCreating(false);
-    }
-  };
 
   const openCreate = () => {
     if (!user) return;
@@ -405,27 +342,6 @@ export default function Tasks() {
     }
   };
 
-  const handleSyncToExternal = async () => {
-    setSyncing(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("call-node-api", {
-        body: {
-          path: "/v1/echo",
-          method: "POST",
-          body: { source: "kiron.tasks", at: new Date().toISOString() },
-        },
-      });
-      if (error) throw error;
-      toast.success("Synced to external system", {
-        description: `Status ${data?.status ?? "?"} from Node service.`,
-      });
-    } catch (err) {
-      toast.error("Sync failed", { description: String((err as Error).message ?? err) });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const today = new Date().toISOString().slice(0, 10);
   const filtered = useMemo(() => allTasks.filter((t) => {
     if (company !== "all" && t.companyId !== company) return false;
@@ -448,10 +364,6 @@ export default function Tasks() {
         icon={<ListChecks className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={handleSyncToExternal} disabled={syncing}>
-              {syncing ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Cloud className="h-4 w-4 mr-1.5" />}
-              Sync to External System
-            </Button>
             <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4 mr-1.5" /> Create task</Button>
           </div>
         }
@@ -718,12 +630,6 @@ export default function Tasks() {
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Linked emails</p>
-                  <div className="mt-2">
-                    <LinkedEmails entityType="task" entityId={active.id} />
-                  </div>
-                </div>
-                <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Add update</p>
                   <textarea
                     value={updateText}
@@ -742,48 +648,6 @@ export default function Tasks() {
           )}
         </SheetContent>
       </Sheet>
-
-      <Dialog open={!!fromEmail} onOpenChange={(o) => !o && setFromEmail(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Mail className="h-4 w-4" /> Create task from email</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs">Title</Label>
-              <Input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} className="mt-1" />
-            </div>
-            <div>
-              <Label className="text-xs">Description</Label>
-              <textarea
-                value={draft.description}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                rows={4}
-                className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm"
-              />
-            </div>
-            <div>
-              <Label className="text-xs">Priority</Label>
-              <Select value={draft.priority} onValueChange={(v: "low" | "medium" | "high" | "critical") => setDraft({ ...draft, priority: v })}>
-                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFromEmail(null)} disabled={creating}>Cancel</Button>
-            <Button onClick={handleCreateFromEmail} disabled={creating}>
-              {creating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-              Create task
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Standalone Create task dialog (opened by the Create task button
           on this page AND by Quick Add in the topbar). Five fields per
