@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth";
 import {
   mapCompany, mapDepartment, mapProfile, mapProject, mapTask, mapApproval,
   mapAttendance, mapLeave, mapConversation, mapMessage, mapNotification,
-  mapHoliday, pickPrimaryRole,
+  mapHoliday, mapTeam, pickPrimaryRole,
 } from "@/lib/mappers";
 import { offlineDB, replaceTable, setMeta, getMeta, clearAllData } from "@/lib/offline/db";
 import { drainQueue } from "@/lib/offline/mutationQueue";
@@ -21,7 +21,7 @@ import { onRealtime } from "@/lib/ws";
 import { showDesktopNotification } from "@/lib/desktopNotifications";
 import type {
   Company, Department, User, Project, Task, Approval,
-  AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role, Holiday,
+  AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role, Holiday, Team,
 } from "@/types";
 
 type Store = {
@@ -37,6 +37,7 @@ type Store = {
   messages: Message[];
   notifications: Notification[];
   holidays: Holiday[];
+  teams: Team[];
   rolesByUser: Record<string, Role[]>;
 };
 
@@ -61,7 +62,7 @@ type Ctx = Store & {
 const empty: Store = {
   companies: [], departments: [], users: [], projects: [], tasks: [],
   approvals: [], attendance: [], leaveRequests: [], conversations: [],
-  messages: [], notifications: [], holidays: [], rolesByUser: {},
+  messages: [], notifications: [], holidays: [], teams: [], rolesByUser: {},
 };
 
 const DataCtx = createContext<Ctx | null>(null);
@@ -79,6 +80,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     tasks: any[]; approvals: any[]; attendance: any[]; leaves: any[];
     conversations: any[]; convMembers: { conversation_id: string; user_id: string; last_read_at?: string | null }[];
     messages: any[]; notifications: any[]; holidays?: any[];
+    teams?: any[]; teamMembers?: { team_id: string; user_id: string; member_role: string }[];
     currentUserId?: string;
   }): Store => {
     const rolesByUser: Record<string, Role[]> = {};
@@ -97,6 +99,10 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
         myLastReadByConv[m.conversation_id] = m.last_read_at ?? null;
       }
     }
+    const teamMembersByTeam: Record<string, string[]> = {};
+    for (const m of raw.teamMembers ?? []) {
+      (teamMembersByTeam[m.team_id] ||= []).push(m.user_id);
+    }
     return {
       companies: raw.companies.map(mapCompany),
       departments: raw.departments.map(mapDepartment),
@@ -114,6 +120,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       messages: raw.messages.map(mapMessage),
       notifications: raw.notifications.map(mapNotification),
       holidays: (raw.holidays ?? []).map(mapHoliday),
+      teams: (raw.teams ?? []).map((t: any) => mapTeam(t, teamMembersByTeam[t.id] ?? [])),
       rolesByUser,
     };
   }, []);
@@ -177,6 +184,8 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       messages: b.messages,
       notifications: b.notifications,
       holidays: b.holidays ?? [],
+      teams: (b as any).teams ?? [],
+      teamMembers: (b as any).team_members ?? [],
     };
 
     // Mirror to IndexedDB. Fire-and-forget so reads aren't blocked on disk.

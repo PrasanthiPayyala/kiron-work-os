@@ -193,6 +193,31 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
     # --- holidays (all rows; the client filters by company_id where needed) ---
     holidays = _rows(db, "SELECT * FROM holidays ORDER BY date ASC, name ASC")
 
+    # --- teams ---
+    # Global-team viewers (super_admin / founder / founder_office_coordinator)
+    # see every team; everyone else sees only the teams they belong to.
+    GLOBAL_TEAM_ROLES = {"super_admin", "founder", "founder_office_coordinator"}
+    if has_any_role(roles, GLOBAL_TEAM_ROLES):
+        teams_rows = _rows(db, "SELECT * FROM teams ORDER BY created_at DESC")
+    else:
+        teams_rows = _rows(
+            db,
+            "SELECT t.* FROM teams t "
+            "JOIN team_members m ON m.team_id = t.id "
+            "WHERE m.user_id = :uid "
+            "ORDER BY t.created_at DESC",
+            {"uid": uid},
+        )
+    team_ids = [t["id"] for t in teams_rows]
+    if team_ids:
+        team_members = _rows(
+            db,
+            "SELECT team_id, user_id, member_role FROM team_members WHERE team_id = ANY(:ids)",
+            {"ids": team_ids},
+        )
+    else:
+        team_members = []
+
     return {
         "companies": companies,
         "departments": departments,
@@ -209,4 +234,6 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "messages": messages,
         "notifications": notifications,
         "holidays": holidays,
+        "teams": teams_rows,
+        "team_members": team_members,
     }

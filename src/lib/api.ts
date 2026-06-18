@@ -267,6 +267,46 @@ export const api = {
     return request(`/calls/${callId}/cancel`, { method: "POST" });
   },
 
+  // ---------- Teams ----------
+  listTeams(): Promise<TeamRow[]> {
+    return request("/teams");
+  },
+  getTeam(id: string): Promise<TeamRow> {
+    return request(`/teams/${id}`);
+  },
+  createTeam(payload: {
+    name: string;
+    kind: string;
+    description?: string | null;
+    company_id?: string | null;
+    client_org_id?: string | null;
+    member_ids: string[];
+  }): Promise<TeamRow> {
+    return request("/teams", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateTeam(id: string, patch: Partial<{
+    name: string;
+    kind: string;
+    description: string | null;
+    company_id: string | null;
+    client_org_id: string | null;
+    is_active: boolean;
+  }>): Promise<TeamRow> {
+    return request(`/teams/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteTeam(id: string): Promise<void> {
+    return request(`/teams/${id}`, { method: "DELETE" });
+  },
+  addTeamMember(teamId: string, userId: string, memberRole: "owner" | "admin" | "member" = "member"): Promise<void> {
+    return request(`/teams/${teamId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId, member_role: memberRole }),
+    });
+  },
+  removeTeamMember(teamId: string, userId: string): Promise<void> {
+    return request(`/teams/${teamId}/members/${userId}`, { method: "DELETE" });
+  },
+
   // ---------- Projects (online-only; managers don't typically create projects offline) ----------
   createProject(payload: {
     title: string;
@@ -641,6 +681,22 @@ export interface ConversationCreated {
   reused?: boolean;
 }
 
+export interface TeamRow {
+  id: string;
+  name: string;
+  slug: string;
+  kind: string;
+  description: string | null;
+  owner_id: string | null;
+  company_id: string | null;
+  client_org_id: string | null;
+  conversation_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  created_by: string | null;
+  member_ids: string[];
+}
+
 export type TaskCallKind = "phone_call" | "in_person" | "other";
 
 export interface TaskCallRow {
@@ -677,4 +733,6 @@ export interface BootstrapResponse {
   messages: any[];
   notifications: any[];
   holidays: any[];
+  teams?: any[];
+  team_members?: { team_id: string; user_id: string; member_role: string }[];
 }

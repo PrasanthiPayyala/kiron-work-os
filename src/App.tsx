@@ -32,6 +32,8 @@ import Settings from "./pages/Settings";
 import Mail from "./pages/Mail";
 import Notifications from "./pages/Notifications";
 import Contacts from "./pages/Contacts";
+import Teams from "./pages/Teams";
+import TeamDetail from "./pages/TeamDetail";
 import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
@@ -96,6 +98,8 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
+                <Route path="/teams" element={<Teams />} />
+                <Route path="/teams/:id" element={<TeamDetail />} />
                 <Route path="/people" element={<People />} />
                 <Route
                   path="/contacts"

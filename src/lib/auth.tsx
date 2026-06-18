@@ -96,7 +96,8 @@ export function useAuth() {
 export type NavKey =
   | "dashboard" | "my_work" | "projects" | "tasks" | "attendance"
   | "leave" | "chat" | "approvals" | "reports" | "people"
-  | "founder_office" | "settings" | "mail" | "contacts" | "team_attendance";
+  | "founder_office" | "settings" | "mail" | "contacts" | "team_attendance"
+  | "teams";
 
 // "mail" is intentionally absent from every role for v1 — the IMAP module is
 // still Supabase-bound and would throw if anyone clicked it. The Mail.tsx
@@ -104,14 +105,14 @@ export type NavKey =
 // the FastAPI rebuild lands; just re-add "mail" to whichever roles should
 // see it then.
 export const roleNavAccess: Record<Role, NavKey[]> = {
-  super_admin:                ["dashboard","my_work","projects","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
-  founder:                    ["dashboard","my_work","projects","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
-  founder_office_coordinator: ["dashboard","my_work","projects","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
-  founder_office_support:     ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people","contacts","founder_office"],
-  manager:                    ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","reports","people","contacts"],
-  employee:                   ["dashboard","my_work","projects","tasks","attendance","leave","chat","approvals","people"],
-  intern:                     ["dashboard","my_work","projects","tasks","attendance","leave","chat","people"],
-  hr_admin:                   ["dashboard","my_work","tasks","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","settings"],
+  super_admin:                ["dashboard","my_work","projects","tasks","teams","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder:                    ["dashboard","my_work","projects","tasks","teams","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder_office_coordinator: ["dashboard","my_work","projects","tasks","teams","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","founder_office","settings"],
+  founder_office_support:     ["dashboard","my_work","projects","tasks","teams","attendance","leave","chat","approvals","people","contacts","founder_office"],
+  manager:                    ["dashboard","my_work","projects","tasks","teams","attendance","leave","chat","approvals","reports","people","contacts"],
+  employee:                   ["dashboard","my_work","projects","tasks","teams","attendance","leave","chat","approvals","people"],
+  intern:                     ["dashboard","my_work","projects","tasks","teams","attendance","leave","chat","people"],
+  hr_admin:                   ["dashboard","my_work","tasks","teams","attendance","team_attendance","leave","chat","approvals","reports","people","contacts","settings"],
 };
 
 /** Capability check for the Team Attendance / Follow-up page. Roles in

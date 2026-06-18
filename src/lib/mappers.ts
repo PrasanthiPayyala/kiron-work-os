@@ -440,6 +440,25 @@ export function mapNotification(r: DbNotif): Notification {
   };
 }
 
+// ---------- Teams ----------
+export function mapTeam(r: any, memberIds: string[] = []): import("@/types").Team {
+  return {
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    kind: r.kind as import("@/types").TeamKind,
+    description: r.description ?? null,
+    ownerId: r.owner_id ?? null,
+    companyId: r.company_id ?? null,
+    clientOrgId: r.client_org_id ?? null,
+    conversationId: r.conversation_id ?? null,
+    isActive: r.is_active !== false,
+    createdAt: r.created_at ?? "",
+    createdById: r.created_by ?? null,
+    memberIds: Array.isArray(r.member_ids) ? r.member_ids : memberIds,
+  };
+}
+
 // ---------- Contacts & Organizations ----------
 export function mapOrganization(r: any): import("@/types").Organization {
   return {

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Briefcase, FolderKanban, ListChecks, CalendarCheck, Plane,
   MessageSquare, ShieldCheck, BarChart3, Users, Crown, Settings, Mail, BookUser,
-  ClipboardCheck,
+  ClipboardCheck, UsersRound,
   Search, Bell, Plus, ChevronLeft, ChevronRight, LogOut, ChevronDown, X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ const navItems: { key: NavKey; label: string; to: string; icon: typeof LayoutDas
   { key: "my_work",        label: "My Work",        to: "/my-work",         icon: Briefcase },
   { key: "projects",       label: "Projects",       to: "/projects",        icon: FolderKanban },
   { key: "tasks",          label: "Tasks",          to: "/tasks",           icon: ListChecks },
+  { key: "teams",          label: "Teams",          to: "/teams",           icon: UsersRound },
   { key: "mail",           label: "Mail",           to: "/mail",            icon: Mail },
   { key: "attendance",     label: "Attendance",     to: "/attendance",      icon: CalendarCheck },
   { key: "team_attendance",label: "Team Attendance",to: "/team-attendance", icon: ClipboardCheck },

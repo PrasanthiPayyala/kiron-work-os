@@ -413,6 +413,41 @@ export interface Message {
   hiddenBy?: ID[];
 }
 
+// ---------- Teams (flexible groupings) ----------
+export type TeamKind =
+  | "project"
+  | "hackathon"
+  | "hr"
+  | "founders_office"
+  | "client_internal"
+  | "client_external"
+  | "functional"
+  | "ad_hoc";
+
+export type TeamMemberRole = "owner" | "admin" | "member";
+
+export interface Team {
+  id: ID;
+  name: string;
+  slug: string;
+  kind: TeamKind;
+  description?: string | null;
+  ownerId?: ID | null;
+  companyId?: ID | null;
+  clientOrgId?: ID | null;
+  conversationId?: ID | null;
+  isActive: boolean;
+  createdAt: ISODate;
+  createdById?: ID | null;
+  memberIds: ID[];
+}
+
+export interface TeamMembership {
+  teamId: ID;
+  userId: ID;
+  memberRole: TeamMemberRole;
+}
+
 // ---------- Task reminders (kind=phone_call|in_person|other) ----------
 export type TaskCallStatus = "scheduled" | "cancelled" | "done";
 export type TaskCallKind = "phone_call" | "in_person" | "other";

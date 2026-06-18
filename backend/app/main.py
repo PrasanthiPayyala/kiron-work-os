@@ -26,6 +26,7 @@ from .routers import (
     notifications,
     projects,
     tasks,
+    teams,
     users,
     ws,
 )
@@ -70,6 +71,7 @@ app.include_router(contacts.router)
 app.include_router(users.router)
 app.include_router(holidays.router)
 app.include_router(calls.router)
+app.include_router(teams.router)
 app.include_router(ws.router)
 
 
