@@ -23,6 +23,7 @@ from .routers import (
     contacts,
     conversations,
     documents,
+    expenses,
     files,
     holidays,
     leave,
@@ -84,6 +85,7 @@ app.include_router(teams.router)
 app.include_router(vault.router)
 app.include_router(vendors.router)
 app.include_router(compliance.router)
+app.include_router(expenses.router)
 app.include_router(ws.router)
 
 

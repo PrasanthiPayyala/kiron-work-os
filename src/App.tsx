@@ -43,6 +43,7 @@ import AssetDetail from "./pages/AssetDetail";
 import Vendors from "./pages/Vendors";
 import VendorDetail from "./pages/VendorDetail";
 import Compliance from "./pages/Compliance";
+import Expenses from "./pages/Expenses";
 import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
@@ -151,6 +152,7 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
+                <Route path="/expenses" element={<Expenses />} />
                 <Route
                   path="/vault"
                   element={

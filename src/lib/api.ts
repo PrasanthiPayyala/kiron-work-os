@@ -648,6 +648,47 @@ export const api = {
     return request("/compliance/generate", { method: "POST" });
   },
 
+  // ---------- Expense claims ----------
+  listExpenses(opts?: { status?: string; user_id?: string }): Promise<ExpenseClaimRow[]> {
+    const q = new URLSearchParams();
+    if (opts?.status) q.set("status", opts.status);
+    if (opts?.user_id) q.set("user_id", opts.user_id);
+    const s = q.toString();
+    return request(`/expenses${s ? `?${s}` : ""}`);
+  },
+  getExpense(id: string): Promise<ExpenseClaimRow> {
+    return request(`/expenses/${id}`);
+  },
+  createExpense(payload: {
+    company_id?: string | null;
+    category: string;
+    description: string;
+    amount: number;
+    currency?: string;
+    expense_date: string;
+    notes?: string | null;
+  }): Promise<ExpenseClaimRow> {
+    return request("/expenses", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateExpense(id: string, patch: Partial<ExpenseClaimRow>): Promise<ExpenseClaimRow> {
+    return request(`/expenses/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteExpense(id: string): Promise<void> {
+    return request(`/expenses/${id}`, { method: "DELETE" });
+  },
+  approveExpense(id: string): Promise<ExpenseClaimRow> {
+    return request(`/expenses/${id}/approve`, { method: "POST" });
+  },
+  rejectExpense(id: string, reason: string): Promise<ExpenseClaimRow> {
+    return request(`/expenses/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  reimburseExpense(id: string, payload?: { reference?: string; mode?: string; notes?: string }): Promise<ExpenseClaimRow> {
+    return request(`/expenses/${id}/reimburse`, { method: "POST", body: JSON.stringify(payload ?? {}) });
+  },
+  reopenExpense(id: string): Promise<ExpenseClaimRow> {
+    return request(`/expenses/${id}/reopen`, { method: "POST" });
+  },
+
   // ---------- Project milestones ----------
   listMilestones(projectId: string): Promise<MilestoneRow[]> {
     return request(`/projects/${projectId}/milestones`);
@@ -1010,6 +1051,28 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface ExpenseClaimRow {
+  id: string;
+  user_id: string;
+  company_id: string | null;
+  category: string;
+  description: string;
+  amount: number;
+  currency: string;
+  expense_date: string;
+  status: "submitted" | "approved" | "rejected" | "reimbursed";
+  reject_reason: string | null;
+  approver_id: string | null;
+  decided_at: string | null;
+  reimbursed_at: string | null;
+  reimbursed_by: string | null;
+  reimbursement_reference: string | null;
+  reimbursement_mode: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ComplianceObligationRow {
