@@ -40,6 +40,8 @@ import Documents from "./pages/Documents";
 import DocumentDetail from "./pages/DocumentDetail";
 import Assets from "./pages/Assets";
 import AssetDetail from "./pages/AssetDetail";
+import Vendors from "./pages/Vendors";
+import VendorDetail from "./pages/VendorDetail";
 import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
@@ -121,6 +123,22 @@ const App = () => (
                   element={
                     <ProtectedRoute require="assets">
                       <AssetDetail />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/vendors"
+                  element={
+                    <ProtectedRoute require="vendors">
+                      <Vendors />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/vendors/:id"
+                  element={
+                    <ProtectedRoute require="vendors">
+                      <VendorDetail />
                     </ProtectedRoute>
                   }
                 />

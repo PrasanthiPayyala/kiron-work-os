@@ -539,6 +539,58 @@ export const api = {
     return request(`/assets/${id}/history`);
   },
 
+  // ---------- Vendors ----------
+  listVendors(): Promise<VendorRow[]> {
+    return request("/vendors");
+  },
+  getVendor(id: string): Promise<VendorDetailRow> {
+    return request(`/vendors/${id}`);
+  },
+  createVendor(payload: Partial<VendorRow> & { name: string; category?: string }): Promise<VendorRow> {
+    return request("/vendors", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateVendor(id: string, patch: Partial<VendorRow>): Promise<VendorRow> {
+    return request(`/vendors/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteVendor(id: string): Promise<void> {
+    return request(`/vendors/${id}`, { method: "DELETE" });
+  },
+  createVendorContract(vendorId: string, payload: {
+    title: string;
+    contract_type?: string;
+    amount?: number | null;
+    currency?: string;
+    billing_cadence?: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    auto_renews?: boolean;
+    reminder_days_before?: number;
+    status?: string;
+    notes?: string | null;
+  }): Promise<VendorContractRow> {
+    return request(`/vendors/${vendorId}/contracts`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateVendorContract(contractId: string, patch: Partial<VendorContractRow>): Promise<VendorContractRow> {
+    return request(`/vendors/contracts/${contractId}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteVendorContract(contractId: string): Promise<void> {
+    return request(`/vendors/contracts/${contractId}`, { method: "DELETE" });
+  },
+  createVendorPayment(vendorId: string, payload: {
+    amount: number;
+    currency?: string;
+    paid_at: string;
+    contract_id?: string | null;
+    mode?: string | null;
+    reference?: string | null;
+    notes?: string | null;
+  }): Promise<VendorPaymentRow> {
+    return request(`/vendors/${vendorId}/payments`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  deleteVendorPayment(paymentId: string): Promise<void> {
+    return request(`/vendors/payments/${paymentId}`, { method: "DELETE" });
+  },
+
   // ---------- Project milestones ----------
   listMilestones(projectId: string): Promise<MilestoneRow[]> {
     return request(`/projects/${projectId}/milestones`);
@@ -901,6 +953,64 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface VendorRow {
+  id: string;
+  name: string;
+  category: string;
+  website: string | null;
+  gstin: string | null;
+  address: string | null;
+  primary_contact: string | null;
+  primary_email: string | null;
+  primary_phone: string | null;
+  notes: string | null;
+  organization_id: string | null;
+  owner_id: string | null;
+  company_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  updated_by: string | null;
+}
+
+export interface VendorContractRow {
+  id: string;
+  vendor_id: string;
+  title: string;
+  contract_type: string;
+  amount: number | null;
+  currency: string;
+  billing_cadence: string;
+  start_date: string | null;
+  end_date: string | null;
+  auto_renews: boolean;
+  reminder_days_before: number;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorPaymentRow {
+  id: string;
+  vendor_id: string;
+  contract_id: string | null;
+  amount: number;
+  currency: string;
+  paid_at: string;
+  mode: string | null;
+  reference: string | null;
+  notes: string | null;
+  paid_by: string | null;
+  created_at: string;
+}
+
+export interface VendorDetailRow extends VendorRow {
+  contracts: VendorContractRow[];
+  payments: VendorPaymentRow[];
 }
 
 export interface AssetRow {

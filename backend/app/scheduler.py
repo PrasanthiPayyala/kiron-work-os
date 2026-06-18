@@ -48,6 +48,7 @@ OPEN_STATUSES = [
 # Arbitrary 64-bit key for pg_try_advisory_lock. Picked once, never changes.
 _SLA_LOCK_KEY = 7301823461  # "KIRON_SLA"
 _CALL_LOCK_KEY = 7301823462  # "KIRON_CALLS"
+_VENDOR_LOCK_KEY = 7301823463  # "KIRON_VENDORS"
 
 # IST = UTC+5:30. Hard-coded because the rest of the app already assumes IST
 # (attendance grace, working hours). Don't introduce zoneinfo here.
@@ -497,6 +498,200 @@ def _run_call_reminders_sync() -> dict:
     return summary
 
 
+# ------------------------------------------------------------------
+# Vendor contract renewal reminders.
+#
+# Runs daily (alongside the other jobs). Walks active vendor_contracts
+# and fires an in-app notification + best-effort email to the vendor's
+# owner (and super_admin) when end_date - reminder_days_before is on or
+# before today_ist. Deduped via vendor_contract_reminders keyed on
+# (contract_id, for_end_date) — so if HR pushes end_date forward
+# (manual renewal), a new reminder fires for the new date.
+# ------------------------------------------------------------------
+
+
+async def run_vendor_renewal_reminders() -> dict:
+    summary = await asyncio.to_thread(_run_vendor_renewal_sync)
+    payloads = summary.pop("broadcast_payloads", [])
+    if payloads:
+        from .routers import ws as ws_router
+        for p in payloads:
+            try:
+                await ws_router.notification_new(p)
+            except Exception:  # noqa: BLE001
+                log.exception("WS broadcast failed for vendor renewal notification %s", p.get("id"))
+    return summary
+
+
+def _run_vendor_renewal_sync() -> dict:
+    from .email import send_email  # local import — SMTP is optional
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    today_ist = now_utc.astimezone(_IST).date()
+    broadcast_payloads: list[dict] = []
+    summary: dict = {
+        "ran_at": now_utc.isoformat(),
+        "scanned": 0,
+        "fired": 0,
+        "skipped_lock_busy": False,
+        "broadcast_payloads": broadcast_payloads,
+    }
+    with engine.begin() as conn:
+        got = conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"), {"k": _VENDOR_LOCK_KEY},
+        ).scalar()
+        if not got:
+            summary["skipped_lock_busy"] = True
+            return summary
+        try:
+            # Pull contracts whose reminder window is open today and
+            # whose owner we can email. The owner could be NULL — we
+            # still create an in-app notification for super_admin so
+            # the alert isn't lost.
+            contracts = conn.execute(
+                text(
+                    "SELECT c.id, c.title, c.end_date, c.reminder_days_before, "
+                    "       c.amount, c.currency, "
+                    "       v.id AS vendor_id, v.name AS vendor_name, v.owner_id, "
+                    "       o.full_name AS owner_name, o.email AS owner_email "
+                    "FROM vendor_contracts c "
+                    "JOIN vendors v ON v.id = c.vendor_id "
+                    "LEFT JOIN profiles o ON o.id = v.owner_id "
+                    "WHERE c.status = 'active' AND c.end_date IS NOT NULL "
+                    "  AND v.is_active = true "
+                    "  AND (c.end_date - c.reminder_days_before) <= :today "
+                    "  AND c.end_date >= :today "
+                    "LIMIT 500"
+                ),
+                {"today": today_ist},
+            ).mappings().all()
+            summary["scanned"] = len(contracts)
+            if not contracts:
+                return summary
+
+            # Dedup against rows already sent for the same (contract,
+            # end_date). When end_date moves, the dedup key changes.
+            keys = [(str(c["id"]), c["end_date"]) for c in contracts]
+            sent_rows = conn.execute(
+                text(
+                    "SELECT contract_id, for_end_date FROM vendor_contract_reminders "
+                    "WHERE contract_id = ANY(:ids)"
+                ),
+                {"ids": [k[0] for k in keys]},
+            ).mappings().all()
+            sent: set[tuple[str, str]] = {
+                (str(r["contract_id"]), str(r["for_end_date"])) for r in sent_rows
+            }
+
+            # Always also notify super_admin role members so a
+            # missing-owner contract doesn't slip through. Cheap query.
+            super_admins = conn.execute(
+                text(
+                    "SELECT p.id, p.email, p.full_name FROM profiles p "
+                    "JOIN user_roles ur ON ur.user_id = p.id "
+                    "WHERE ur.role = 'super_admin' AND p.is_active = true"
+                )
+            ).mappings().all()
+
+            for c in contracts:
+                key = (str(c["id"]), str(c["end_date"]))
+                if key in sent:
+                    continue
+
+                days_left = (c["end_date"] - today_ist).days
+                title = f"Renewal due in {days_left} day{'s' if days_left != 1 else ''}: {c['vendor_name']} — {c['title']}"
+                if c["amount"]:
+                    body = f"{c['currency']} {float(c['amount']):,.0f} · ends {c['end_date']}"
+                else:
+                    body = f"Ends {c['end_date']}"
+                link = f"/vendors/{c['vendor_id']}"
+
+                # Recipients: contract/vendor owner + every super_admin.
+                # Deduped by user_id so an owner who's also super_admin
+                # doesn't get two rows.
+                recipients: dict[str, dict] = {}
+                if c["owner_id"]:
+                    recipients[str(c["owner_id"])] = {
+                        "id": str(c["owner_id"]),
+                        "email": c.get("owner_email"),
+                        "name": c.get("owner_name"),
+                    }
+                for sa in super_admins:
+                    recipients[str(sa["id"])] = {
+                        "id": str(sa["id"]),
+                        "email": sa.get("email"),
+                        "name": sa.get("full_name"),
+                    }
+                if not recipients:
+                    continue
+
+                result = conn.execute(
+                    text(
+                        "INSERT INTO notifications "
+                        "  (user_id, notification_type, title, body, link) "
+                        "SELECT u.user_id, 'reminder'::public.notification_type, "
+                        "       u.title, u.body, u.link "
+                        "FROM unnest("
+                        "  CAST(:user_ids AS uuid[]), "
+                        "  CAST(:titles   AS text[]), "
+                        "  CAST(:bodies   AS text[]), "
+                        "  CAST(:links    AS text[])"
+                        ") AS u(user_id, title, body, link) "
+                        "RETURNING id, user_id, notification_type, title, body, link, is_read, created_at"
+                    ),
+                    {
+                        "user_ids": list(recipients.keys()),
+                        "titles":   [title] * len(recipients),
+                        "bodies":   [body]  * len(recipients),
+                        "links":    [link]  * len(recipients),
+                    },
+                ).mappings().all()
+                for r in result:
+                    broadcast_payloads.append({
+                        "id": str(r["id"]),
+                        "user_id": str(r["user_id"]),
+                        "notification_type": str(r["notification_type"]),
+                        "title": r["title"],
+                        "body": r["body"],
+                        "link": r["link"],
+                        "is_read": r["is_read"],
+                        "created_at": r["created_at"].isoformat() if hasattr(r["created_at"], "isoformat") else str(r["created_at"]),
+                    })
+
+                # Email best-effort to anyone with an address.
+                for u in recipients.values():
+                    if not u.get("email"):
+                        continue
+                    body_text = (
+                        f"{title}\n\n{body}\n\n"
+                        f"Open in Kiron Work OS:\n{link}\n\n"
+                        f"— Kiron Work OS"
+                    )
+                    body_html = (
+                        f"<p>{title}</p><p>{body}</p>"
+                        f'<p><a href="{link}" style="display:inline-block;padding:10px 16px;'
+                        f'background:#0f172a;color:#fff;text-decoration:none;border-radius:6px">Open</a></p>'
+                    )
+                    try:
+                        send_email(u["email"], title, body_text, body_html)
+                    except Exception:  # noqa: BLE001
+                        log.exception("Vendor renewal email failed for %s", u.get("email"))
+
+                conn.execute(
+                    text(
+                        "INSERT INTO vendor_contract_reminders (contract_id, for_end_date) "
+                        "VALUES (:c, :d) ON CONFLICT DO NOTHING"
+                    ),
+                    {"c": str(c["id"]), "d": c["end_date"]},
+                )
+                sent.add(key)
+                summary["fired"] += 1
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _VENDOR_LOCK_KEY})
+
+    log.info("Vendor renewal reminders: scanned=%(scanned)d fired=%(fired)d", summary)
+    return summary
+
+
 def _reminder_copy(
     when_kind: str,
     reminder_kind: str,
@@ -654,9 +849,23 @@ def start_scheduler() -> None:
         max_instances=1,
         next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=45),
     )
+    # Vendor renewal reminders — runs hourly to catch new contracts +
+    # day-rollover. Idempotent via the (contract_id, end_date) dedup
+    # row, so an hourly cadence at most produces one reminder per
+    # contract per end_date.
+    _scheduler.add_job(
+        run_vendor_renewal_reminders,
+        trigger="interval",
+        hours=1,
+        id="vendor_renewal_reminders",
+        coalesce=True,
+        max_instances=1,
+        next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=2),
+    )
     _scheduler.start()
     log.info(
-        "Scheduler started — SLA every %d min, call reminders every 1 min",
+        "Scheduler started — SLA every %d min, call reminders every 1 min, "
+        "vendor renewals every 1 h",
         settings.sla_check_interval_min,
     )
 
