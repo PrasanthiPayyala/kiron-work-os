@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from ..authz import has_any_role
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..ledger_link import delete_ledger_for_source, upsert_ledger_for_source
 from ..util import row
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -43,6 +44,12 @@ ALLOWED_STATUSES = {"submitted", "approved", "rejected", "reimbursed"}
 
 
 class ExpenseCreate(BaseModel):
+    # Optional — defaults to the caller. Finance roles (HR / founders /
+    # founder's office) can pass another employee's id to file a
+    # reimbursement on their behalf (e.g. Karunya entering bills she
+    # collected from the team). Non-finance callers can only file for
+    # themselves; the router rejects other values.
+    user_id: Optional[str] = None
     company_id: Optional[str] = None
     category: str = "other"
     description: str = Field(..., min_length=1, max_length=400)
@@ -115,13 +122,34 @@ def create_expense(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Default the company to the user's home company if not provided —
-    # most claims are billed to the employee's own entity.
+    # Determine the claimant. Defaults to the caller (employees filing
+    # their own bills). Finance roles can override with body.user_id
+    # to enter claims on behalf of any employee — Karunya collects
+    # bills from people who don't use the app and types them in.
+    claimant_id = body.user_id or user.id
+    if claimant_id != user.id and not _is_finance(user):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only finance / HR can file a claim on behalf of another employee",
+        )
+
+    # Verify the target user exists when finance is filing on behalf —
+    # protects against typos in the picker.
+    if claimant_id != user.id:
+        exists = db.execute(
+            text("SELECT 1 FROM profiles WHERE id = :u"), {"u": claimant_id},
+        ).first()
+        if not exists:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown user_id")
+
+    # Default the company to the *claimant's* home company (not the
+    # caller's — important when HR files on behalf of someone in a
+    # different group entity).
     company_id = body.company_id
     if not company_id:
         company_id = db.execute(
             text("SELECT home_company_id FROM profiles WHERE id = :u"),
-            {"u": user.id},
+            {"u": claimant_id},
         ).scalar()
         company_id = str(company_id) if company_id else None
     new_id = str(uuid.uuid4())
@@ -135,7 +163,7 @@ def create_expense(
             ")"
         ),
         {
-            "id": new_id, "u": user.id, "co": company_id,
+            "id": new_id, "u": claimant_id, "co": company_id,
             "cat": body.category, "desc": body.description.strip(),
             "amt": body.amount, "cur": body.currency,
             "ed": body.expense_date, "n": body.notes,
@@ -235,6 +263,9 @@ def delete_expense(
     submitted = exp.get("status") == "submitted"
     if not (is_super or (is_claimant and submitted)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the claimant (while submitted) or super_admin can delete")
+    # Drop any linked ledger row (e.g. if a super_admin nukes a row
+    # post-reimbursement).
+    delete_ledger_for_source(db, source_kind="expense_claim", source_id=expense_id)
     db.execute(text("DELETE FROM expense_claims WHERE id = :id"), {"id": expense_id})
     db.commit()
     return None
@@ -313,6 +344,23 @@ def reimburse_expense(
             "ref": body.reference, "mode": body.mode, "n": body.notes,
         },
     )
+    # Mirror into the company ledger as an OUT entry. The expense's
+    # company_id is the entity paying; the claimant becomes the payee.
+    if exp.get("company_id"):
+        upsert_ledger_for_source(
+            db,
+            source_kind="expense_claim", source_id=expense_id,
+            company_id=str(exp["company_id"]),
+            txn_date=str(dt.datetime.now(dt.timezone.utc).date()),
+            direction="out",
+            amount=float(exp["amount"]), currency=exp.get("currency") or "INR",
+            description=f"Reimbursement: {exp['description']}",
+            category=exp.get("category") or "other",
+            payment_mode=body.mode,
+            payee_user_id=str(exp["user_id"]),
+            reference=body.reference, notes=body.notes,
+            created_by=user.id,
+        )
     db.commit()
     return _get(db, expense_id)
 
@@ -339,5 +387,8 @@ def reopen_expense(
         ),
         {"id": expense_id},
     )
+    # Drop any ledger row tied to this claim since the reimbursement
+    # is being undone.
+    delete_ledger_for_source(db, source_kind="expense_claim", source_id=expense_id)
     db.commit()
     return _get(db, expense_id)

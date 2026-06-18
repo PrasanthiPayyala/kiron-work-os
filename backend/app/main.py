@@ -26,6 +26,7 @@ from .routers import (
     expenses,
     files,
     holidays,
+    ledger,
     leave,
     leave_balances,
     notifications,
@@ -88,6 +89,7 @@ app.include_router(vendors.router)
 app.include_router(compliance.router)
 app.include_router(expenses.router)
 app.include_router(salary.router)
+app.include_router(ledger.router)
 app.include_router(ws.router)
 
 

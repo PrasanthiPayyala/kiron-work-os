@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 from ..authz import has_any_role
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..ledger_link import delete_ledger_for_source, upsert_ledger_for_source
 from ..util import row
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
@@ -367,6 +368,31 @@ def file_occurrence(
             "ref": body.reference, "amt": body.amount, "n": body.notes,
         },
     )
+
+    # Mirror into the company ledger only when an amount was paid.
+    # Filings like GSTR-1 (return only) have amount=0 — no cash move.
+    fresh = _get_occurrence(db, occ_id)
+    if fresh.get("amount") and float(fresh["amount"]) > 0:
+        ob = db.execute(
+            text("SELECT company_id, name FROM compliance_obligations WHERE id = :o"),
+            {"o": fresh["obligation_id"]},
+        ).mappings().first()
+        if ob and ob["company_id"]:
+            upsert_ledger_for_source(
+                db,
+                source_kind="compliance", source_id=occ_id,
+                company_id=str(ob["company_id"]),
+                txn_date=str(fresh.get("filed_at") and str(fresh["filed_at"])[:10]
+                             or dt.date.today()),
+                direction="out",
+                amount=float(fresh["amount"]), currency="INR",
+                description=f"{ob['name']} — {fresh['period_label']}",
+                category="compliance",
+                reference=fresh.get("reference"),
+                notes=fresh.get("notes"),
+                created_by=user.id,
+            )
+
     db.commit()
     return _get_occurrence(db, occ_id)
 
@@ -408,6 +434,8 @@ def reopen_occurrence(
         text("DELETE FROM compliance_reminders WHERE occurrence_id = :id"),
         {"id": occ_id},
     )
+    # Drop any linked ledger row — the cash move is being unwound.
+    delete_ledger_for_source(db, source_kind="compliance", source_id=occ_id)
     db.commit()
     return _get_occurrence(db, occ_id)
 
@@ -420,6 +448,7 @@ def delete_occurrence(
 ):
     _require_manage(user)
     _get_occurrence(db, occ_id)
+    delete_ledger_for_source(db, source_kind="compliance", source_id=occ_id)
     db.execute(text("DELETE FROM compliance_occurrences WHERE id = :id"), {"id": occ_id})
     db.commit()
     return None

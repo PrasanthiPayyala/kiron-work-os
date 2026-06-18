@@ -660,6 +660,10 @@ export const api = {
     return request(`/expenses/${id}`);
   },
   createExpense(payload: {
+    // Defaults to the caller. Finance / HR can pass another employee's
+    // id to file on their behalf (Karunya entering bills she collected
+    // from the team).
+    user_id?: string | null;
     company_id?: string | null;
     category: string;
     description: string;
@@ -746,6 +750,73 @@ export const api = {
   },
   markPayslipPaid(id: string, payload?: { payment_reference?: string; payment_mode?: string }): Promise<PayslipRow> {
     return request(`/salary/payslips/${id}/mark-paid`, { method: "POST", body: JSON.stringify(payload ?? {}) });
+  },
+
+  // ---------- Company ledger ----------
+  listLedger(opts?: {
+    company_id?: string;
+    direction?: "in" | "out";
+    category?: string;
+    source_kind?: string;
+    from?: string;
+    to?: string;
+    payer_user_id?: string;
+    unreimbursed_only?: boolean;
+    limit?: number;
+  }): Promise<LedgerEntryRow[]> {
+    const q = new URLSearchParams();
+    if (opts?.company_id) q.set("company_id", opts.company_id);
+    if (opts?.direction) q.set("direction", opts.direction);
+    if (opts?.category) q.set("category", opts.category);
+    if (opts?.source_kind) q.set("source_kind", opts.source_kind);
+    if (opts?.from) q.set("from", opts.from);
+    if (opts?.to) q.set("to", opts.to);
+    if (opts?.payer_user_id) q.set("payer_user_id", opts.payer_user_id);
+    if (opts?.unreimbursed_only) q.set("unreimbursed_only", "true");
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    const s = q.toString();
+    return request(`/ledger${s ? `?${s}` : ""}`);
+  },
+  getLedgerEntry(id: string): Promise<LedgerEntryRow> {
+    return request(`/ledger/${id}`);
+  },
+  createLedgerEntry(payload: Partial<LedgerEntryRow> & {
+    company_id: string;
+    txn_date: string;
+    direction: "in" | "out";
+    amount: number;
+    description: string;
+  }): Promise<LedgerEntryRow> {
+    return request("/ledger", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateLedgerEntry(id: string, patch: Partial<LedgerEntryRow>): Promise<LedgerEntryRow> {
+    return request(`/ledger/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteLedgerEntry(id: string): Promise<void> {
+    return request(`/ledger/${id}`, { method: "DELETE" });
+  },
+  reimburseLedgerEntry(id: string, payload?: {
+    bank_account_id?: string;
+    source_label?: string;
+    payment_mode?: string;
+    reference?: string;
+    notes?: string;
+  }): Promise<LedgerEntryRow> {
+    return request(`/ledger/${id}/reimburse`, { method: "POST", body: JSON.stringify(payload ?? {}) });
+  },
+  reconcileLedgerEntry(id: string): Promise<LedgerEntryRow> {
+    return request(`/ledger/${id}/reconcile`, { method: "POST" });
+  },
+  getLedgerSummary(companyId: string, month?: string): Promise<LedgerSummary> {
+    const q = new URLSearchParams({ company_id: companyId });
+    if (month) q.set("month", month);
+    return request(`/ledger/summary?${q.toString()}`);
+  },
+  getFounderDues(companyId?: string): Promise<FounderDueRow[]> {
+    const q = new URLSearchParams();
+    if (companyId) q.set("company_id", companyId);
+    const s = q.toString();
+    return request(`/ledger/founder-dues${s ? `?${s}` : ""}`);
   },
 
   // ---------- Project milestones ----------
@@ -1110,6 +1181,64 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface LedgerEntryRow {
+  id: string;
+  company_id: string;
+  txn_date: string;
+  direction: "in" | "out";
+  amount: number;
+  currency: string;
+  fx_rate: number | null;
+  amount_inr: number;
+  category: string;
+  sub_category: string | null;
+  payment_mode: string | null;
+  bank_account_id: string | null;
+  payer_user_id: string | null;
+  source_label: string | null;
+  payee_vendor_id: string | null;
+  payee_user_id: string | null;
+  payee_contact_id: string | null;
+  payee_text: string | null;
+  payee_identifier: string | null;
+  description: string;
+  reference: string | null;
+  gst_amount: number | null;
+  hsn_code: string | null;
+  tds_amount: number | null;
+  tds_section: string | null;
+  reimbursable: boolean;
+  reimbursed_at: string | null;
+  reimbursed_by: string | null;
+  reconciled_at: string | null;
+  settles_entry_id: string | null;
+  source_kind: "manual" | "vendor_payment" | "expense_claim" | "payslip" | "compliance" | "asset";
+  source_id: string | null;
+  project_id: string | null;
+  notes: string | null;
+  created_at: string;
+  created_by: string | null;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export interface LedgerSummary {
+  company_id: string;
+  month: string;
+  period_start: string;
+  period_end: string;
+  gross_in: number;
+  gross_out: number;
+  net: number;
+  by_category: { category: string; out_inr: number; in_inr: number; rows: number }[];
+}
+
+export interface FounderDueRow {
+  payer_user_id: string;
+  owed_inr: number;
+  rows: number;
 }
 
 export interface SalaryStructureRow {

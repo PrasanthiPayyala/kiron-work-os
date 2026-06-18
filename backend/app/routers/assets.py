@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from ..authz import has_any_role
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..ledger_link import delete_ledger_for_source, upsert_ledger_for_source
 from ..util import row
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -137,6 +138,22 @@ def create_asset(
             "cond": body.condition, "n": body.notes, "u": user.id,
         },
     )
+
+    # Mirror into the ledger when a real cost + a buying entity are set.
+    if body.purchase_cost and float(body.purchase_cost) > 0 and body.company_id:
+        upsert_ledger_for_source(
+            db,
+            source_kind="asset", source_id=new_id,
+            company_id=body.company_id,
+            txn_date=body.purchase_date or str(dt.date.today()),
+            direction="out",
+            amount=float(body.purchase_cost), currency="INR",
+            description=f"Asset: {body.brand or ''} {body.model or ''} ({body.category})".strip(),
+            category="capex",
+            payee_text=body.supplier,
+            created_by=user.id,
+        )
+
     db.commit()
     return _get(db, new_id)
 
@@ -202,6 +219,26 @@ def update_asset(
         set_parts.append(f"{k} = :{k}")
         params[k] = v
     db.execute(text(f"UPDATE assets SET {', '.join(set_parts)} WHERE id = :id"), params)
+
+    # If purchase metadata changed, keep the ledger row in sync. The
+    # upsert helper handles both "row doesn't exist yet" (asset was
+    # created before the ledger landed) and "amount changed".
+    if any(k in fields for k in ("purchase_cost", "purchase_date", "company_id", "supplier", "brand", "model", "category")):
+        fresh = _get(db, asset_id)
+        if fresh.get("purchase_cost") and float(fresh["purchase_cost"]) > 0 and fresh.get("company_id"):
+            upsert_ledger_for_source(
+                db,
+                source_kind="asset", source_id=asset_id,
+                company_id=str(fresh["company_id"]),
+                txn_date=fresh.get("purchase_date") and str(fresh["purchase_date"]) or str(dt.date.today()),
+                direction="out",
+                amount=float(fresh["purchase_cost"]), currency="INR",
+                description=f"Asset: {fresh.get('brand') or ''} {fresh.get('model') or ''} ({fresh.get('category')})".strip(),
+                category="capex",
+                payee_text=fresh.get("supplier"),
+                created_by=user.id,
+            )
+
     db.commit()
     return _get(db, asset_id)
 
@@ -215,6 +252,7 @@ def delete_asset(
     if not has_any_role(user.roles, {"super_admin", "founder"}):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only super_admin / founder can delete an asset")
     _get(db, asset_id)
+    delete_ledger_for_source(db, source_kind="asset", source_id=asset_id)
     db.execute(text("DELETE FROM assets WHERE id = :id"), {"id": asset_id})
     db.commit()
     return None

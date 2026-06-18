@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from ..authz import has_any_role
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..ledger_link import delete_ledger_for_source, upsert_ledger_for_source
 from ..util import row
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
@@ -374,6 +375,29 @@ def create_payment(
             "pb": user.id, "cb": user.id,
         },
     )
+
+    # Mirror into the company ledger as an OUT entry — keeps the
+    # founder office's cash book up to date without a manual second
+    # entry. The vendor's company_id is the entity that paid.
+    vendor = db.execute(
+        text("SELECT company_id FROM vendors WHERE id = :v"), {"v": vendor_id},
+    ).mappings().first()
+    if vendor and vendor["company_id"]:
+        upsert_ledger_for_source(
+            db,
+            source_kind="vendor_payment", source_id=new_id,
+            company_id=str(vendor["company_id"]),
+            txn_date=body.paid_at,
+            direction="out",
+            amount=body.amount, currency=body.currency,
+            description=f"Vendor payment",
+            category="vendor",
+            payment_mode=body.mode,
+            payee_vendor_id=vendor_id,
+            reference=body.reference, notes=body.notes,
+            created_by=user.id,
+        )
+
     db.commit()
     r = db.execute(text("SELECT * FROM vendor_payments WHERE id = :id"), {"id": new_id}).mappings().first()
     return row(r)
@@ -391,6 +415,8 @@ def delete_payment(
     ).first()
     if not found:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment not found")
+    # Drop the linked ledger row first so the cash book stays consistent.
+    delete_ledger_for_source(db, source_kind="vendor_payment", source_id=payment_id)
     db.execute(text("DELETE FROM vendor_payments WHERE id = :id"), {"id": payment_id})
     db.commit()
     return None

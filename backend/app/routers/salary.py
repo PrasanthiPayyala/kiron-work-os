@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 from ..authz import has_any_role
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..ledger_link import upsert_ledger_for_source
 from ..util import row
 
 router = APIRouter(prefix="/salary", tags=["salary"])
@@ -460,6 +461,37 @@ def mark_run_paid(
         ),
         {"id": rid, "u": user.id, "ref": body.payment_reference, "mode": body.payment_mode},
     )
+
+    # Mirror each newly-paid payslip into the company ledger as an
+    # individual OUT entry. We pull every paid payslip in this run
+    # (not just newly-flipped ones) so re-running mark-paid keeps the
+    # ledger consistent — the helper's ON CONFLICT branch is idempotent.
+    paid_rows = db.execute(
+        text(
+            "SELECT id, user_id, net_pay, payment_mode, payment_reference, period "
+            "FROM payslips WHERE payroll_run_id = :id AND status = 'paid'"
+        ),
+        {"id": rid},
+    ).mappings().all()
+    for p in paid_rows:
+        if not p["net_pay"] or float(p["net_pay"]) <= 0:
+            continue
+        upsert_ledger_for_source(
+            db,
+            source_kind="payslip", source_id=str(p["id"]),
+            company_id=str(run["company_id"]),
+            txn_date=str(dt.datetime.now(dt.timezone.utc).date()),
+            direction="out",
+            amount=float(p["net_pay"]),
+            currency="INR",
+            description=f"Salary {p['period']}",
+            category="salary",
+            payment_mode=p.get("payment_mode"),
+            payee_user_id=str(p["user_id"]),
+            reference=p.get("payment_reference"),
+            created_by=user.id,
+        )
+
     db.commit()
     return _get_run(db, rid)
 
@@ -570,5 +602,26 @@ def mark_payslip_paid(
         ),
         {"id": pid, "u": user.id, "ref": body.payment_reference, "mode": body.payment_mode},
     )
+
+    # Mirror into the ledger. The payroll run carries the company_id.
+    run = _get_run(db, str(ps["payroll_run_id"]))
+    fresh = _get_payslip(db, pid)
+    if fresh["net_pay"] and float(fresh["net_pay"]) > 0:
+        upsert_ledger_for_source(
+            db,
+            source_kind="payslip", source_id=pid,
+            company_id=str(run["company_id"]),
+            txn_date=str(dt.datetime.now(dt.timezone.utc).date()),
+            direction="out",
+            amount=float(fresh["net_pay"]),
+            currency="INR",
+            description=f"Salary {fresh['period']}",
+            category="salary",
+            payment_mode=fresh.get("payment_mode"),
+            payee_user_id=str(fresh["user_id"]),
+            reference=fresh.get("payment_reference"),
+            created_by=user.id,
+        )
+
     db.commit()
     return _get_payslip(db, pid)

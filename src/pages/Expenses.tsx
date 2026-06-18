@@ -219,8 +219,16 @@ function List({
 function SubmitDialog({
   onClose, onCreated,
 }: { onClose: () => void; onCreated: () => void }) {
-  const { user } = useAuth();
-  const { companies } = useDataStore();
+  const { user, role } = useAuth();
+  const { companies, users } = useDataStore();
+  const isFinance = role ? FINANCE_ROLES.has(role) : false;
+  // "On behalf of" picker — only finance can change this; everyone
+  // else has it pinned to themselves implicitly.
+  const [claimantId, setClaimantId] = useState(user?.id ?? "");
+  const claimant = useMemo(
+    () => users.find((u) => u.id === claimantId),
+    [users, claimantId],
+  );
   const [companyId, setCompanyId] = useState(user?.homeCompanyId ?? companies[0]?.id ?? "");
   const [category, setCategory] = useState("travel");
   const [description, setDescription] = useState("");
@@ -233,6 +241,12 @@ function SubmitDialog({
   // detail panel to upload).
   const [createdId, setCreatedId] = useState<string | null>(null);
 
+  // Auto-default the billing entity to whoever the claim is for —
+  // matters when HR files for someone in a different group company.
+  useEffect(() => {
+    if (claimant?.homeCompanyId) setCompanyId(claimant.homeCompanyId);
+  }, [claimant?.homeCompanyId]);
+
   const submit = async () => {
     if (!description.trim()) return toast.error("Description is required");
     if (!amount || Number(amount) <= 0) return toast.error("Amount must be > 0");
@@ -240,6 +254,9 @@ function SubmitDialog({
     setBusy(true);
     try {
       const created = await api.createExpense({
+        // Only send user_id when filing on behalf — keeps the API
+        // call simple for employees doing their own.
+        user_id: isFinance && claimantId !== user?.id ? claimantId : null,
         company_id: companyId || null,
         category,
         description: description.trim(),
@@ -248,7 +265,11 @@ function SubmitDialog({
         notes: notes.trim() || null,
       });
       setCreatedId(created.id);
-      toast.success("Claim submitted — attach bills below");
+      toast.success(
+        claimantId === user?.id
+          ? "Claim submitted — attach bills below"
+          : `Claim filed for ${claimant?.name ?? "employee"} — attach bills below`,
+      );
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't submit");
     } finally {
@@ -276,6 +297,28 @@ function SubmitDialog({
         ) : (
           <>
             <div className="space-y-3">
+              {isFinance && (
+                <div>
+                  <Label className="text-xs">Claimant (who's being reimbursed)</Label>
+                  <Select value={claimantId} onValueChange={setClaimantId}>
+                    <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {user && (
+                        <SelectItem value={user.id}>{user.name} (me)</SelectItem>
+                      )}
+                      {users
+                        .filter((u) => u.isActive && u.id !== user?.id)
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((u) => (
+                          <SelectItem key={u.id} value={u.id}>{u.name} · {u.designation}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Default is yourself. Pick a colleague to enter a reimbursement on their behalf.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Date *</Label>
