@@ -8,6 +8,15 @@ Python so every endpoint enforces the same row access the DB used to.
 GLOBAL_ROLES = {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"}
 # HR-style data (attendance, leave) added hr_admin to the elevated set.
 HR_ROLES = {"super_admin", "founder", "hr_admin"}
+# Who sees the company-wide attendance roster in /bootstrap. Wider than
+# HR_ROLES on purpose — founder's office (coordinators + support) need
+# the same view for follow-up, even though they don't approve leave.
+# Keep separate from HR_ROLES so the leave-approval rules stay tight.
+ATTENDANCE_VIEW_ROLES = {
+    "super_admin", "founder",
+    "founder_office_coordinator", "founder_office_support",
+    "hr_admin",
+}
 # Roles that always see the Attendance Follow-up page (who's missed
 # today's check-in). Other users (e.g. TA partners on the employee role)
 # can be granted access individually via the

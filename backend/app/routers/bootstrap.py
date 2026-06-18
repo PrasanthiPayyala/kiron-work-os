@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..authz import GLOBAL_ROLES, HR_ROLES, can_view_task, has_any_role
+from ..authz import (
+    ATTENDANCE_VIEW_ROLES, GLOBAL_ROLES, HR_ROLES, can_view_task, has_any_role,
+)
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
@@ -85,9 +87,14 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         approvals = [a for a in all_approvals if uid in {a.get("requested_by"), a.get("approver_id")}]
 
     # --- attendance / leave (self, managed reports, or HR/elevated) ---
+    # Attendance has a wider view set than leave on purpose: founder's
+    # office needs to see the company-wide check-in roster to follow up,
+    # even though they don't approve leave. Leave stays gated to HR
+    # (super_admin / founder / hr_admin) + manager-of-record.
+    elevated_attendance = has_any_role(roles, ATTENDANCE_VIEW_ROLES)
     elevated_hr = has_any_role(roles, HR_ROLES)
     all_attendance = _rows(db, "SELECT * FROM attendance_logs")
-    attendance = all_attendance if elevated_hr else [
+    attendance = all_attendance if elevated_attendance else [
         a for a in all_attendance if a.get("user_id") == uid or a.get("user_id") in managed_user_ids
     ]
     all_leaves = _rows(db, "SELECT * FROM leave_requests")

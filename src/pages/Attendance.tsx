@@ -289,37 +289,25 @@ export default function Attendance() {
     : { workDays: [1,2,3,4,5,6], workStart: "09:30", workEnd: "18:30", saturdayWeeksWorking: null };
 
   // ---- Team attendance widget visibility ----
-  // Bootstrap only returns *other people's* attendance to HR_ROLES
-  // (super_admin / founder / hr_admin), founder_office_coordinator
-  // (GLOBAL_ROLES override), and to managers for their direct reports.
-  // Everyone else only sees their own row — so the old widget that
-  // looped over the first 8 users defaulted every colleague to
-  // "absent", which read as a real-time bug. Two-tier fix:
-  //   1. Hide the section unless the viewer has team visibility.
-  //   2. For viewers without full visibility (manager + TA grantees),
-  //      list only users the bootstrap actually returned rows for —
-  //      i.e. their direct reports — so "absent" means "didn't check
-  //      in", not "I have no idea".
-  const fullTeamVisibility = !!user && [
-    "super_admin", "founder", "hr_admin", "founder_office_coordinator",
-  ].includes(user.role);
+  // Per the user's call: only super_admin (Kiran), founder (Prashanti),
+  // founder's office (coordinators + support), and HR see this widget.
+  // Plus the per-user TA grantees (Lalitha / Jakeer / Varsha) who hold
+  // attendanceFollowupAccess. Managers and everyone else don't get the
+  // widget here — they have the dedicated Team Attendance page if
+  // their role allows it.
+  //
+  // The backend (ATTENDANCE_VIEW_ROLES in app/authz.py) gives every
+  // role in this list the full attendance roster, so we don't need
+  // the "show only people we have rows for" fallback any more.
   const canSeeTeamWidget = !!user && (
-    fullTeamVisibility
-    || user.role === "manager"
+    ["super_admin", "founder", "founder_office_coordinator",
+     "founder_office_support", "hr_admin"].includes(user.role)
     || user.attendanceFollowupAccess === true
   );
   const teamWidgetUsers = useMemo(() => {
     if (!user || !canSeeTeamWidget) return [];
-    if (fullTeamVisibility) {
-      return users.filter((u) => u.isActive && u.id !== user.id).slice(0, 8);
-    }
-    // Manager / per-user TA grant: show only the people the backend
-    // actually delivered attendance rows for.
-    const idsVisible = new Set(attendance.map((a) => a.userId));
-    return users
-      .filter((u) => u.isActive && u.id !== user.id && idsVisible.has(u.id))
-      .slice(0, 8);
-  }, [user, canSeeTeamWidget, fullTeamVisibility, attendance, users]);
+    return users.filter((u) => u.isActive && u.id !== user.id).slice(0, 8);
+  }, [user, canSeeTeamWidget, users]);
 
   // Holidays that apply to this user — their company-specific rows + the
   // global (company_id NULL) ones. Indexed by date so the grid lookup is O(1).
