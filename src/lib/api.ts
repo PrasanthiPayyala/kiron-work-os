@@ -307,6 +307,61 @@ export const api = {
     return request(`/teams/${teamId}/members/${userId}`, { method: "DELETE" });
   },
 
+  // ---------- Credentials vault ----------
+  listVault(): Promise<VaultRow[]> {
+    return request("/vault");
+  },
+  getVault(id: string): Promise<VaultRow> {
+    return request(`/vault/${id}`);
+  },
+  createVault(payload: {
+    label: string;
+    category: string;
+    identifier?: string | null;
+    url?: string | null;
+    notes?: string | null;
+    secret: string;
+    rotate_every_days?: number | null;
+  }): Promise<VaultRow> {
+    return request("/vault", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateVault(id: string, patch: Partial<{
+    label: string;
+    category: string;
+    identifier: string | null;
+    url: string | null;
+    notes: string | null;
+    secret: string;
+    rotate_every_days: number | null;
+    is_active: boolean;
+  }>): Promise<VaultRow> {
+    return request(`/vault/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteVault(id: string): Promise<void> {
+    return request(`/vault/${id}`, { method: "DELETE" });
+  },
+  revealVault(id: string): Promise<{ secret: string }> {
+    return request(`/vault/${id}/reveal`, { method: "POST" });
+  },
+  logVaultCopy(id: string): Promise<void> {
+    return request(`/vault/${id}/copy`, { method: "POST" });
+  },
+  listVaultAccess(id: string): Promise<VaultAccessRow[]> {
+    return request(`/vault/${id}/access`);
+  },
+  grantVaultAccess(id: string, kind: "user" | "role", principalId: string): Promise<void> {
+    return request(`/vault/${id}/access`, {
+      method: "POST",
+      body: JSON.stringify({ kind, principal_id: principalId }),
+    });
+  },
+  revokeVaultAccess(id: string, kind: "user" | "role", principalId: string): Promise<void> {
+    return request(`/vault/${id}/access/${kind}/${principalId}`, { method: "DELETE" });
+  },
+  getVaultAudit(id: string): Promise<VaultAuditRow[]> {
+    return request(`/vault/${id}/audit`);
+  },
+
   // ---------- Projects (online-only; managers don't typically create projects offline) ----------
   createProject(payload: {
     title: string;
@@ -679,6 +734,37 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface VaultRow {
+  id: string;
+  label: string;
+  category: string;
+  identifier: string | null;
+  url: string | null;
+  notes: string | null;
+  rotate_every_days: number | null;
+  last_rotated_at: string | null;
+  is_active: boolean;
+  created_at: string;
+  created_by: string | null;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export interface VaultAccessRow {
+  principal_kind: "user" | "role";
+  principal_id: string;
+  granted_at: string;
+  granted_by: string | null;
+}
+
+export interface VaultAuditRow {
+  id: string;
+  actor_user_id: string | null;
+  action: string;
+  meta: unknown;
+  at: string;
 }
 
 export interface TeamRow {

@@ -34,6 +34,8 @@ import Notifications from "./pages/Notifications";
 import Contacts from "./pages/Contacts";
 import Teams from "./pages/Teams";
 import TeamDetail from "./pages/TeamDetail";
+import Vault from "./pages/Vault";
+import VaultDetail from "./pages/VaultDetail";
 import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
@@ -100,6 +102,22 @@ const App = () => (
                 />
                 <Route path="/teams" element={<Teams />} />
                 <Route path="/teams/:id" element={<TeamDetail />} />
+                <Route
+                  path="/vault"
+                  element={
+                    <ProtectedRoute require="vault">
+                      <Vault />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/vault/:id"
+                  element={
+                    <ProtectedRoute require="vault">
+                      <VaultDetail />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="/people" element={<People />} />
                 <Route
                   path="/contacts"

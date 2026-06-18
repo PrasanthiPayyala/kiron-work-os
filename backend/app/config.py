@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     sla_check_interval_min: int = 15
     sla_warn_window_hours: int = 4
 
+    # Credentials vault master key — base64(32 bytes). Stored only in
+    # /etc/kiron/backend.env. If empty, vault encrypt/decrypt errors out
+    # rather than persisting plaintext or a weak key. Generate via:
+    #   python -c "import base64,os; print(base64.b64encode(os.urandom(32)).decode())"
+    vault_master_key: str = ""
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

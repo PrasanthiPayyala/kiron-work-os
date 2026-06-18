@@ -28,6 +28,7 @@ from .routers import (
     tasks,
     teams,
     users,
+    vault,
     ws,
 )
 from .scheduler import start_scheduler, stop_scheduler
@@ -72,6 +73,7 @@ app.include_router(users.router)
 app.include_router(holidays.router)
 app.include_router(calls.router)
 app.include_router(teams.router)
+app.include_router(vault.router)
 app.include_router(ws.router)
 
 
