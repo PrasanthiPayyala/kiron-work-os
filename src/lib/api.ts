@@ -405,6 +405,40 @@ export const api = {
     return request(`/projects/${projectId}/recompute-progress`, { method: "POST" });
   },
 
+  // ---------- Leave policies + balances ----------
+  listLeavePolicies(): Promise<LeavePolicyRow[]> {
+    return request("/leave/policies");
+  },
+  upsertLeavePolicy(companyId: string, leaveType: string, body: {
+    annual_quota: number;
+    carry_forward_max: number;
+    accrual_kind: "upfront" | "monthly";
+    is_paid: boolean;
+    notes?: string | null;
+  }): Promise<LeavePolicyRow> {
+    return request(`/leave/policies/${companyId}/${leaveType}`, {
+      method: "PUT", body: JSON.stringify(body),
+    });
+  },
+  deleteLeavePolicy(companyId: string, leaveType: string): Promise<void> {
+    return request(`/leave/policies/${companyId}/${leaveType}`, { method: "DELETE" });
+  },
+  listLeaveBalances(opts?: { user_id?: string; year?: number }): Promise<LeaveBalanceRow[]> {
+    const q = new URLSearchParams();
+    if (opts?.user_id) q.set("user_id", opts.user_id);
+    if (opts?.year) q.set("year", String(opts.year));
+    const s = q.toString();
+    return request(`/leave/balances${s ? `?${s}` : ""}`);
+  },
+  adjustLeaveBalance(balanceId: string, adjustment: number): Promise<LeaveBalanceRow> {
+    return request(`/leave/balances/${balanceId}`, {
+      method: "PATCH", body: JSON.stringify({ adjustment }),
+    });
+  },
+  initializeLeaveBalances(): Promise<{ year: number; created: number }> {
+    return request("/leave/balances/initialize", { method: "POST" });
+  },
+
   // ---------- Project milestones ----------
   listMilestones(projectId: string): Promise<MilestoneRow[]> {
     return request(`/projects/${projectId}/milestones`);
@@ -767,6 +801,33 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface LeavePolicyRow {
+  id: string;
+  company_id: string;
+  leave_type: string;
+  annual_quota: number;
+  carry_forward_max: number;
+  accrual_kind: "upfront" | "monthly";
+  is_paid: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LeaveBalanceRow {
+  id: string;
+  user_id: string;
+  year: number;
+  leave_type: string;
+  opening: number;
+  accrued: number;
+  used: number;
+  adjustment: number;
+  available: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface MilestoneRow {

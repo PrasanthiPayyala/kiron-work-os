@@ -23,6 +23,7 @@ from .routers import (
     files,
     holidays,
     leave,
+    leave_balances,
     notifications,
     projects,
     tasks,
@@ -60,6 +61,7 @@ app.include_router(bootstrap.router)
 app.include_router(tasks.router)
 app.include_router(attendance.router)
 app.include_router(leave.router)
+app.include_router(leave_balances.router)
 app.include_router(approvals.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)

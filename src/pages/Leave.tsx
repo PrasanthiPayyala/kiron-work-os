@@ -3,11 +3,15 @@ import { StatCard } from "@/components/StatCard";
 import { LeaveStatusBadge } from "@/components/StatusBadges";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useDataStore } from "@/lib/dataStore";
-import { api, ApiError } from "@/lib/api";
-import { Plane, Plus } from "lucide-react";
+import { api, ApiError, type LeaveBalanceRow, type LeavePolicyRow } from "@/lib/api";
+import { Plane, Plus, RefreshCw, Settings as SettingsIcon, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/lib/auth";
@@ -18,9 +22,19 @@ const LEAVE_TYPE_DB: Record<string, string> = {
   wfh: "work_from_home", comp_off: "comp_off", optional_holiday: "optional_holiday",
 };
 
+const BALANCED_TYPES = [
+  "casual_leave", "sick_leave", "earned_leave",
+  "maternity_leave", "paternity_leave", "comp_off",
+] as const;
+type BalancedType = typeof BALANCED_TYPES[number];
+const LEAVE_TYPE_LABEL: Record<string, string> = {
+  casual_leave: "Casual", sick_leave: "Sick", earned_leave: "Earned",
+  maternity_leave: "Maternity", paternity_leave: "Paternity", comp_off: "Comp off",
+};
+
 export default function Leave() {
   const { user } = useAuth();
-  const { leaveRequests, getUser, refresh } = useDataStore();
+  const { leaveRequests, companies, getUser, refresh } = useDataStore();
   const [type, setType] = useState("casual");
   const [days, setDays] = useState(1);
   const [from, setFrom] = useState("");
@@ -29,6 +43,47 @@ export default function Leave() {
 
   const myLeaves = leaveRequests.filter((l) => l.userId === user?.id);
   const isHR = user?.role === "hr_admin" || user?.role === "super_admin";
+
+  // Balances ------------------------------------------------------------
+  const [balances, setBalances] = useState<LeaveBalanceRow[]>([]);
+  const [initializing, setInitializing] = useState(false);
+  const loadBalances = async () => {
+    try {
+      setBalances(await api.listLeaveBalances());
+    } catch {
+      // Older deploys without the migration return 404; degrade gracefully.
+      setBalances([]);
+    }
+  };
+  useEffect(() => { void loadBalances(); }, [user?.id]);
+  const balanceByType = useMemo(() => {
+    const m = new Map<string, LeaveBalanceRow>();
+    balances.forEach((b) => m.set(b.leave_type, b));
+    return m;
+  }, [balances]);
+  const initializeBalances = async () => {
+    setInitializing(true);
+    try {
+      const r = await api.initializeLeaveBalances();
+      toast.success(`Initialized ${r.created} balance row${r.created === 1 ? "" : "s"} for ${r.year}`);
+      void loadBalances();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't initialize");
+    } finally {
+      setInitializing(false);
+    }
+  };
+
+  // Friendlier labels for stat cards. Order mirrors the typical
+  // priority HR explains them: casual → sick → earned → comp_off.
+  const BALANCE_DISPLAY: { type: string; label: string; accent: "primary" | "info" | "accent" | "warning" }[] = [
+    { type: "casual_leave",    label: "Casual",       accent: "primary" },
+    { type: "sick_leave",      label: "Sick",         accent: "info" },
+    { type: "earned_leave",    label: "Earned",       accent: "accent" },
+    { type: "comp_off",        label: "Comp off",     accent: "warning" },
+  ];
+
+  const [policyOpen, setPolicyOpen] = useState(false);
 
   const submit = async () => {
     if (!user || !from || !to) { toast.error("From and To dates required"); return; }
@@ -58,14 +113,48 @@ export default function Leave() {
 
   return (
     <div>
-      <PageHeader title="Leave" description="Apply, track, and approve time off." icon={<Plane className="h-5 w-5" />} actions={<Button size="sm" onClick={submit}><Plus className="h-4 w-4 mr-1.5" /> Apply leave</Button>} />
+      <PageHeader
+        title="Leave"
+        description="Apply, track, and approve time off."
+        icon={<Plane className="h-5 w-5" />}
+        actions={
+          <div className="flex items-center gap-2">
+            {isHR && (
+              <Button size="sm" variant="outline" onClick={() => setPolicyOpen(true)}>
+                <SettingsIcon className="mr-1.5 h-4 w-4" /> Manage policies
+              </Button>
+            )}
+            <Button size="sm" onClick={submit}><Plus className="h-4 w-4 mr-1.5" /> Apply leave</Button>
+          </div>
+        }
+      />
       <div className="space-y-6 p-6">
         <div className="grid gap-3 md:grid-cols-4">
-          <StatCard label="Casual remaining" value={8} accent="primary" />
-          <StatCard label="Sick remaining" value={5} accent="info" />
-          <StatCard label="Comp off" value={2} accent="accent" />
-          <StatCard label="Pending requests" value={leaveRequests.filter((l) => l.status === "pending").length} accent="warning" />
+          {BALANCE_DISPLAY.map((b) => {
+            const row = balanceByType.get(b.type);
+            const value = row ? Math.max(0, row.available) : 0;
+            return (
+              <StatCard
+                key={b.type}
+                label={`${b.label} remaining`}
+                value={Number.isInteger(value) ? value : value.toFixed(1)}
+                accent={b.accent}
+              />
+            );
+          })}
         </div>
+        {balances.length === 0 && isHR && (
+          <div className="flex items-center justify-between rounded-xl border border-dashed border-border bg-surface p-4">
+            <div>
+              <p className="text-sm font-medium">No balances yet</p>
+              <p className="text-xs text-muted-foreground">Click <b>Initialize balances</b> to seed every active employee's balance from the company's leave policies.</p>
+            </div>
+            <Button size="sm" onClick={initializeBalances} disabled={initializing}>
+              <RefreshCw className={`mr-1.5 h-4 w-4 ${initializing ? "animate-spin" : ""}`} />
+              Initialize balances
+            </Button>
+          </div>
+        )}
 
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-border bg-surface p-5 shadow-card">
@@ -137,6 +226,157 @@ export default function Leave() {
           </div>
         )}
       </div>
+
+      {isHR && (
+        <LeavePolicyDialog
+          open={policyOpen}
+          onClose={() => setPolicyOpen(false)}
+          companies={companies.filter((c) => c.isActive).map((c) => ({ id: c.id, name: c.shortName || c.name }))}
+        />
+      )}
     </div>
+  );
+}
+
+// ---------- Leave policy editor (HR / super_admin only) ----------
+
+function LeavePolicyDialog({
+  open, onClose, companies,
+}: {
+  open: boolean;
+  onClose: () => void;
+  companies: { id: string; name: string }[];
+}) {
+  const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
+  const [policies, setPolicies] = useState<LeavePolicyRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setPolicies(await api.listLeavePolicies());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      void load();
+      if (!companyId && companies.length) setCompanyId(companies[0].id);
+    }
+  }, [open]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rowsForCompany = useMemo(
+    () => Object.fromEntries(
+      policies.filter((p) => p.company_id === companyId).map((p) => [p.leave_type, p])
+    ) as Record<string, LeavePolicyRow>,
+    [policies, companyId],
+  );
+
+  const upsert = async (
+    leaveType: string,
+    field: "annual_quota" | "carry_forward_max" | "accrual_kind" | "is_paid",
+    value: number | string | boolean,
+  ) => {
+    setSaving(true);
+    try {
+      const existing = rowsForCompany[leaveType];
+      await api.upsertLeavePolicy(companyId, leaveType, {
+        annual_quota: field === "annual_quota" ? Number(value) : Number(existing?.annual_quota ?? 0),
+        carry_forward_max: field === "carry_forward_max" ? Number(value) : Number(existing?.carry_forward_max ?? 0),
+        accrual_kind: (field === "accrual_kind" ? String(value) : existing?.accrual_kind ?? "upfront") as "upfront" | "monthly",
+        is_paid: field === "is_paid" ? Boolean(value) : (existing?.is_paid ?? true),
+        notes: existing?.notes ?? null,
+      });
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && !saving && onClose()}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><SettingsIcon className="h-4 w-4" /> Leave policies</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Label className="text-xs">Company</Label>
+            <Select value={companyId} onValueChange={setCompanyId}>
+              <SelectTrigger className="h-9 max-w-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          </div>
+          <div className="overflow-hidden rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-muted text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Type</th>
+                  <th className="px-3 py-2 text-left font-medium">Annual quota</th>
+                  <th className="px-3 py-2 text-left font-medium">Carry-forward max</th>
+                  <th className="px-3 py-2 text-left font-medium">Accrual</th>
+                </tr>
+              </thead>
+              <tbody>
+                {BALANCED_TYPES.map((t) => {
+                  const row = rowsForCompany[t];
+                  return (
+                    <tr key={t} className="border-t border-border">
+                      <td className="px-3 py-2 font-medium">{LEAVE_TYPE_LABEL[t]}</td>
+                      <td className="px-3 py-2">
+                        <Input
+                          type="number" step={0.5} min={0} max={365}
+                          defaultValue={row?.annual_quota ?? 0}
+                          onBlur={(e) => {
+                            const v = Number(e.target.value || 0);
+                            if (v !== Number(row?.annual_quota ?? 0)) void upsert(t, "annual_quota", v);
+                          }}
+                          className="h-8 w-24"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Input
+                          type="number" step={0.5} min={0} max={365}
+                          defaultValue={row?.carry_forward_max ?? 0}
+                          onBlur={(e) => {
+                            const v = Number(e.target.value || 0);
+                            if (v !== Number(row?.carry_forward_max ?? 0)) void upsert(t, "carry_forward_max", v);
+                          }}
+                          className="h-8 w-24"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Select
+                          value={row?.accrual_kind ?? "upfront"}
+                          onValueChange={(v) => void upsert(t, "accrual_kind", v)}
+                        >
+                          <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="upfront">Upfront (Jan 1)</SelectItem>
+                            <SelectItem value="monthly">Monthly accrual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Changes save on blur. Run <b>Initialize balances</b> on the Leave page after editing
+            to apply quotas to existing employees.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -10,10 +10,16 @@ from ..authz import can_update_leave
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
+from .leave_balances import apply_balance_delta
 
 router = APIRouter(prefix="/leave", tags=["leave"])
 
 DECISION_STATUSES = {"approved", "rejected"}
+# Statuses that "consume" the balance — used to decide whether to
+# increment leave_balances.used on transition. ``approved`` is the
+# only one today; if we add a paid 'on_hold' or similar later,
+# extend this set.
+APPROVED_STATES = {"approved"}
 
 
 class LeaveCreate(BaseModel):
@@ -69,5 +75,29 @@ def update(leave_id: str, body: LeaveUpdate, user: CurrentUser = Depends(get_cur
         params["approver"] = user.id
         params["decided"] = dt.datetime.now(dt.timezone.utc).isoformat()
     db.execute(text(f"UPDATE leave_requests SET {', '.join(sets)} WHERE id = :id"), params)
+
+    # Balance accounting: when status transitions cross the approved
+    # boundary, push ±days into leave_balances.used for the requestor.
+    was_approved = leave.get("status") in APPROVED_STATES
+    now_approved = body.status in APPROVED_STATES
+    if was_approved != now_approved:
+        delta = float(leave.get("days") or 0)
+        if not now_approved:
+            delta = -delta  # reverting an approval — give the days back
+        # Bucket the delta into the year of the leave start (handles
+        # year-straddling leaves by keeping the deduction on the calendar
+        # year the leave started — most leave policies operate that way).
+        try:
+            sd = leave.get("start_date")
+            year = int(str(sd)[:4]) if sd else dt.date.today().year
+        except (TypeError, ValueError):
+            year = dt.date.today().year
+        apply_balance_delta(
+            db,
+            user_id=str(leave.get("user_id")),
+            leave_type=str(leave.get("leave_type")),
+            days=delta,
+            year=year,
+        )
     db.commit()
     return _get(db, leave_id)
