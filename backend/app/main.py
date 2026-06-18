@@ -11,6 +11,7 @@ logging.getLogger("kiron").setLevel(logging.INFO)
 from .config import settings
 from .routers import (
     approvals,
+    assets,
     attendance,
     auth,
     bank_accounts,
@@ -73,6 +74,7 @@ app.include_router(companies.router)
 app.include_router(bank_accounts.router)
 app.include_router(contacts.router)
 app.include_router(documents.router)
+app.include_router(assets.router)
 app.include_router(users.router)
 app.include_router(holidays.router)
 app.include_router(calls.router)

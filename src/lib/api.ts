@@ -487,6 +487,58 @@ export const api = {
     return request(`/documents/${id}/access/${kind}/${principalId}`, { method: "DELETE" });
   },
 
+  // ---------- Assets ----------
+  listAssets(): Promise<AssetRow[]> {
+    return request("/assets");
+  },
+  getAsset(id: string): Promise<AssetRow> {
+    return request(`/assets/${id}`);
+  },
+  createAsset(payload: {
+    asset_tag?: string | null;
+    category: string;
+    brand?: string | null;
+    model?: string | null;
+    serial_number?: string | null;
+    company_id?: string | null;
+    purchase_date?: string | null;
+    purchase_cost?: number | null;
+    supplier?: string | null;
+    condition?: "new" | "good" | "fair" | "poor";
+    notes?: string | null;
+  }): Promise<AssetRow> {
+    return request("/assets", { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateAsset(id: string, patch: Partial<{
+    asset_tag: string | null;
+    category: string;
+    brand: string | null;
+    model: string | null;
+    serial_number: string | null;
+    company_id: string | null;
+    purchase_date: string | null;
+    purchase_cost: number | null;
+    supplier: string | null;
+    status: "in_stock" | "issued" | "in_repair" | "retired" | "lost";
+    condition: "new" | "good" | "fair" | "poor";
+    notes: string | null;
+    is_active: boolean;
+  }>): Promise<AssetRow> {
+    return request(`/assets/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+  deleteAsset(id: string): Promise<void> {
+    return request(`/assets/${id}`, { method: "DELETE" });
+  },
+  issueAsset(id: string, payload: { user_id: string; issue_note?: string; condition_at_issue?: string }): Promise<AssetRow> {
+    return request(`/assets/${id}/issue`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  returnAsset(id: string, payload: { return_note?: string; condition_at_return?: string }): Promise<AssetRow> {
+    return request(`/assets/${id}/return`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  listAssetHistory(id: string): Promise<AssetAssignmentRow[]> {
+    return request(`/assets/${id}/history`);
+  },
+
   // ---------- Project milestones ----------
   listMilestones(projectId: string): Promise<MilestoneRow[]> {
     return request(`/projects/${projectId}/milestones`);
@@ -849,6 +901,42 @@ export interface ConversationCreated {
   title: string | null;
   member_ids: string[];
   reused?: boolean;
+}
+
+export interface AssetRow {
+  id: string;
+  asset_tag: string | null;
+  category: string;
+  brand: string | null;
+  model: string | null;
+  serial_number: string | null;
+  company_id: string | null;
+  purchase_date: string | null;
+  purchase_cost: number | null;
+  supplier: string | null;
+  current_holder_id: string | null;
+  status: "in_stock" | "issued" | "in_repair" | "retired" | "lost";
+  condition: "new" | "good" | "fair" | "poor";
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  updated_by: string | null;
+}
+
+export interface AssetAssignmentRow {
+  id: string;
+  asset_id: string;
+  user_id: string;
+  issued_at: string;
+  issued_by: string | null;
+  issue_note: string | null;
+  condition_at_issue: string | null;
+  returned_at: string | null;
+  returned_by: string | null;
+  return_note: string | null;
+  condition_at_return: string | null;
 }
 
 export interface DocumentRow {

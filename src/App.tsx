@@ -38,6 +38,8 @@ import Vault from "./pages/Vault";
 import VaultDetail from "./pages/VaultDetail";
 import Documents from "./pages/Documents";
 import DocumentDetail from "./pages/DocumentDetail";
+import Assets from "./pages/Assets";
+import AssetDetail from "./pages/AssetDetail";
 import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
@@ -106,6 +108,22 @@ const App = () => (
                 <Route path="/teams/:id" element={<TeamDetail />} />
                 <Route path="/documents" element={<Documents />} />
                 <Route path="/documents/:id" element={<DocumentDetail />} />
+                <Route
+                  path="/assets"
+                  element={
+                    <ProtectedRoute require="assets">
+                      <Assets />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/assets/:id"
+                  element={
+                    <ProtectedRoute require="assets">
+                      <AssetDetail />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="/vault"
                   element={
