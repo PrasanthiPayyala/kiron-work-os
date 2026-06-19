@@ -6,7 +6,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/kiron"
     jwt_secret: str = "dev-secret-change-me"
-    jwt_access_ttl_min: int = 30
+    # 8 hours — wide enough that a workday's worth of refreshes never has to
+    # touch the refresh-token chain, narrow enough that a forgotten browser
+    # on a shared machine doesn't stay open forever. Refresh token (14d)
+    # handles overnight / multi-day re-auth.
+    jwt_access_ttl_min: int = 480
     jwt_refresh_ttl_days: int = 14
     cors_origins: str = "http://localhost:8080,http://localhost:5173"
 

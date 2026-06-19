@@ -84,6 +84,10 @@
     --status-rework: 18 88% 55%;
     --status-escalated: 350 80% 50%;
     --status-cancelled: 220 8% 50%;
+    /* Leave (vacation / sick / personal time off). Purple keeps it
+     * unambiguously distinct from WFH (blue), half_day (amber),
+     * and present (green) on the attendance calendar. */
+    --status-leave: 270 55% 60%;
 
     /* Gradients */
     --gradient-warm: linear-gradient(135deg, hsl(22 95% 96%), hsl(36 50% 96%));

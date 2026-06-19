@@ -12,8 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock } from "lucide-react";
+import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock, LogIn } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { toast as sonner } from "sonner";
 
 type Row = {
   user_id: string;
@@ -49,12 +50,13 @@ const fmtTime = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
 
 export default function TeamAttendance() {
-  const { companies, getUser, getCompany } = useDataStore();
+  const { companies, getUser, getCompany, attendance, refresh } = useDataStore();
   const { toast } = useToast();
   const [date, setDate] = useState<string>(today());
   const [companyFilter, setCompanyFilter] = useState<string>("all");
   const [data, setData] = useState<FollowupResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resumingUserId, setResumingUserId] = useState<string | null>(null);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -73,6 +75,32 @@ export default function TeamAttendance() {
   };
 
   useEffect(() => { void load(date); /* eslint-disable-next-line */ }, [date]);
+
+  // Find the attendance_logs row id for (user, date) so the HR Resume action
+  // can PATCH it. The dataStore preloads all attendance logs the viewer is
+  // allowed to see (HR / founder-office roles get everyone via the backend's
+  // ATTENDANCE_VIEW_ROLES gate), so this is a local Map lookup.
+  const findLogId = (userId: string, d: string): string | undefined =>
+    attendance.find((a) => a.userId === userId && a.date === d)?.id;
+
+  const handleResume = async (userId: string, name: string) => {
+    const logId = findLogId(userId, date);
+    if (!logId) {
+      sonner.error(`Couldn't find ${name}'s log for ${date}`);
+      return;
+    }
+    setResumingUserId(userId);
+    try {
+      await api.updateAttendance(logId, { check_out_at: null });
+      sonner.success(`${name} resumed — clocked back in`);
+      refresh();
+      void load(date);
+    } catch (e) {
+      sonner.error(e instanceof ApiError ? e.message : `Couldn't resume ${name}`);
+    } finally {
+      setResumingUserId(null);
+    }
+  };
 
   const filterByCompany = (rows: Row[]) =>
     companyFilter === "all" ? rows : rows.filter((r) => r.home_company_id === companyFilter);
@@ -157,6 +185,8 @@ export default function TeamAttendance() {
               getUser={getUser}
               emptyText="Nobody to chase right now. ✓"
               variant="alert"
+              onResume={handleResume}
+              resumingUserId={resumingUserId}
             />
           </TabsContent>
           <TabsContent value="present">
@@ -175,13 +205,15 @@ export default function TeamAttendance() {
 }
 
 function PersonList({
-  rows, getCompany, getUser, emptyText, variant,
+  rows, getCompany, getUser, emptyText, variant, onResume, resumingUserId,
 }: {
   rows: Row[];
   getCompany: ReturnType<typeof useDataStore>["getCompany"];
   getUser: ReturnType<typeof useDataStore>["getUser"];
   emptyText: string;
   variant?: "alert";
+  onResume?: (userId: string, name: string) => Promise<void>;
+  resumingUserId?: string | null;
 }) {
   if (rows.length === 0) {
     return <p className="mt-4 text-center text-sm text-muted-foreground">{emptyText}</p>;
@@ -214,6 +246,20 @@ function PersonList({
               </p>
             </div>
             <div className="flex items-center gap-1.5">
+              {/* Resume work — undoes an accidental early check-out. Only relevant
+                  for left_early rows; missed-check-in rows have no check_out yet. */}
+              {onResume && r.reason === "left_early" && r.check_out_at && (
+                <button
+                  type="button"
+                  onClick={() => void onResume(r.user_id, r.name)}
+                  disabled={resumingUserId === r.user_id}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:bg-surface-muted disabled:opacity-60"
+                  title="Reverse this check-out — lets them clock back in"
+                >
+                  {resumingUserId === r.user_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogIn className="h-3 w-3" />}
+                  Resume
+                </button>
+              )}
               {r.email && (
                 <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:bg-surface-muted" title={r.email}>
                   <Mail className="h-3 w-3" /> Email

@@ -5,10 +5,11 @@ import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { getEffectiveSchedule, isNonWorkingDate } from "@/lib/mappers";
 import { api, ApiError } from "@/lib/api";
-import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane, ChevronLeft, ChevronRight, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useMemo, useState } from "react";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { UserAvatar } from "@/components/UserAvatar";
 import { toast } from "sonner";
 import type { AttendanceStatus, AttendanceLog, Holiday, Schedule } from "@/types";
@@ -60,13 +61,28 @@ type DayStatus = AttendanceStatus | "holiday" | "weekly_off" | "absent" | "futur
 
 const colorForStatus = (s: DayStatus): string => {
   if (s === "present") return "bg-success/70";
-  if (s === "wfh") return "bg-accent/70";
+  if (s === "wfh") return "bg-info/70";         // blue — distinct from leave
+  if (s === "field_work") return "bg-info/40";  // lighter blue for field
   if (s === "half_day") return "bg-warning/70";
-  if (s === "leave") return "bg-status-hold/70";
+  if (s === "leave") return "bg-status-leave/70"; // purple — distinct from WFH + half-day
   if (s === "holiday") return "bg-accent-soft";
   if (s === "weekly_off") return "bg-muted";
   if (s === "future") return "bg-surface-muted/40";
   return "bg-destructive/40";  // absent
+};
+
+/** One-letter glyph rendered inside each calendar cell next to the date
+ * number. Disambiguates status without forcing the user to hover for a
+ * tooltip. Blank for absent / future so the grid stays calm. */
+const glyphForStatus = (s: DayStatus): string => {
+  if (s === "present") return "P";
+  if (s === "wfh") return "W";
+  if (s === "field_work") return "F";
+  if (s === "half_day") return "H";
+  if (s === "leave") return "L";
+  if (s === "holiday") return "O";
+  if (s === "weekly_off") return "—";
+  return "";
 };
 
 /** Same status precedence the live grid uses: log -> gazetted holiday ->
@@ -107,9 +123,10 @@ type CalendarProps = {
   today: Date;
 };
 
-function MonthCalendar({ year, month, myLogs, holidayByDate, schedule, today, onPrev, onNext }: CalendarProps & {
+function MonthCalendar({ year, month, myLogs, holidayByDate, schedule, today, onPrev, onNext, onDayClick }: CalendarProps & {
   onPrev: () => void;
   onNext: () => void;
+  onDayClick: (iso: string) => void;
 }) {
   const cells = monthCells(year, month);
   const logsByDate = new Map(myLogs.map((l) => [l.date, l]));
@@ -135,33 +152,51 @@ function MonthCalendar({ year, month, myLogs, holidayByDate, schedule, today, on
           const holiday = holidayByDate.get(ds);
           const status = statusForDate(d, log, holiday, schedule, today);
           const isToday = sameYMD(d, today);
+          const isFuture = status === "future";
+          // Hours fragment: only when the log has both timestamps, or just
+          // check-in for today. Past days without check-out (rare — usually
+          // means the system never recorded one) silently omit hours.
+          const hoursFrag = log?.checkIn
+            ? log.checkOut
+              ? ` · ${log.checkIn} → ${log.checkOut} · ${formatHM(minutesBetween(log.checkIn, log.checkOut))}`
+              : isToday
+                ? ` · In ${log.checkIn} · ${formatHM(minutesBetween(log.checkIn))} so far`
+                : ""
+            : "";
           const tip = holiday
-            ? `${ds} - ${holiday.name}${holiday.type !== "gazetted" ? ` (${holiday.type})` : ""}`
-            : `${ds} - ${status.replace("_", " ")}`;
+            ? `${ds} - ${holiday.name}${holiday.type !== "gazetted" ? ` (${holiday.type})` : ""}${hoursFrag}`
+            : `${ds} - ${status.replace("_", " ")}${hoursFrag}`;
           return (
-            <div
+            <button
               key={i}
+              type="button"
               title={tip}
-              className={`relative aspect-square rounded ${colorForStatus(status)} ${isToday ? "ring-2 ring-primary ring-offset-1 ring-offset-surface" : ""}`}
+              disabled={isFuture}
+              onClick={() => onDayClick(ds)}
+              className={`relative aspect-square rounded ${colorForStatus(status)} ${isToday ? "ring-2 ring-primary ring-offset-1 ring-offset-surface" : ""} ${isFuture ? "cursor-default" : "transition hover:ring-1 hover:ring-primary/40"}`}
             >
               <span className={`absolute bottom-0.5 right-1 text-[10px] leading-none ${isToday ? "font-bold text-foreground" : "text-foreground/60"}`}>
                 {d.getDate()}
               </span>
+              <span className="pointer-events-none absolute left-1 top-0.5 text-[9px] font-semibold leading-none text-foreground/55" aria-hidden>
+                {glyphForStatus(status)}
+              </span>
               {holiday && (
                 <span
-                  className="absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-accent"
+                  className="absolute left-0.5 top-2.5 h-1.5 w-1.5 rounded-full bg-accent"
                   aria-hidden
                 />
               )}
-            </div>
+            </button>
           );
         })}
       </div>
       <div className="mt-4 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-success/70" /> Present</span>
-        <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-accent/70" /> WFH</span>
+        <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-info/70" /> WFH</span>
+        <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-info/40" /> Field work</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-warning/70" /> Half day</span>
-        <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-status-hold/70" /> Leave</span>
+        <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-status-leave/70" /> Leave</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-accent-soft" /> Holiday</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-muted" /> Weekly off</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-destructive/40" /> Absent</span>
@@ -267,8 +302,11 @@ function HolidaysList({ year, holidayByDate }: { year: number; holidayByDate: Ma
 export default function Attendance() {
   const { user } = useAuth();
   const { attendance, users, leaveRequests, holidays, getCompany, refresh } = useDataStore();
-  const [busy, setBusy] = useState<"checkin" | "checkout" | null>(null);
+  const [busy, setBusy] = useState<"checkin" | "checkout" | "resume" | null>(null);
   const [todayMode, setTodayMode] = useState<AttendanceStatus>("present");
+  // Day drawer — opens when a calendar cell is clicked, scrolls to the
+  // selected date so the user can see their in/out + hours for past days.
+  const [dayDrawer, setDayDrawer] = useState<string | null>(null);
   // Calendar UI state. Tab is "month" by default so the user lands on the
   // most useful view; currentMonth is initialised to today's month.
   const todayDate = useMemo(() => new Date(), []);
@@ -387,6 +425,23 @@ export default function Attendance() {
     }
   };
 
+  // Reverse an accidental check-out. The unique (user_id, work_date) constraint
+  // means a second INSERT for today would 409; instead we null out the existing
+  // row's check_out_at so the user can clock back in on the same record.
+  const handleResume = async () => {
+    if (!user || !todayLog || !todayLog.checkOut) return;
+    setBusy("resume");
+    try {
+      await api.updateAttendance(todayLog.id, { check_out_at: null });
+      toast.success("Resumed work — clocked back in");
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Resume failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const totalMins = myLogs.reduce(
     (acc, l) => acc + minutesBetween(l.checkIn, l.checkOut),
     0,
@@ -455,9 +510,15 @@ export default function Attendance() {
                   Check out
                 </Button>
               ) : (
-                <span className="rounded-md bg-status-done/10 px-2.5 py-1.5 text-xs font-medium text-status-done">
-                  Day closed — {formatHM(liveMinutes)}
-                </span>
+                <>
+                  <span className="rounded-md bg-status-done/10 px-2.5 py-1.5 text-xs font-medium text-status-done">
+                    Day closed — {formatHM(liveMinutes)}
+                  </span>
+                  <Button variant="outline" size="sm" onClick={handleResume} disabled={busy !== null} className="gap-1.5" title="Reverse the check-out and clock back in">
+                    {busy === "resume" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}
+                    Resume work
+                  </Button>
+                </>
               )}
             </div>
 
@@ -495,6 +556,7 @@ export default function Attendance() {
                   today={todayDate}
                   onPrev={goPrevMonth}
                   onNext={goNextMonth}
+                  onDayClick={setDayDrawer}
                 />
               </TabsContent>
 
@@ -553,7 +615,114 @@ export default function Attendance() {
           </div>
         )}
       </div>
+
+      <DayDetailsDrawer
+        focusDate={dayDrawer}
+        onClose={() => setDayDrawer(null)}
+        myLogs={myLogs}
+        holidayByDate={holidayByDate}
+        today={today}
+      />
     </div>
+  );
+}
+
+// ----- Past-days drawer ------------------------------------------------
+// Renders the last ~30 days of the user's own attendance logs as a clean
+// table with In / Out / Duration columns — the calendar grid's per-cell
+// tooltip surfaces hours too, but the drawer is the "I want to see my
+// pattern this past month" view.
+
+function DayDetailsDrawer({
+  focusDate, onClose, myLogs, holidayByDate, today,
+}: {
+  focusDate: string | null;
+  onClose: () => void;
+  myLogs: AttendanceLog[];
+  holidayByDate: Map<string, Holiday>;
+  today: string;
+}) {
+  // Build the last 30 days of rows from the user's own logs. Sort
+  // newest-first so the most recent day is always near the top.
+  const rows = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const cutoffISO = toISO(cutoff);
+    return myLogs
+      .filter((l) => l.date >= cutoffISO && l.date <= today)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [myLogs, today]);
+
+  // Scroll the focused date into view when the drawer opens. Defer until
+  // after the Sheet has rendered so the ref's element exists in DOM.
+  const focusRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    if (!focusDate) return;
+    const t = setTimeout(() => {
+      focusRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [focusDate]);
+
+  const focusedLogExists = focusDate ? rows.some((r) => r.date === focusDate) : false;
+
+  return (
+    <Sheet open={!!focusDate} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            <History className="h-4 w-4" /> Recent days
+          </SheetTitle>
+          <SheetDescription>
+            Your last 30 days of attendance with check-in / check-out and worked hours.
+          </SheetDescription>
+        </SheetHeader>
+
+        {focusDate && !focusedLogExists && (
+          <div className="mt-4 rounded-md border border-border bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
+            Nothing logged on <b className="text-foreground">{focusDate}</b>
+            {holidayByDate.get(focusDate) && (
+              <> — that day is the <b className="text-foreground">{holidayByDate.get(focusDate)!.name}</b> holiday.</>
+            )}
+          </div>
+        )}
+
+        {rows.length === 0 ? (
+          <p className="mt-6 text-center text-sm text-muted-foreground">No attendance logs in the last 30 days.</p>
+        ) : (
+          <ul className="mt-4 divide-y divide-border rounded-lg border border-border bg-surface">
+            {rows.map((r) => {
+              const mins = minutesBetween(r.checkIn, r.checkOut);
+              const isFocused = r.date === focusDate;
+              return (
+                <li
+                  key={r.id}
+                  ref={isFocused ? focusRef : undefined}
+                  className={`flex flex-wrap items-center justify-between gap-2 p-3 text-sm ${isFocused ? "bg-primary-soft/40" : ""}`}
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium">{r.date}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {r.checkIn ? <>In <b className="text-foreground">{r.checkIn}</b></> : "Not checked in"}
+                      {r.checkOut && <> · Out <b className="text-foreground">{r.checkOut}</b></>}
+                      {!r.checkOut && r.checkIn && r.date < today && <> · No check-out recorded</>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <AttendanceBadge status={r.status} />
+                    {r.checkIn && r.checkOut && (
+                      <span className="rounded-md border border-border bg-surface-muted px-2 py-0.5 text-xs font-medium">
+                        {formatHM(mins)}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 

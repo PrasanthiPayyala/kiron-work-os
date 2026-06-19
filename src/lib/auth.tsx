@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, tokens } from "@/lib/api";
 import { pickPrimaryRole, mapProfile } from "@/lib/mappers";
 import { setCurrentUserId, drainQueue } from "@/lib/offline/mutationQueue";
 import { startWs, stopWs } from "@/lib/ws";
@@ -26,6 +26,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const hydrate = async () => {
+    // Capture the refresh-token presence BEFORE api.me() runs, because the
+    // 401-retry path inside api.ts clears tokens on a failed refresh — so by
+    // the time we land in the catch, `tokens.refresh` is already empty and
+    // we can't tell whether the user had a fresh refresh token to begin with.
+    const hadRefreshTokenAtStart = !!tokens.refresh;
     try {
       const { profile, roles } = await api.me();
       const roleList = (roles ?? []) as Role[];
@@ -38,7 +43,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCurrentUserId(mapped.id);
       void drainQueue();
       startWs();
-    } catch {
+    } catch (err) {
+      // Surface why hydrate failed. Bug-report path: user pastes the
+      // console line and we know exactly which step bounced them. The
+      // bare catch used to silently land users at /login.
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          console.warn(
+            hadRefreshTokenAtStart
+              ? "[auth] hydrate failed: refresh token rejected by backend (status 401). User bounced to login."
+              : "[auth] hydrate failed: access token expired and no refresh token present. Normal if returning after >14 days.",
+          );
+        } else {
+          console.warn(`[auth] hydrate failed: ${err.status} ${err.message}`);
+        }
+      } else {
+        console.warn("[auth] hydrate failed (non-API error — likely network):", err);
+      }
       setUser(null);
       setRole(null);
     } finally {

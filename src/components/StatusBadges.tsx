@@ -42,10 +42,11 @@ const attendanceMap: Record<AttendanceStatus, { label: string; cls: string }> = 
   present:    { label: "Present",    cls: "bg-success/10 text-success border-success/30" },
   absent:     { label: "Absent",     cls: "bg-destructive/10 text-destructive border-destructive/30" },
   half_day:   { label: "Half Day",   cls: "bg-warning/10 text-warning-foreground border-warning/30" },
-  holiday:    { label: "Holiday",    cls: "bg-info/10 text-info border-info/30" },
+  holiday:    { label: "Holiday",    cls: "bg-accent/10 text-accent border-accent/30" },
   weekly_off: { label: "Weekly Off", cls: "bg-muted text-muted-foreground border-border" },
-  wfh:        { label: "WFH",        cls: "bg-accent/10 text-accent border-accent/30" },
-  leave:      { label: "Leave",      cls: "bg-status-hold/10 text-status-hold border-status-hold/30" },
+  wfh:        { label: "WFH",        cls: "bg-info/10 text-info border-info/30" },
+  field_work: { label: "Field work", cls: "bg-info/15 text-info border-info/40" },
+  leave:      { label: "Leave",      cls: "bg-status-leave/10 text-status-leave border-status-leave/30" },
 };
 
 const leaveMap: Record<LeaveStatus, { label: string; cls: string }> = {

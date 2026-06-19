@@ -91,6 +91,7 @@ export default {
           rework: "hsl(var(--status-rework))",
           escalated: "hsl(var(--status-escalated))",
           cancelled: "hsl(var(--status-cancelled))",
+          leave: "hsl(var(--status-leave))",
         },
       },
       borderRadius: {
