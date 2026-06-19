@@ -10,8 +10,9 @@ import { api, ApiError } from "@/lib/api";
 import { mapContact, mapOrganization } from "@/lib/mappers";
 import { useToast } from "@/hooks/use-toast";
 import type { Contact, ContactCategory, Organization } from "@/types";
-import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone } from "lucide-react";
+import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone, Upload } from "lucide-react";
 import { ContactDialog } from "@/components/contacts/ContactDialog";
+import { ContactsImportDialog } from "@/components/contacts/ContactsImportDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 // Category groups for the filter dropdown — same order/grouping as the
@@ -74,6 +75,7 @@ export default function Contacts() {
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
   const [editTarget, setEditTarget] = useState<Contact | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const canCreateAny = myRole ? can.editContacts(myRole) : false;
   const myVisibleCats = myRole ? visibleCategories(myRole) : [];
@@ -161,9 +163,14 @@ export default function Contacts() {
         icon={<BookUser className="h-5 w-5" />}
         actions={
           canCreateAny && (
-            <Button size="sm" onClick={openCreate} className="gap-1.5">
-              <UserPlus className="h-4 w-4" /> Add contact
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5">
+                <Upload className="h-4 w-4" /> Import from Excel
+              </Button>
+              <Button size="sm" onClick={openCreate} className="gap-1.5">
+                <UserPlus className="h-4 w-4" /> Add contact
+              </Button>
+            </div>
           )
         }
       />
@@ -290,6 +297,12 @@ export default function Contacts() {
         organizations={orgs}
         visibleCategories={myVisibleCats}
         onSaved={() => { void refresh(); }}
+      />
+
+      <ContactsImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onComplete={() => { void refresh(); }}
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>

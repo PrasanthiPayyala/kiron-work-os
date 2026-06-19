@@ -454,6 +454,266 @@ def unlink_company(
     return None
 
 
+# ============================== BULK IMPORT ==============================
+
+class ImportRow(BaseModel):
+    """One row from the uploaded sheet.
+
+    Mirrors ContactCreate but with looser typing so we can soft-error
+    instead of 422'ing the whole batch on one malformed row. Email is
+    plain str (not EmailStr) because Karunya's existing sheet has rows
+    where the "Email" cell is actually a note like "no email"; we let
+    the row through and skip dedup on it. Validation happens row-by-row
+    in the handler.
+    """
+    full_name: str = Field(..., min_length=1, max_length=200)
+    category: str
+    role: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    organization_name: Optional[str] = None
+    notes: Optional[str] = None
+    company_short_names: Optional[list[str]] = None
+
+
+class ImportBody(BaseModel):
+    rows: list[ImportRow] = Field(default_factory=list)
+    # dry_run runs the whole batch in a single transaction and rolls back
+    # at the end. Used by the frontend preview step so the user sees a
+    # real count of new vs merged before they commit.
+    dry_run: bool = False
+
+
+def _norm_email(s: Optional[str]) -> Optional[str]:
+    """Lowercase + strip. Returns None for empties or strings that don't
+    look remotely like an email so dedup doesn't match 'no email' rows."""
+    if not s:
+        return None
+    s = s.strip().lower()
+    if "@" not in s or " " in s:
+        return None
+    return s
+
+
+def _norm_phone_value(s: Optional[str]) -> Optional[str]:
+    """Strip whitespace; keep digits/+/- as-is. Returns None for empties."""
+    if not s:
+        return None
+    s = s.strip()
+    return s or None
+
+
+def _merged_phone(existing: Optional[str], incoming: Optional[str]) -> Optional[str]:
+    """If incoming differs from existing AND isn't already a substring of
+    existing, append it on a new line. Preserves all original numbers —
+    no overwrites. Empty incoming = no-op."""
+    if not incoming:
+        return existing
+    if not existing:
+        return incoming
+    # Already present? Either exact match or a separator-delimited entry.
+    parts = [p.strip() for p in existing.replace(",", "\n").split("\n")]
+    if any(incoming.strip() == p for p in parts):
+        return existing
+    return f"{existing}\n{incoming}"
+
+
+def _find_or_create_org(db: Session, name: str, user_id: str) -> str:
+    """Case-insensitive lookup; insert if absent. Returns the org id."""
+    found = db.execute(
+        text("SELECT id FROM organizations WHERE lower(name) = lower(:n) LIMIT 1"),
+        {"n": name.strip()},
+    ).first()
+    if found:
+        return str(found[0])
+    new_id = str(uuid.uuid4())
+    db.execute(
+        text("INSERT INTO organizations (id, name, created_by) "
+             "VALUES (:id, :n, :uid)"),
+        {"id": new_id, "n": name.strip(), "uid": user_id},
+    )
+    return new_id
+
+
+def _resolve_company(db: Session, name: str) -> Optional[str]:
+    """Match by short_name OR full name, case-insensitive. None if unknown."""
+    found = db.execute(
+        text("SELECT id FROM companies "
+             "WHERE lower(short_name) = lower(:n) OR lower(name) = lower(:n) "
+             "LIMIT 1"),
+        {"n": name.strip()},
+    ).first()
+    return str(found[0]) if found else None
+
+
+@router.post("/contacts/import")
+def import_contacts(
+    body: ImportBody,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bulk import. Merges by email when present; auto-creates organizations
+    by name; links to companies by short_name or full name.
+
+    Per-row errors are reported in the response — they don't fail the
+    batch. A row whose email matches an existing contact is *merged*:
+    non-null incoming fields fill nulls on the existing row, the phone
+    is appended if different, and a new contact_companies link is added
+    for any company_short_names not already present. Category is never
+    changed on merge (would be too easy to escalate privilege).
+
+    When body.dry_run is true the whole sequence runs inside a single
+    transaction that gets rolled back at the end — used by the preview
+    step so the user sees real counts before committing.
+    """
+    _require_edit(user)
+
+    created = 0
+    merged = 0
+    created_orgs = 0
+    created_company_links = 0
+    errors: list[dict] = []
+
+    # Cache org lookups within the batch so a sheet with 50 rows pointing
+    # at the same firm doesn't create 50 (or hit the unique lookup 50 times).
+    org_cache: dict[str, str] = {}
+    company_cache: dict[str, Optional[str]] = {}
+
+    for idx, r in enumerate(body.rows):
+        try:
+            # ---- category gate
+            if r.category not in CONTACT_CATEGORIES:
+                errors.append({"row": idx, "name": r.full_name,
+                               "error": f"Unknown category: {r.category}"})
+                continue
+            if not can_edit_contact_category(user.roles, r.category):
+                errors.append({"row": idx, "name": r.full_name,
+                               "error": f"Not allowed to import '{r.category}' contacts"})
+                continue
+
+            # ---- organization (auto-create on demand)
+            org_id: Optional[str] = None
+            if r.organization_name and r.organization_name.strip():
+                key = r.organization_name.strip().lower()
+                if key in org_cache:
+                    org_id = org_cache[key]
+                else:
+                    # Was it absent before? Track for the response counter.
+                    pre_exists = db.execute(
+                        text("SELECT 1 FROM organizations WHERE lower(name) = :k"),
+                        {"k": key},
+                    ).first() is not None
+                    org_id = _find_or_create_org(db, r.organization_name, user.id)
+                    if not pre_exists:
+                        created_orgs += 1
+                    org_cache[key] = org_id
+
+            # ---- merge-or-create
+            email_norm = _norm_email(r.email)
+            phone_norm = _norm_phone_value(r.phone)
+            existing = None
+            if email_norm:
+                existing = db.execute(
+                    text("SELECT * FROM contacts WHERE lower(email) = :e LIMIT 1"),
+                    {"e": email_norm},
+                ).mappings().first()
+
+            if existing:
+                # MERGE PATH — refuse if the existing contact is in a category
+                # we can't edit. Phone is appended (not overwritten); other
+                # fields fill nulls only.
+                if not can_edit_contact_category(user.roles, existing["category"]):
+                    errors.append({"row": idx, "name": r.full_name,
+                                   "error": f"Existing record is in '{existing['category']}', not allowed to merge"})
+                    continue
+                patch: dict = {}
+                new_phone = _merged_phone(existing.get("phone"), phone_norm)
+                if new_phone != existing.get("phone"):
+                    patch["phone"] = new_phone
+                # Fill-only-if-null for the soft fields. Never overwrite.
+                for field, incoming in (
+                    ("role", r.role),
+                    ("organization_id", org_id),
+                    ("notes", r.notes),
+                ):
+                    if incoming and not existing.get(field):
+                        patch[field] = incoming
+                if patch:
+                    set_parts = [f"{k} = :{k}" for k in patch.keys()]
+                    db.execute(
+                        text(f"UPDATE contacts SET {', '.join(set_parts)} WHERE id = :id"),
+                        {**patch, "id": str(existing["id"])},
+                    )
+                    _log_contact(db, str(existing["id"]), user.id,
+                                 "merge_import", new=patch)
+                contact_id = str(existing["id"])
+                merged += 1
+            else:
+                # CREATE PATH
+                contact_id = str(uuid.uuid4())
+                db.execute(
+                    text("INSERT INTO contacts (id, full_name, category, role, "
+                         "                       email, phone, organization_id, "
+                         "                       notes, created_by) "
+                         "VALUES (:id, :name, :cat, :role, :email, :phone, "
+                         "        :org, :notes, :uid)"),
+                    {
+                        "id": contact_id,
+                        "name": r.full_name.strip(),
+                        "cat": r.category,
+                        "role": r.role.strip() if r.role else None,
+                        "email": email_norm,
+                        "phone": phone_norm,
+                        "org": org_id,
+                        "notes": r.notes,
+                        "uid": user.id,
+                    },
+                )
+                _log_contact(db, contact_id, user.id, "create_import",
+                             new={"category": r.category, "full_name": r.full_name})
+                created += 1
+
+            # ---- company links (idempotent via ON CONFLICT)
+            for cname in (r.company_short_names or []):
+                cname_stripped = cname.strip()
+                if not cname_stripped:
+                    continue
+                if cname_stripped.lower() in company_cache:
+                    company_id = company_cache[cname_stripped.lower()]
+                else:
+                    company_id = _resolve_company(db, cname_stripped)
+                    company_cache[cname_stripped.lower()] = company_id
+                if not company_id:
+                    # Unknown entity — silent skip; importer shouldn't create
+                    # group companies, that's a separate UI flow.
+                    continue
+                inserted = db.execute(
+                    text("INSERT INTO contact_companies (contact_id, company_id, created_by) "
+                         "VALUES (:cn, :co, :uid) ON CONFLICT DO NOTHING"),
+                    {"cn": contact_id, "co": company_id, "uid": user.id},
+                )
+                if inserted.rowcount:
+                    created_company_links += 1
+
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"row": idx, "name": r.full_name,
+                           "error": f"{type(exc).__name__}: {exc}"})
+
+    if body.dry_run:
+        db.rollback()
+    else:
+        db.commit()
+
+    return {
+        "created": created,
+        "merged": merged,
+        "created_organizations": created_orgs,
+        "created_company_links": created_company_links,
+        "errors": errors,
+        "dry_run": body.dry_run,
+    }
+
+
 @router.get("/contacts/{contact_id}/activity")
 def get_contact_activity(
     contact_id: str,

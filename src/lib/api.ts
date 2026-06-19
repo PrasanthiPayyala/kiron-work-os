@@ -974,6 +974,28 @@ export const api = {
   unlinkContactCompany(contactId: string, companyId: string): Promise<void> {
     return request(`/contacts/${contactId}/companies/${companyId}`, { method: "DELETE" });
   },
+  importContacts(payload: {
+    rows: Array<{
+      full_name: string;
+      category: string;
+      role?: string | null;
+      email?: string | null;
+      phone?: string | null;
+      organization_name?: string | null;
+      notes?: string | null;
+      company_short_names?: string[] | null;
+    }>;
+    dry_run?: boolean;
+  }): Promise<{
+    created: number;
+    merged: number;
+    created_organizations: number;
+    created_company_links: number;
+    errors: Array<{ row: number; name: string; error: string }>;
+    dry_run: boolean;
+  }> {
+    return request("/contacts/import", { method: "POST", body: JSON.stringify(payload) });
+  },
 
   // ---------- Holidays (HR/super_admin manages; everyone reads via /bootstrap) ----------
   listHolidays(opts?: { year?: number; companyId?: string }): Promise<Record<string, unknown>[]> {
