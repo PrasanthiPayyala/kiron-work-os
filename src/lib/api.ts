@@ -914,6 +914,19 @@ export const api = {
     const q = date ? `?date=${encodeURIComponent(date)}` : "";
     return request(`/attendance/followup${q}`);
   },
+  /** HR marks an employee's missed check-in as an approved leave for the
+   * day. Creates both an attendance_logs row (status=leave) and an
+   * approved leave_requests row, plus the balance delta. The followup
+   * endpoint will then route the person into the on_leave bucket on
+   * its next refresh. */
+  markAttendanceAsLeave(payload: {
+    user_id: string;
+    work_date: string;
+    leave_type: "casual_leave" | "sick_leave" | "loss_of_pay" | "comp_off" | "optional_holiday";
+    reason?: string | null;
+  }): Promise<{ attendance: Record<string, unknown>; leave: Record<string, unknown> }> {
+    return request("/attendance/mark-leave", { method: "POST", body: JSON.stringify(payload) });
+  },
 
   // ---------- Bank accounts (finance-scoped — HR can't see/edit) ----------
   listBankAccounts(companyId: string): Promise<Record<string, unknown>[]> {

@@ -8,15 +8,25 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..authz import can_update_attendance, can_view_attendance_followup
+from ..authz import HR_ROLES, can_update_attendance, can_view_attendance_followup, has_any_role
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
 from . import ws as ws_router
+from .leave_balances import apply_balance_delta
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
 UPDATABLE = {"check_out_at", "worked_hours", "status", "notes"}
+
+# Leave types HR can mark a missed check-in as. Mirrors the leave_type
+# enum minus "work_from_home" — WFH is a working state set at check-in
+# (attendance_logs.status='work_from_home'), not a leave type. The
+# Apply-for-leave UI no longer offers it either.
+MARK_LEAVE_TYPES = {
+    "casual_leave", "sick_leave", "loss_of_pay",
+    "comp_off", "optional_holiday",
+}
 
 
 class CheckIn(BaseModel):
@@ -79,6 +89,125 @@ def update(
     # then no-ops via the id-match guard in dataStore).
     background.add_task(ws_router.attendance_changed, fresh)
     return fresh
+
+
+# -------------------- HR: mark a missed check-in as approved leave --------------------
+
+class MarkLeaveBody(BaseModel):
+    user_id: str
+    work_date: str             # YYYY-MM-DD
+    leave_type: str            # one of MARK_LEAVE_TYPES
+    reason: Optional[str] = None
+
+
+@router.post("/mark-leave", status_code=status.HTTP_201_CREATED)
+def mark_leave(
+    body: MarkLeaveBody,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """HR marks a missed check-in as an approved leave for the day.
+
+    Used from the Team Attendance follow-up view: instead of chasing
+    the person, HR confirms they're on leave and the row flips from
+    'missed_check_in' to 'on_leave' in the next refresh. Triple effect:
+
+      * Inserts an attendance_logs row with status='leave', source
+        'hr_marked_leave' — the employee's calendar shades the day
+        purple and the 30-day drawer shows the leave badge.
+      * Inserts a leave_requests row stamped status='approved' with
+        the HR caller as `hr_approver_id` — so payroll's leave-day
+        rollup picks it up exactly as if the employee had filed and
+        Karunya had approved.
+      * Bumps `leave_balances.used` for balanced types (casual / sick
+        / comp_off / earned / maternity / paternity) so quota accounting
+        is real-time.
+
+    Only HR / super_admin / founder may call this — see HR_ROLES in
+    authz.py. Returns the two created rows so the frontend can splice
+    them into the local store.
+
+    Idempotency: if an attendance_logs row already exists for the
+    target (user, date) we 409 instead of silently double-inserting.
+    HR can fix existing rows via PATCH /attendance/{id} instead.
+    """
+    if not has_any_role(user.roles, HR_ROLES):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only HR / super_admin / founder can mark leave for someone else")
+    if body.leave_type not in MARK_LEAVE_TYPES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"Unsupported leave type for HR-marked leave: {body.leave_type}. "
+                            f"Use the Apply-for-leave flow for unusual types.")
+
+    # Sanity check the user exists.
+    target = db.execute(
+        text("SELECT id, full_name FROM profiles WHERE id = :id"),
+        {"id": body.user_id},
+    ).mappings().first()
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Employee not found")
+
+    # --- 1. Insert the attendance log
+    att_id = str(uuid.uuid4())
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    try:
+        db.execute(
+            text(
+                "INSERT INTO attendance_logs (id, user_id, work_date, status, source, notes) "
+                "VALUES (:id, :uid, :d, 'leave', 'hr_marked_leave', :notes)"
+            ),
+            {
+                "id": att_id, "uid": body.user_id, "d": body.work_date,
+                "notes": f"Marked as leave by HR. {body.reason or ''}".strip(),
+            },
+        )
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "An attendance log already exists for this date — edit that row instead.",
+        )
+
+    # --- 2. Insert the approved leave request
+    leave_id = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO leave_requests "
+            "  (id, user_id, leave_type, start_date, end_date, days, reason, "
+            "   status, hr_approver_id, decided_at) "
+            "VALUES (:id, :uid, :lt, :d, :d, 1, :reason, 'approved', :approver, :decided)"
+        ),
+        {
+            "id": leave_id, "uid": body.user_id, "lt": body.leave_type,
+            "d": body.work_date, "reason": body.reason,
+            "approver": user.id, "decided": now_iso,
+        },
+    )
+
+    # --- 3. Balance accounting for the year of the leave
+    try:
+        year = int(body.work_date[:4])
+    except ValueError:
+        year = _dt.date.today().year
+    apply_balance_delta(
+        db, user_id=body.user_id, leave_type=body.leave_type,
+        days=1.0, year=year,
+    )
+
+    db.commit()
+
+    # --- 4. Push the new attendance row to the employee's open sessions
+    # (same channel HR's Resume work already uses). Their calendar +
+    # Today card flip to the leave state without a manual refresh.
+    fresh_log = _get(db, att_id)
+    background.add_task(ws_router.attendance_changed, fresh_log)
+
+    leave_row = row(db.execute(
+        text("SELECT * FROM leave_requests WHERE id = :id"),
+        {"id": leave_id},
+    ).mappings().first())
+
+    return {"attendance": fresh_log, "leave": leave_row}
 
 
 # -------------------- Follow-up (today's missing check-ins) --------------------

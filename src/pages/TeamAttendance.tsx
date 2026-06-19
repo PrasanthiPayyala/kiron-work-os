@@ -12,9 +12,19 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock, LogIn } from "lucide-react";
+import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock, LogIn, Plane } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { toast as sonner } from "sonner";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+type LeaveTypeKey = "casual_leave" | "sick_leave" | "loss_of_pay" | "comp_off" | "optional_holiday";
+const LEAVE_TYPE_OPTIONS: { value: LeaveTypeKey; label: string }[] = [
+  { value: "casual_leave",     label: "Casual" },
+  { value: "sick_leave",       label: "Sick" },
+  { value: "comp_off",         label: "Comp off" },
+  { value: "loss_of_pay",      label: "Loss of pay" },
+  { value: "optional_holiday", label: "Optional holiday" },
+];
 
 type Row = {
   user_id: string;
@@ -57,6 +67,7 @@ export default function TeamAttendance() {
   const [data, setData] = useState<FollowupResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [resumingUserId, setResumingUserId] = useState<string | null>(null);
+  const [markingLeaveUserId, setMarkingLeaveUserId] = useState<string | null>(null);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -99,6 +110,30 @@ export default function TeamAttendance() {
       sonner.error(e instanceof ApiError ? e.message : `Couldn't resume ${name}`);
     } finally {
       setResumingUserId(null);
+    }
+  };
+
+  // HR flips a missed-check-in row into an approved-leave row. The
+  // backend creates BOTH the attendance log AND the leave_requests row
+  // (and bumps the balance) so payroll's day-by-day rollup picks it up.
+  const handleMarkAsLeave = async (userId: string, name: string,
+                                    leaveType: LeaveTypeKey, reason: string) => {
+    setMarkingLeaveUserId(userId);
+    try {
+      await api.markAttendanceAsLeave({
+        user_id: userId,
+        work_date: date,
+        leave_type: leaveType,
+        reason: reason.trim() || null,
+      });
+      const label = LEAVE_TYPE_OPTIONS.find((o) => o.value === leaveType)?.label ?? leaveType;
+      sonner.success(`${name} marked on ${label} leave for ${date}`);
+      refresh();
+      void load(date);
+    } catch (e) {
+      sonner.error(e instanceof ApiError ? e.message : `Couldn't mark ${name} on leave`);
+    } finally {
+      setMarkingLeaveUserId(null);
     }
   };
 
@@ -187,6 +222,8 @@ export default function TeamAttendance() {
               variant="alert"
               onResume={handleResume}
               resumingUserId={resumingUserId}
+              onMarkLeave={handleMarkAsLeave}
+              markingLeaveUserId={markingLeaveUserId}
             />
           </TabsContent>
           <TabsContent value="present">
@@ -205,7 +242,9 @@ export default function TeamAttendance() {
 }
 
 function PersonList({
-  rows, getCompany, getUser, emptyText, variant, onResume, resumingUserId,
+  rows, getCompany, getUser, emptyText, variant,
+  onResume, resumingUserId,
+  onMarkLeave, markingLeaveUserId,
 }: {
   rows: Row[];
   getCompany: ReturnType<typeof useDataStore>["getCompany"];
@@ -214,6 +253,8 @@ function PersonList({
   variant?: "alert";
   onResume?: (userId: string, name: string) => Promise<void>;
   resumingUserId?: string | null;
+  onMarkLeave?: (userId: string, name: string, leaveType: LeaveTypeKey, reason: string) => Promise<void>;
+  markingLeaveUserId?: string | null;
 }) {
   if (rows.length === 0) {
     return <p className="mt-4 text-center text-sm text-muted-foreground">{emptyText}</p>;
@@ -260,6 +301,16 @@ function PersonList({
                   Resume
                 </button>
               )}
+              {/* Mark as leave — only for missed-check-in rows. Pops a small
+                  form with leave type + reason; backend creates BOTH the
+                  attendance log (status=leave) AND an approved leave_request
+                  so payroll + balance both reflect the decision. */}
+              {onMarkLeave && r.reason === "missed_check_in" && (
+                <MarkLeavePopover
+                  busy={markingLeaveUserId === r.user_id}
+                  onMark={(lt, reason) => onMarkLeave(r.user_id, r.name, lt, reason)}
+                />
+              )}
               {r.email && (
                 <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:bg-surface-muted" title={r.email}>
                   <Mail className="h-3 w-3" /> Email
@@ -275,5 +326,80 @@ function PersonList({
         );
       })}
     </ul>
+  );
+}
+
+function MarkLeavePopover({
+  busy, onMark,
+}: {
+  busy: boolean;
+  onMark: (leaveType: LeaveTypeKey, reason: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [leaveType, setLeaveType] = useState<LeaveTypeKey>("casual_leave");
+  const [reason, setReason] = useState("");
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs hover:bg-surface-muted disabled:opacity-60"
+          title="Mark this missed check-in as an approved leave for the day"
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plane className="h-3 w-3" />}
+          Mark as leave
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72">
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mark as leave</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Creates an approved leave for the day and bumps the balance.
+              Employee's calendar updates immediately.
+            </p>
+          </div>
+          <div>
+            <label className="text-[11px] text-muted-foreground">Leave type</label>
+            <Select value={leaveType} onValueChange={(v) => setLeaveType(v as LeaveTypeKey)}>
+              <SelectTrigger className="mt-1 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {LEAVE_TYPE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-[11px] text-muted-foreground">Reason (optional)</label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Phoned in sick, family emergency..."
+              className="mt-1 h-8 text-xs"
+            />
+          </div>
+          <div className="flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              disabled={busy}
+              onClick={async () => {
+                await onMark(leaveType, reason);
+                setOpen(false);
+                setReason("");
+              }}
+            >
+              {busy && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+              Mark
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

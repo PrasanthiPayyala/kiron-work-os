@@ -19,7 +19,7 @@ import { toast } from "sonner";
 
 const LEAVE_TYPE_DB: Record<string, string> = {
   casual: "casual_leave", sick: "sick_leave", loss_of_pay: "loss_of_pay",
-  wfh: "work_from_home", comp_off: "comp_off", optional_holiday: "optional_holiday",
+  comp_off: "comp_off", optional_holiday: "optional_holiday",
 };
 
 const BALANCED_TYPES = [
@@ -169,11 +169,14 @@ export default function Leave() {
                       <SelectItem value="casual">Casual</SelectItem>
                       <SelectItem value="sick">Sick</SelectItem>
                       <SelectItem value="loss_of_pay">Loss of Pay</SelectItem>
-                      <SelectItem value="wfh">WFH</SelectItem>
                       <SelectItem value="comp_off">Comp Off</SelectItem>
                       <SelectItem value="optional_holiday">Optional Holiday</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Working from home? Use the <b>WFH</b> option on the Attendance check-in
+                    instead — WFH is a working state, not a leave.
+                  </p>
                 </div>
                 <div><label className="text-xs text-muted-foreground">Days</label><Input type="number" value={days} onChange={(e) => setDays(Number(e.target.value))} className="h-9 mt-1" /></div>
                 <div><label className="text-xs text-muted-foreground">From</label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 mt-1" /></div>
