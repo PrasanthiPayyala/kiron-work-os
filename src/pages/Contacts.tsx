@@ -10,9 +10,9 @@ import { api, ApiError } from "@/lib/api";
 import { mapContact, mapOrganization } from "@/lib/mappers";
 import { useToast } from "@/hooks/use-toast";
 import type { Contact, ContactCategory, Organization } from "@/types";
-import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone, Upload } from "lucide-react";
+import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone, Upload, Download } from "lucide-react";
 import { ContactDialog } from "@/components/contacts/ContactDialog";
-import { ContactsImportDialog } from "@/components/contacts/ContactsImportDialog";
+import { ContactsImportDialog, downloadContactsTemplate } from "@/components/contacts/ContactsImportDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 // Category groups for the filter dropdown — same order/grouping as the
@@ -164,6 +164,10 @@ export default function Contacts() {
         actions={
           canCreateAny && (
             <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" onClick={downloadContactsTemplate} className="gap-1.5"
+                      title="Download the Excel template with the right column names + a sample row">
+                <Download className="h-4 w-4" /> Download format
+              </Button>
               <Button size="sm" variant="outline" onClick={() => setImportOpen(true)} className="gap-1.5">
                 <Upload className="h-4 w-4" /> Import from Excel
               </Button>

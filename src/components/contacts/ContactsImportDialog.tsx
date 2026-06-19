@@ -153,9 +153,11 @@ function mapToImportRows(headers: string[], raws: Record<string, unknown>[]): Ro
   });
 }
 
-function downloadTemplate() {
-  // Build a workbook with a header row + one example row + a hidden "valid
-  // categories" sheet so HR knows what to put in the Category column.
+// Exported so the Contacts page can offer a top-level "Download format"
+// button without forcing the user through the Import dialog first. Builds
+// a workbook with header row + one example row + a hidden "Valid categories"
+// sheet so HR knows what to put in the Category column.
+export function downloadContactsTemplate() {
   const sample = [
     {
       "Full Name": "Rajesh Kumar",
@@ -308,7 +310,7 @@ export function ContactsImportDialog({
                 }}
               />
             </label>
-            <Button variant="ghost" size="sm" onClick={downloadTemplate} className="gap-1.5">
+            <Button variant="ghost" size="sm" onClick={downloadContactsTemplate} className="gap-1.5">
               <Download className="h-3.5 w-3.5" /> Download template
             </Button>
             {(parsing || previewing) && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
