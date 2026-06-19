@@ -112,6 +112,23 @@ async def approval_changed(approval_row: dict) -> None:
     await hub.send_to_users(targets, {"type": "approval.changed", "data": approval_row})
 
 
+async def attendance_changed(log_row: dict) -> None:
+    """Push an attendance row update to the affected user's open sessions.
+
+    Used by the PATCH /attendance/{id} endpoint so that when HR (or any
+    other party with self-edit rights) flips a row — most importantly,
+    nulls a `check_out_at` to reverse an accidental check-out — the
+    employee's calendar + "Today" card flip back to the live state
+    without a manual page refresh. Send only to the affected user; HR's
+    own view re-fetches via the routine PATCH response, and other
+    employees have no business knowing.
+    """
+    await hub.send_to_users(
+        [str(log_row["user_id"])],
+        {"type": "attendance.changed", "data": log_row},
+    )
+
+
 # The fire_* helpers below were a previous attempt to schedule broadcasts
 # from sync FastAPI endpoints via asyncio.create_task. That raises
 # RuntimeError when called from FastAPI's threadpool ("no running event

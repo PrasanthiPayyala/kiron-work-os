@@ -2,7 +2,7 @@ import datetime as _dt
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +12,7 @@ from ..authz import can_update_attendance, can_view_attendance_followup
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
+from . import ws as ws_router
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -52,7 +53,13 @@ def check_in(body: CheckIn, user: CurrentUser = Depends(get_current_user), db: S
 
 
 @router.patch("/{log_id}")
-def update(log_id: str, patch: dict, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def update(
+    log_id: str,
+    patch: dict,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     log = _get(db, log_id)
     if not can_update_attendance(log, user.id, user.roles):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to edit this attendance log")
@@ -63,7 +70,15 @@ def update(log_id: str, patch: dict, user: CurrentUser = Depends(get_current_use
     params = dict(fields, id=log_id)
     db.execute(text(f"UPDATE attendance_logs SET {set_clause} WHERE id = :id"), params)
     db.commit()
-    return _get(db, log_id)
+    fresh = _get(db, log_id)
+    # Push the new row to the affected employee's open sessions. Critical
+    # for the HR "Resume work" path: the employee's tab is showing stale
+    # "Day closed" until this broadcast lands and the dataStore splices in
+    # the patched row. Self-PATCHes also broadcast — cheap, idempotent on
+    # the receiver (own POST already updated the local store, the WS event
+    # then no-ops via the id-match guard in dataStore).
+    background.add_task(ws_router.attendance_changed, fresh)
+    return fresh
 
 
 # -------------------- Follow-up (today's missing check-ins) --------------------

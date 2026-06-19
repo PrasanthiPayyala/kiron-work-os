@@ -342,6 +342,18 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
           if (idx === -1) next.unshift(a); else next[idx] = a;
           return { ...prev, approvals: next };
         });
+      } else if (ev.type === "attendance.changed") {
+        // Mostly fires for the "HR resumed my check-out" case — the
+        // employee's tab is showing stale "Day closed" until this lands.
+        // Splice the patched row in so the Today card + calendar reflect
+        // it immediately.
+        const att = mapAttendance(ev.data as Parameters<typeof mapAttendance>[0]);
+        setStore((prev) => {
+          const idx = prev.attendance.findIndex((x) => x.id === att.id);
+          const next = [...prev.attendance];
+          if (idx === -1) next.unshift(att); else next[idx] = att;
+          return { ...prev, attendance: next };
+        });
       }
     });
     return off;
