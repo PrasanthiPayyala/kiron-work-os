@@ -299,12 +299,17 @@ function NewProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
+      {/* Three-region layout: pinned title, scrolling form body, pinned
+          footer. Override shadcn's defaults (grid + p-6 + gap-4) so we
+          control the layout. max-h-[85vh] keeps the dialog within the
+          viewport; the middle region uses flex-1 + min-h-0 so the
+          overflow-y-auto can actually engage. */}
+      <DialogContent className="sm:max-w-xl flex max-h-[85vh] flex-col gap-0 p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
           <DialogTitle>New project</DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <Label className="text-xs">Title</Label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9" placeholder="e.g. Q3 launch playbook" autoFocus />
@@ -451,7 +456,7 @@ function NewProjectDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-border px-6 py-3">
           <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button onClick={submit} disabled={busy || !title.trim()}>
             {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
