@@ -299,15 +299,14 @@ function NewProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      {/* flex-col + max-h-[90vh] keeps the header + footer pinned while
-          the form body scrolls. Without this the 12-field grid overflows
-          past the bottom of the viewport on laptops and the Cancel /
-          Create buttons end up unreachable. */}
-      <DialogContent className="sm:max-w-xl flex max-h-[90vh] flex-col p-0">
-        <DialogHeader className="flex-row items-center gap-2 border-b border-border px-6 py-4 space-y-0">
-          {/* Explicit Back action at the top — same effect as Cancel
-              below, just discoverable without scrolling. Keyboard users
-              also reach it before the form fields. */}
+      {/* Keep DialogContent's defaults (grid + p-6 + gap-4) so the
+          header / footer don't fight shadcn — just cap the form body
+          directly. Simple + bulletproof: dialog total height = header
+          + bounded form + footer, predictable, never overflows. */}
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader className="flex-row items-center gap-2 space-y-0">
+          {/* Explicit Back action — same effect as Cancel below, just
+              discoverable at the top without scrolling. */}
           <Button
             type="button"
             variant="ghost"
@@ -322,11 +321,11 @@ function NewProjectDialog({
           <DialogTitle className="flex-1">New project</DialogTitle>
         </DialogHeader>
 
-        {/* `min-h-0` is the magic — without it `flex-1` sizes to content
-            height and overflow-y-auto never engages. Standard CSS Flexbox
-            gotcha: flex children won't shrink below their min-content
-            unless explicitly told they can. */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 grid grid-cols-2 gap-3">
+        {/* Bounded scroll region. max-h tuned to leave room for the
+            header, footer, and DialogContent's own padding within ~90vh.
+            -mr-2 + pr-2 trick prevents content shift when the scrollbar
+            appears. */}
+        <div className="grid grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto -mr-2 pr-2">
           <div className="col-span-2">
             <Label className="text-xs">Title</Label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9" placeholder="e.g. Q3 launch playbook" autoFocus />
@@ -473,7 +472,7 @@ function NewProjectDialog({
           </div>
         </div>
 
-        <DialogFooter className="border-t border-border px-6 py-3">
+        <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button onClick={submit} disabled={busy || !title.trim()}>
             {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
