@@ -8,7 +8,7 @@ import { useDataStore } from "@/lib/dataStore";
 import { useAuth, can } from "@/lib/auth";
 import { api, ApiError } from "@/lib/api";
 import {
-  FolderKanban, LayoutGrid, Table as TableIcon, Plus, Loader2, ChevronLeft,
+  FolderKanban, LayoutGrid, Table as TableIcon, Plus, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -299,33 +299,12 @@ function NewProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      {/* Keep DialogContent's defaults (grid + p-6 + gap-4) so the
-          header / footer don't fight shadcn — just cap the form body
-          directly. Simple + bulletproof: dialog total height = header
-          + bounded form + footer, predictable, never overflows. */}
       <DialogContent className="sm:max-w-xl">
-        <DialogHeader className="flex-row items-center gap-2 space-y-0">
-          {/* Explicit Back action — same effect as Cancel below, just
-              discoverable at the top without scrolling. */}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 -ml-2"
-            onClick={onClose}
-            disabled={busy}
-            aria-label="Back to projects"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <DialogTitle className="flex-1">New project</DialogTitle>
+        <DialogHeader>
+          <DialogTitle>New project</DialogTitle>
         </DialogHeader>
 
-        {/* Bounded scroll region. max-h tuned to leave room for the
-            header, footer, and DialogContent's own padding within ~90vh.
-            -mr-2 + pr-2 trick prevents content shift when the scrollbar
-            appears. */}
-        <div className="grid grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto -mr-2 pr-2">
+        <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <Label className="text-xs">Title</Label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9" placeholder="e.g. Q3 launch playbook" autoFocus />
