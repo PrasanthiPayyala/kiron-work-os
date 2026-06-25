@@ -322,7 +322,11 @@ function NewProjectDialog({
           <DialogTitle className="flex-1">New project</DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-6 py-4 grid grid-cols-2 gap-3">
+        {/* `min-h-0` is the magic — without it `flex-1` sizes to content
+            height and overflow-y-auto never engages. Standard CSS Flexbox
+            gotcha: flex children won't shrink below their min-content
+            unless explicitly told they can. */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <Label className="text-xs">Title</Label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9" placeholder="e.g. Q3 launch playbook" autoFocus />
