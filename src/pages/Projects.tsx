@@ -8,7 +8,7 @@ import { useDataStore } from "@/lib/dataStore";
 import { useAuth, can } from "@/lib/auth";
 import { api, ApiError } from "@/lib/api";
 import {
-  FolderKanban, LayoutGrid, Table as TableIcon, Plus, Loader2,
+  FolderKanban, LayoutGrid, Table as TableIcon, Plus, Loader2, ChevronLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -299,12 +299,30 @@ function NewProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>New project</DialogTitle>
+      {/* flex-col + max-h-[90vh] keeps the header + footer pinned while
+          the form body scrolls. Without this the 12-field grid overflows
+          past the bottom of the viewport on laptops and the Cancel /
+          Create buttons end up unreachable. */}
+      <DialogContent className="sm:max-w-xl flex max-h-[90vh] flex-col p-0">
+        <DialogHeader className="flex-row items-center gap-2 border-b border-border px-6 py-4 space-y-0">
+          {/* Explicit Back action at the top — same effect as Cancel
+              below, just discoverable without scrolling. Keyboard users
+              also reach it before the form fields. */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 -ml-2"
+            onClick={onClose}
+            disabled={busy}
+            aria-label="Back to projects"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <DialogTitle className="flex-1">New project</DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="flex-1 overflow-y-auto px-6 py-4 grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <Label className="text-xs">Title</Label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 h-9" placeholder="e.g. Q3 launch playbook" autoFocus />
@@ -451,7 +469,7 @@ function NewProjectDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="border-t border-border px-6 py-3">
           <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button onClick={submit} disabled={busy || !title.trim()}>
             {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
