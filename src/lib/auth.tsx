@@ -147,6 +147,11 @@ export function canSeeTeamAttendance(role: Role | null | undefined, u: User | nu
 
 export const can = {
   seeFounderOffice: (r: Role) => ["super_admin","founder","founder_office_coordinator","founder_office_support"].includes(r),
+  // Mirrors backend GLOBAL_ROLES in authz.py. These roles belong to every
+  // entity for operational purposes — founders, founder office team, and
+  // super admin should be addable as owner/member on any company's
+  // project regardless of their payroll home_company_id.
+  isCrossCompany: (r: Role) => ["super_admin","founder","founder_office_coordinator","founder_office_support"].includes(r),
   approveLeave: (r: Role) => r === "hr_admin" || r === "super_admin",
   manageRoles: (r: Role) => r === "super_admin",
   reassignTasks: (r: Role) => ["super_admin","founder","founder_office_coordinator","manager","hr_admin"].includes(r),

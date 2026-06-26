@@ -251,7 +251,7 @@ function NewProjectDialog({
   const candidates = useMemo(() => {
     const haystack = memberQuery.toLowerCase();
     return users
-      .filter((u) => u.homeCompanyId === companyId)
+      .filter((u) => u.homeCompanyId === companyId || can.isCrossCompany(u.role))
       .filter((u) => !haystack || u.name.toLowerCase().includes(haystack) || u.email.toLowerCase().includes(haystack));
   }, [users, companyId, memberQuery]);
 
@@ -339,7 +339,7 @@ function NewProjectDialog({
               <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {users
-                  .filter((u) => u.homeCompanyId === companyId)
+                  .filter((u) => u.homeCompanyId === companyId || can.isCrossCompany(u.role))
                   .map((u) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
               </SelectContent>
             </Select>
