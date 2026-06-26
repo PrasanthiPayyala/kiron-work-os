@@ -9,7 +9,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..authz import (
-    ATTENDANCE_VIEW_ROLES, GLOBAL_ROLES, HR_ROLES, can_view_task, has_any_role,
+    ATTENDANCE_VIEW_ROLES, GLOBAL_ROLES, HR_ROLES, PROJECT_VIEW_ALL_ROLES,
+    can_view_task, has_any_role,
 )
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
@@ -59,8 +60,13 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
     }
 
     # --- projects ---
+    # PROJECT_VIEW_ALL_ROLES (GLOBAL_ROLES + hr_admin) see every project
+    # regardless of membership — HR needs the full list for performance
+    # reviews and staffing decisions, founders/founder office for cross-
+    # company coordination. Everyone else sees only projects they own,
+    # created, approve, or are a member of.
     all_projects = _rows(db, "SELECT * FROM projects")
-    if has_any_role(roles, GLOBAL_ROLES):
+    if has_any_role(roles, PROJECT_VIEW_ALL_ROLES):
         projects = all_projects
     else:
         projects = [

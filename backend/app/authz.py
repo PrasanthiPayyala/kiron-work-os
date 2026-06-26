@@ -6,6 +6,12 @@ Python so every endpoint enforces the same row access the DB used to.
 
 # Roles that could see everything in the task/project RLS policies.
 GLOBAL_ROLES = {"super_admin", "founder", "founder_office_coordinator", "founder_office_support"}
+# Who can see every project regardless of ownership / membership. Wider
+# than GLOBAL_ROLES on purpose — HR Admin needs to read project context
+# for performance reviews / payroll allocation / staffing decisions, but
+# we keep them OUT of GLOBAL_ROLES so cross-company task visibility +
+# the cross-company project-member exemption stay tight to founders.
+PROJECT_VIEW_ALL_ROLES = GLOBAL_ROLES | {"hr_admin"}
 # HR-style data (attendance, leave) added hr_admin to the elevated set.
 HR_ROLES = {"super_admin", "founder", "hr_admin"}
 # Who sees the company-wide attendance roster in /bootstrap. Wider than
