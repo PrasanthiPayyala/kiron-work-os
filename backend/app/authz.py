@@ -181,8 +181,12 @@ def can_create_task(created_by: str | None, uid: str, roles: set[str]) -> bool:
 # ---------- Projects ----------
 
 def can_create_project(roles: set[str]) -> bool:
-    # Mirrors src/lib/auth.tsx `can.createProjects`: anyone except intern.
-    return "intern" not in roles or has_any_role(roles, GLOBAL_ROLES)
+    # Mirrors src/lib/auth.tsx `can.createProjects`: anyone except intern
+    # and hr_admin. HR sees the Projects list read-only — edit/delete
+    # remain gated by can_manage_project (GLOBAL_ROLES or owner/creator).
+    if has_any_role(roles, GLOBAL_ROLES):
+        return True
+    return "intern" not in roles and "hr_admin" not in roles
 
 
 def can_manage_project(project: dict, uid: str, roles: set[str]) -> bool:

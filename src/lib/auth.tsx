@@ -133,7 +133,7 @@ export const roleNavAccess: Record<Role, NavKey[]> = {
   manager:                    ["dashboard","my_work","projects","tasks","teams","attendance","leave","expenses","salary","chat","approvals","reports","people","contacts","documents"],
   employee:                   ["dashboard","my_work","projects","tasks","teams","attendance","leave","expenses","salary","chat","approvals","people","documents"],
   intern:                     ["dashboard","my_work","projects","tasks","teams","attendance","leave","expenses","salary","chat","people","documents"],
-  hr_admin:                   ["dashboard","my_work","tasks","teams","attendance","team_attendance","leave","expenses","salary","ledger","chat","approvals","reports","people","contacts","documents","vault","assets","vendors","compliance","settings"],
+  hr_admin:                   ["dashboard","my_work","projects","tasks","teams","attendance","team_attendance","leave","expenses","salary","ledger","chat","approvals","reports","people","contacts","documents","vault","assets","vendors","compliance","settings"],
 };
 
 /** Capability check for the Team Attendance / Follow-up page. Roles in
@@ -155,7 +155,11 @@ export const can = {
   approveLeave: (r: Role) => r === "hr_admin" || r === "super_admin",
   manageRoles: (r: Role) => r === "super_admin",
   reassignTasks: (r: Role) => ["super_admin","founder","founder_office_coordinator","manager","hr_admin"].includes(r),
-  createProjects: (r: Role) => r !== "intern",
+  // HR Admin gets read-only access to projects — they're in the
+  // roleNavAccess list (so sidebar + route work) but blocked from
+  // creating. Edit / delete are already blocked by canManage on the
+  // detail page (HR isn't in GLOBAL_ROLES and won't be a project owner).
+  createProjects: (r: Role) => r !== "intern" && r !== "hr_admin",
   approveContent: (r: Role) => ["manager","founder","super_admin","founder_office_coordinator"].includes(r),
   // Create / edit / deactivate user accounts. Mirrors the backend's
   // USER_MANAGE_ROLES gate so the UI can hide controls the API would reject.
