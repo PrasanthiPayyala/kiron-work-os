@@ -577,7 +577,7 @@ function NewConversationDialog({
   const candidates = useMemo(() => {
     const haystack = q.toLowerCase();
     return users
-      .filter((u) => u.id !== user?.id)
+      .filter((u) => u.id !== user?.id && u.isActive)
       .filter((u) => !haystack || u.name.toLowerCase().includes(haystack) || u.email.toLowerCase().includes(haystack));
   }, [users, user, q]);
 
@@ -615,7 +615,11 @@ function NewConversationDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      {/* flex flex-col overrides shadcn's default grid — grid tracks
+          auto-expand to fit child min-content (long emails in the recipient
+          rows), which pushed Tabs / list / footer past the max-w-lg box.
+          flex-col makes children stretch to the container width instead. */}
+      <DialogContent className="sm:max-w-lg flex flex-col">
         <DialogHeader>
           <DialogTitle>New conversation</DialogTitle>
         </DialogHeader>
