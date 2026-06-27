@@ -18,12 +18,18 @@ import { toast as sonner } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 type LeaveTypeKey = "casual_leave" | "sick_leave" | "loss_of_pay" | "comp_off" | "optional_holiday";
-const LEAVE_TYPE_OPTIONS: { value: LeaveTypeKey; label: string }[] = [
-  { value: "casual_leave",     label: "Casual" },
-  { value: "sick_leave",       label: "Sick" },
-  { value: "comp_off",         label: "Comp off" },
-  { value: "loss_of_pay",      label: "Loss of pay" },
-  { value: "optional_holiday", label: "Optional holiday" },
+// UI option value can be a leave_type OR the synthetic 'comp_off_advance'
+// key which maps to leave_type=comp_off but with a reason auto-prefix so
+// audit can tell "took an existing balance" from "owes a future off-day."
+type LeaveUiKey = LeaveTypeKey | "comp_off_advance";
+const COMP_OFF_ADVANCE_PREFIX = "[Comp-off advance — repay later] ";
+const LEAVE_TYPE_OPTIONS: { value: LeaveUiKey; label: string }[] = [
+  { value: "casual_leave",      label: "Casual" },
+  { value: "sick_leave",        label: "Sick" },
+  { value: "comp_off",          label: "Comp off (already earned)" },
+  { value: "comp_off_advance",  label: "Comp off (repay later)" },
+  { value: "loss_of_pay",       label: "Unpaid leave" },
+  { value: "optional_holiday",  label: "Optional holiday" },
 ];
 
 type Row = {
@@ -118,17 +124,27 @@ export default function TeamAttendance() {
   // backend creates BOTH the attendance log AND the leave_requests row
   // (and bumps the balance) so payroll's day-by-day rollup picks it up.
   const handleMarkAsLeave = async (userId: string, name: string,
-                                    leaveType: LeaveTypeKey, reason: string) => {
+                                    uiKey: LeaveUiKey, reason: string) => {
     setMarkingLeaveUserId(userId);
+    // 'comp_off_advance' is a UI-only key — backend stores it as a
+    // regular comp_off leave with the advance prefix in the reason so
+    // audit + reports can tell the two apart. Negative balance is what
+    // actually represents the IOU.
+    const isAdvance = uiKey === "comp_off_advance";
+    const dbLeaveType: LeaveTypeKey = isAdvance ? "comp_off" : uiKey;
+    const trimmed = reason.trim();
+    const finalReason = isAdvance
+      ? (COMP_OFF_ADVANCE_PREFIX + (trimmed || "—")).trim()
+      : (trimmed || null);
     try {
       await api.markAttendanceAsLeave({
         user_id: userId,
         work_date: date,
-        leave_type: leaveType,
-        reason: reason.trim() || null,
+        leave_type: dbLeaveType,
+        reason: finalReason,
       });
-      const label = LEAVE_TYPE_OPTIONS.find((o) => o.value === leaveType)?.label ?? leaveType;
-      sonner.success(`${name} marked on ${label} leave for ${date}`);
+      const label = LEAVE_TYPE_OPTIONS.find((o) => o.value === uiKey)?.label ?? uiKey;
+      sonner.success(`${name} marked on ${label} for ${date}`);
       refresh();
       void load(date);
     } catch (e) {
@@ -353,7 +369,7 @@ function PersonList({
   variant?: "alert";
   onResume?: (userId: string, name: string) => Promise<void>;
   resumingUserId?: string | null;
-  onMarkLeave?: (userId: string, name: string, leaveType: LeaveTypeKey, reason: string) => Promise<void>;
+  onMarkLeave?: (userId: string, name: string, leaveType: LeaveUiKey, reason: string) => Promise<void>;
   markingLeaveUserId?: string | null;
 }) {
   if (rows.length === 0) {
@@ -433,10 +449,10 @@ function MarkLeavePopover({
   busy, onMark,
 }: {
   busy: boolean;
-  onMark: (leaveType: LeaveTypeKey, reason: string) => Promise<void>;
+  onMark: (leaveType: LeaveUiKey, reason: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [leaveType, setLeaveType] = useState<LeaveTypeKey>("casual_leave");
+  const [leaveType, setLeaveType] = useState<LeaveUiKey>("casual_leave");
   const [reason, setReason] = useState("");
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -462,7 +478,7 @@ function MarkLeavePopover({
           </div>
           <div>
             <label className="text-[11px] text-muted-foreground">Leave type</label>
-            <Select value={leaveType} onValueChange={(v) => setLeaveType(v as LeaveTypeKey)}>
+            <Select value={leaveType} onValueChange={(v) => setLeaveType(v as LeaveUiKey)}>
               <SelectTrigger className="mt-1 h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {LEAVE_TYPE_OPTIONS.map((o) => (
@@ -470,6 +486,11 @@ function MarkLeavePopover({
                 ))}
               </SelectContent>
             </Select>
+            {leaveType === "comp_off_advance" && (
+              <p className="mt-1 text-[10px] text-warning">
+                IOU — comp-off balance will go negative until the employee works a future off-day.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-[11px] text-muted-foreground">Reason (optional)</label>

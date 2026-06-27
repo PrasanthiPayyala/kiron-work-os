@@ -17,10 +17,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 
+// UI option key -> DB leave_type. 'comp_off_advance' collapses to
+// 'comp_off' on the wire; the difference is encoded in the reason
+// (see COMP_OFF_ADVANCE_PREFIX) so audit + reports can tell them apart.
 const LEAVE_TYPE_DB: Record<string, string> = {
   casual: "casual_leave", sick: "sick_leave", loss_of_pay: "loss_of_pay",
-  comp_off: "comp_off", optional_holiday: "optional_holiday",
+  comp_off: "comp_off", comp_off_advance: "comp_off",
+  optional_holiday: "optional_holiday",
 };
+const COMP_OFF_ADVANCE_PREFIX = "[Comp-off advance — repay later] ";
+
+// Display label for a leave row in the lists. Distinguishes comp-off
+// "advance" rows by sniffing the reason prefix the apply path writes,
+// since the DB stores them as plain comp_off leaves.
+function leaveRowLabel(t: string, reason?: string): string {
+  if (t === "loss_of_pay") return "Unpaid leave";
+  if (t === "comp_off") {
+    return reason?.startsWith(COMP_OFF_ADVANCE_PREFIX)
+      ? "Comp off (repay later)"
+      : "Comp off";
+  }
+  if (t === "optional_holiday") return "Optional holiday";
+  // casual / sick / wfh / earned / maternity / paternity — capitalize first letter.
+  const s = t.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 const BALANCED_TYPES = [
   "casual_leave", "sick_leave", "earned_leave",
@@ -87,11 +108,15 @@ export default function Leave() {
 
   const submit = async () => {
     if (!user || !from || !to) { toast.error("From and To dates required"); return; }
+    const trimmed = reason.trim();
+    const finalReason = type === "comp_off_advance"
+      ? (COMP_OFF_ADVANCE_PREFIX + (trimmed || "—")).trim()
+      : trimmed;
     try {
       await api.applyLeave({
         leave_type: LEAVE_TYPE_DB[type],
         start_date: from, end_date: to,
-        days, reason,
+        days, reason: finalReason,
       });
       toast.success("Leave submitted");
       setFrom(""); setTo(""); setReason(""); refresh();
@@ -132,11 +157,22 @@ export default function Leave() {
         <div className="grid gap-3 md:grid-cols-4">
           {BALANCE_DISPLAY.map((b) => {
             const row = balanceByType.get(b.type);
-            const value = row ? Math.max(0, row.available) : 0;
+            // Comp-off can go negative (advance / IOU). Other types are
+            // floored at 0 because going below means an accounting bug
+            // we don't want to surface as "negative balance".
+            const rawAvail = row ? row.available : 0;
+            const isCompOff = b.type === "comp_off";
+            const isOwed = isCompOff && rawAvail < 0;
+            const display = isCompOff ? rawAvail : Math.max(0, rawAvail);
+            const absDisplay = Math.abs(display);
+            const valueStr = Number.isInteger(absDisplay)
+              ? `${absDisplay}`
+              : absDisplay.toFixed(1);
+
             // For comp-off, add a small "(+ X pending)" hint so the
             // employee knows what HR still has to approve.
             let hint: string | undefined;
-            if (b.type === "comp_off" && user) {
+            if (isCompOff && user) {
               const pending = attendance
                 .filter((a) => a.userId === user.id && a.compOffStatus === "pending")
                 .reduce((sum, a) => sum + (a.compOffEarned ?? 0), 0);
@@ -147,9 +183,9 @@ export default function Leave() {
             return (
               <StatCard
                 key={b.type}
-                label={`${b.label} remaining`}
-                value={Number.isInteger(value) ? value : value.toFixed(1)}
-                accent={b.accent}
+                label={isOwed ? `${b.label} owed` : `${b.label} remaining`}
+                value={isOwed ? `-${valueStr}` : valueStr}
+                accent={isOwed ? "destructive" : b.accent}
                 hint={hint}
               />
             );
@@ -180,11 +216,17 @@ export default function Leave() {
                     <SelectContent>
                       <SelectItem value="casual">Casual</SelectItem>
                       <SelectItem value="sick">Sick</SelectItem>
-                      <SelectItem value="loss_of_pay">Loss of Pay</SelectItem>
-                      <SelectItem value="comp_off">Comp Off</SelectItem>
-                      <SelectItem value="optional_holiday">Optional Holiday</SelectItem>
+                      <SelectItem value="loss_of_pay">Unpaid leave</SelectItem>
+                      <SelectItem value="comp_off">Comp off (already earned)</SelectItem>
+                      <SelectItem value="comp_off_advance">Comp off (repay later)</SelectItem>
+                      <SelectItem value="optional_holiday">Optional holiday</SelectItem>
                     </SelectContent>
                   </Select>
+                  {type === "comp_off_advance" && (
+                    <p className="mt-1 text-[11px] text-warning">
+                      IOU — your comp-off balance will go negative. Settle it by working a future off-day.
+                    </p>
+                  )}
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     Working from home? Use the <b>WFH</b> option on the Attendance check-in
                     instead — WFH is a working state, not a leave.
@@ -206,7 +248,7 @@ export default function Leave() {
               {myLeaves.map((l) => (
                 <li key={l.id} className="flex items-center gap-3 p-3.5">
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium capitalize">{l.type.replace("_"," ")} · {l.days}d</p>
+                    <p className="text-sm font-medium">{leaveRowLabel(l.type, l.reason)} · {l.days}d</p>
                     <p className="text-xs text-muted-foreground">{l.fromDate} → {l.toDate}</p>
                   </div>
                   <LeaveStatusBadge status={l.status} />
@@ -229,7 +271,7 @@ export default function Leave() {
                         <UserAvatar userId={l.userId} size="sm" />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium">{getUser(l.userId)?.name}</p>
-                          <p className="text-xs text-muted-foreground capitalize">{l.type.replace("_"," ")} · {l.fromDate} → {l.toDate} · {l.reason}</p>
+                          <p className="text-xs text-muted-foreground">{leaveRowLabel(l.type, l.reason)} · {l.fromDate} → {l.toDate} · {l.reason}</p>
                         </div>
                         {s === "pending" && (<><Button size="sm" variant="outline" onClick={() => decide(l.id, "rejected")}>Reject</Button><Button size="sm" onClick={() => decide(l.id, "approved")}>Approve</Button></>)}
                       </li>
