@@ -50,6 +50,7 @@ _SLA_LOCK_KEY = 7301823461  # "KIRON_SLA"
 _CALL_LOCK_KEY = 7301823462  # "KIRON_CALLS"
 _VENDOR_LOCK_KEY = 7301823463  # "KIRON_VENDORS"
 _COMPLIANCE_LOCK_KEY = 7301823464  # "KIRON_COMPLIANCE"
+_COMP_OFF_OVERDUE_LOCK_KEY = 7301823465  # "KIRON_COMPOFF"
 
 # IST = UTC+5:30. Hard-coded because the rest of the app already assumes IST
 # (attendance grace, working hours). Don't introduce zoneinfo here.
@@ -1045,6 +1046,152 @@ def _uniq(items: Iterable) -> list[str]:
 
 
 # ------------------------------------------------------------------
+# Comp-off advance — nag HR when the planned repay date passes and
+# the employee still owes a comp-off (balance is still negative).
+#
+# Triggered for every leave_request where:
+#   - leave_type = 'comp_off'
+#   - comp_off_repay_by IS NOT NULL
+#   - comp_off_repay_by < today
+#   - the employee's current comp_off available balance < 0 (still owes)
+#
+# Each such advance generates one notification per HR_ROLES user, deduped
+# by link ("/leave?repay_overdue=<request_id>") within the last 24h so a
+# nightly nag doesn't pile up.
+# ------------------------------------------------------------------
+
+_HR_NAG_ROLES = ("hr_admin", "super_admin", "founder")
+
+
+async def run_comp_off_overdue_check() -> dict:
+    summary = {"overdue_advances": 0, "notifications_inserted": 0}
+    inserted_payloads: list[dict] = []
+
+    today = dt.datetime.now(_IST).date()
+    year = today.year
+
+    with engine.begin() as conn:
+        locked = conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"),
+            {"k": _COMP_OFF_OVERDUE_LOCK_KEY},
+        ).scalar_one()
+        if not locked:
+            log.info("comp_off_overdue_check: lock held by another worker, skipping")
+            return summary
+        try:
+            advances = conn.execute(
+                text(
+                    "SELECT lr.id, lr.user_id, lr.comp_off_repay_by, "
+                    "       p.full_name "
+                    "FROM leave_requests lr "
+                    "JOIN profiles p ON p.id = lr.user_id "
+                    "WHERE lr.leave_type = 'comp_off' "
+                    "  AND lr.comp_off_repay_by IS NOT NULL "
+                    "  AND lr.comp_off_repay_by < :today"
+                ),
+                {"today": today.isoformat()},
+            ).mappings().all()
+
+            if not advances:
+                return summary
+
+            hr_user_ids = [
+                str(r["user_id"]) for r in conn.execute(
+                    text(
+                        "SELECT DISTINCT ur.user_id FROM user_roles ur "
+                        "JOIN profiles p ON p.id = ur.user_id "
+                        "WHERE p.is_active = true AND ur.role::text = ANY(:roles)"
+                    ),
+                    {"roles": list(_HR_NAG_ROLES)},
+                ).mappings().all()
+            ]
+            if not hr_user_ids:
+                return summary
+
+            for adv in advances:
+                # Only nag if the employee STILL owes — they may have
+                # already worked an off-day since the advance and the
+                # balance is back to 0 (or positive).
+                bal = conn.execute(
+                    text(
+                        "SELECT COALESCE(opening, 0) + COALESCE(accrued, 0) "
+                        "       + COALESCE(adjustment, 0) - COALESCE(used, 0) AS available "
+                        "FROM leave_balances "
+                        "WHERE user_id = :u AND year = :y AND leave_type = 'comp_off'"
+                    ),
+                    {"u": str(adv["user_id"]), "y": year},
+                ).mappings().first()
+                if bal and float(bal["available"]) >= 0:
+                    # Repaid (or no balance row — treat as not-owed too)
+                    continue
+                summary["overdue_advances"] += 1
+
+                link = f"/leave?repay_overdue={adv['id']}"
+                title = f"Comp-off repay overdue: {adv['full_name']}"
+                body = (
+                    f"Planned to work an off-day by {adv['comp_off_repay_by']}, "
+                    "but still owes a comp-off. Follow up or extend the deadline."
+                )
+
+                for hr_uid in hr_user_ids:
+                    # Dedup: skip if we already nagged this HR about this
+                    # advance in the last 24h.
+                    existing = conn.execute(
+                        text(
+                            "SELECT 1 FROM notifications "
+                            "WHERE user_id = :u AND link = :l "
+                            "  AND created_at > now() - interval '24 hours' "
+                            "LIMIT 1"
+                        ),
+                        {"u": hr_uid, "l": link},
+                    ).first()
+                    if existing is not None:
+                        continue
+                    nid = conn.execute(
+                        text(
+                            "INSERT INTO notifications "
+                            "  (user_id, notification_type, title, body, link) "
+                            "VALUES (:u, 'general', :t, :b, :l) "
+                            "RETURNING id, user_id, notification_type, title, body, link, is_read, created_at"
+                        ),
+                        {"u": hr_uid, "t": title, "b": body, "l": link},
+                    ).mappings().first()
+                    summary["notifications_inserted"] += 1
+                    inserted_payloads.append({
+                        "id": str(nid["id"]),
+                        "user_id": str(nid["user_id"]),
+                        "notification_type": str(nid["notification_type"]),
+                        "title": nid["title"],
+                        "body": nid["body"],
+                        "link": nid["link"],
+                        "is_read": nid["is_read"],
+                        "created_at": nid["created_at"].isoformat()
+                            if hasattr(nid["created_at"], "isoformat") else str(nid["created_at"]),
+                    })
+        finally:
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:k)"),
+                {"k": _COMP_OFF_OVERDUE_LOCK_KEY},
+            )
+
+    # Broadcast outside the DB transaction so a slow WS doesn't hold locks.
+    if inserted_payloads:
+        from .routers import ws as ws_router
+        for p in inserted_payloads:
+            try:
+                await ws_router.notification_new(p)
+            except Exception:  # noqa: BLE001
+                log.exception("ws notification_new failed for %s", p.get("id"))
+
+    log.info(
+        "comp_off_overdue_check: advances=%(overdue_advances)d "
+        "notifications=%(notifications_inserted)d",
+        summary,
+    )
+    return summary
+
+
+# ------------------------------------------------------------------
 # Lifecycle hooks (called from main.py)
 # ------------------------------------------------------------------
 
@@ -1100,6 +1247,17 @@ def start_scheduler() -> None:
         coalesce=True,
         max_instances=1,
         next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=3),
+    )
+    # Comp-off advance overdue — runs every 6 hours. Cheap query (small
+    # index hit), self-dedups via 24h notification-link uniqueness.
+    _scheduler.add_job(
+        run_comp_off_overdue_check,
+        trigger="interval",
+        hours=6,
+        id="comp_off_overdue",
+        coalesce=True,
+        max_instances=1,
+        next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=4),
     )
     _scheduler.start()
     log.info(

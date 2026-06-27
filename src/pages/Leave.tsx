@@ -61,6 +61,9 @@ export default function Leave() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [reason, setReason] = useState("");
+  // Comp-off advance only — date the employee plans to work an off-day
+  // to repay this advance. Optional; HR can leave blank for "flexible".
+  const [repayBy, setRepayBy] = useState("");
 
   const myLeaves = leaveRequests.filter((l) => l.userId === user?.id);
   const isHR = user?.role === "hr_admin" || user?.role === "super_admin";
@@ -117,9 +120,10 @@ export default function Leave() {
         leave_type: LEAVE_TYPE_DB[type],
         start_date: from, end_date: to,
         days, reason: finalReason,
+        comp_off_repay_by: type === "comp_off_advance" && repayBy ? repayBy : null,
       });
       toast.success("Leave submitted");
-      setFrom(""); setTo(""); setReason(""); refresh();
+      setFrom(""); setTo(""); setReason(""); setRepayBy(""); refresh();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to submit leave");
     }
@@ -223,9 +227,20 @@ export default function Leave() {
                     </SelectContent>
                   </Select>
                   {type === "comp_off_advance" && (
-                    <p className="mt-1 text-[11px] text-warning">
-                      IOU — your comp-off balance will go negative. Settle it by working a future off-day.
-                    </p>
+                    <>
+                      <p className="mt-1 text-[11px] text-warning">
+                        IOU — your comp-off balance will go negative. Settle it by working a future off-day.
+                      </p>
+                      <div className="mt-2">
+                        <label className="text-[11px] text-muted-foreground">Plan to work which day to repay? (optional)</label>
+                        <input
+                          type="date"
+                          value={repayBy}
+                          onChange={(e) => setRepayBy(e.target.value)}
+                          className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                        />
+                      </div>
+                    </>
                   )}
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     Working from home? Use the <b>WFH</b> option on the Attendance check-in
@@ -249,7 +264,10 @@ export default function Leave() {
                 <li key={l.id} className="flex items-center gap-3 p-3.5">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium">{leaveRowLabel(l.type, l.reason)} · {l.days}d</p>
-                    <p className="text-xs text-muted-foreground">{l.fromDate} → {l.toDate}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {l.fromDate} → {l.toDate}
+                      {l.compOffRepayBy && <> · plan to work by <b>{l.compOffRepayBy}</b></>}
+                    </p>
                   </div>
                   <LeaveStatusBadge status={l.status} />
                 </li>
@@ -271,7 +289,10 @@ export default function Leave() {
                         <UserAvatar userId={l.userId} size="sm" />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium">{getUser(l.userId)?.name}</p>
-                          <p className="text-xs text-muted-foreground">{leaveRowLabel(l.type, l.reason)} · {l.fromDate} → {l.toDate} · {l.reason}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {leaveRowLabel(l.type, l.reason)} · {l.fromDate} → {l.toDate} · {l.reason}
+                            {l.compOffRepayBy && <> · repay by <b>{l.compOffRepayBy}</b></>}
+                          </p>
                         </div>
                         {s === "pending" && (<><Button size="sm" variant="outline" onClick={() => decide(l.id, "rejected")}>Reject</Button><Button size="sm" onClick={() => decide(l.id, "approved")}>Approve</Button></>)}
                       </li>

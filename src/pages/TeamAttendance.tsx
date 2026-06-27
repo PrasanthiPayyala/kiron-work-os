@@ -127,12 +127,14 @@ export default function TeamAttendance() {
   // HR flips a missed-check-in row into an approved-leave row. The
   // backend creates BOTH the attendance log AND the leave_requests row
   // (and bumps the balance) so payroll's day-by-day rollup picks it up.
-  // Core mark-as-leave call shared by the inline missed-check-in popover
-  // (always for `date`) and the page-level dialog (any user / any date).
+  // Core mark-as-leave call shared by the inline popover (always for
+  // the page's selected `date`) and the page-level dialog (any user /
+  // any date). repayBy is only sent when uiKey === 'comp_off_advance'.
   const markLeaveCore = async (
     userId: string, name: string,
     workDate: string,
     uiKey: LeaveUiKey, reason: string,
+    repayBy?: string | null,
   ) => {
     // 'comp_off_advance' is a UI-only key — backend stores it as a
     // regular comp_off leave with the advance prefix in the reason so
@@ -149,6 +151,7 @@ export default function TeamAttendance() {
       work_date: workDate,
       leave_type: dbLeaveType,
       reason: finalReason,
+      comp_off_repay_by: isAdvance && repayBy ? repayBy : null,
     });
     const label = LEAVE_TYPE_OPTIONS.find((o) => o.value === uiKey)?.label ?? uiKey;
     sonner.success(`${name} marked on ${label} for ${workDate}`);
@@ -157,10 +160,11 @@ export default function TeamAttendance() {
   };
 
   const handleMarkAsLeave = async (userId: string, name: string,
-                                    uiKey: LeaveUiKey, reason: string) => {
+                                    uiKey: LeaveUiKey, reason: string,
+                                    repayBy?: string | null) => {
     setMarkingLeaveUserId(userId);
     try {
-      await markLeaveCore(userId, name, date, uiKey, reason);
+      await markLeaveCore(userId, name, date, uiKey, reason, repayBy);
     } catch (e) {
       sonner.error(e instanceof ApiError ? e.message : `Couldn't mark ${name} on leave`);
     } finally {
@@ -313,13 +317,28 @@ export default function TeamAttendance() {
             />
           </TabsContent>
           <TabsContent value="present">
-            <PersonList rows={present} getCompany={getCompany} getUser={getUser} emptyText="No check-ins yet." />
+            <PersonList
+              rows={present} getCompany={getCompany} getUser={getUser}
+              emptyText="No check-ins yet."
+              onMarkLeave={handleMarkAsLeave}
+              markingLeaveUserId={markingLeaveUserId}
+            />
           </TabsContent>
           <TabsContent value="on_leave">
-            <PersonList rows={onLeave} getCompany={getCompany} getUser={getUser} emptyText="No one on leave today." />
+            <PersonList
+              rows={onLeave} getCompany={getCompany} getUser={getUser}
+              emptyText="No one on leave today."
+              onMarkLeave={handleMarkAsLeave}
+              markingLeaveUserId={markingLeaveUserId}
+            />
           </TabsContent>
           <TabsContent value="off_today">
-            <PersonList rows={offToday} getCompany={getCompany} getUser={getUser} emptyText="Everyone is working today." />
+            <PersonList
+              rows={offToday} getCompany={getCompany} getUser={getUser}
+              emptyText="Everyone is working today."
+              onMarkLeave={handleMarkAsLeave}
+              markingLeaveUserId={markingLeaveUserId}
+            />
           </TabsContent>
           <TabsContent value="comp_off">
             {pendingCompOffs.length === 0 ? (
@@ -379,11 +398,11 @@ export default function TeamAttendance() {
         onClose={() => setMarkLeaveDialogOpen(false)}
         defaultDate={date}
         users={users.filter((u) => u.isActive)}
-        onSubmit={async (userId, workDate, uiKey, reason) => {
+        onSubmit={async (userId, workDate, uiKey, reason, repayBy) => {
           const u = users.find((x) => x.id === userId);
           if (!u) return;
           try {
-            await markLeaveCore(u.id, u.name, workDate, uiKey, reason);
+            await markLeaveCore(u.id, u.name, workDate, uiKey, reason, repayBy);
             setMarkLeaveDialogOpen(false);
           } catch (e) {
             sonner.error(e instanceof ApiError ? e.message : `Couldn't mark ${u.name} on leave`);
@@ -406,7 +425,10 @@ function PersonList({
   variant?: "alert";
   onResume?: (userId: string, name: string) => Promise<void>;
   resumingUserId?: string | null;
-  onMarkLeave?: (userId: string, name: string, leaveType: LeaveUiKey, reason: string) => Promise<void>;
+  onMarkLeave?: (
+    userId: string, name: string, leaveType: LeaveUiKey, reason: string,
+    repayBy?: string | null,
+  ) => Promise<void>;
   markingLeaveUserId?: string | null;
 }) {
   if (rows.length === 0) {
@@ -454,14 +476,15 @@ function PersonList({
                   Resume
                 </button>
               )}
-              {/* Mark as leave — only for missed-check-in rows. Pops a small
-                  form with leave type + reason; backend creates BOTH the
-                  attendance log (status=leave) AND an approved leave_request
-                  so payroll + balance both reflect the decision. */}
-              {onMarkLeave && r.reason === "missed_check_in" && (
+              {/* Mark as leave — shown on every row across every tab.
+                  Backend creates the attendance log + an approved
+                  leave_request + bumps the balance. If a log already
+                  exists for the (user, date) the API 409s and we toast
+                  the error so HR knows to PATCH that row instead. */}
+              {onMarkLeave && (
                 <MarkLeavePopover
                   busy={markingLeaveUserId === r.user_id}
-                  onMark={(lt, reason) => onMarkLeave(r.user_id, r.name, lt, reason)}
+                  onMark={(lt, reason, repayBy) => onMarkLeave(r.user_id, r.name, lt, reason, repayBy)}
                 />
               )}
               {r.email && (
@@ -486,11 +509,12 @@ function MarkLeavePopover({
   busy, onMark,
 }: {
   busy: boolean;
-  onMark: (leaveType: LeaveUiKey, reason: string) => Promise<void>;
+  onMark: (leaveType: LeaveUiKey, reason: string, repayBy?: string | null) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [leaveType, setLeaveType] = useState<LeaveUiKey>("casual_leave");
   const [reason, setReason] = useState("");
+  const [repayBy, setRepayBy] = useState("");
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -524,9 +548,20 @@ function MarkLeavePopover({
               </SelectContent>
             </Select>
             {leaveType === "comp_off_advance" && (
-              <p className="mt-1 text-[10px] text-warning">
-                IOU — comp-off balance will go negative until the employee works a future off-day.
-              </p>
+              <>
+                <p className="mt-1 text-[10px] text-warning">
+                  IOU — comp-off balance will go negative until repaid.
+                </p>
+                <div className="mt-1.5">
+                  <label className="text-[10px] text-muted-foreground">Plan to work which day to repay? (optional)</label>
+                  <input
+                    type="date"
+                    value={repayBy}
+                    onChange={(e) => setRepayBy(e.target.value)}
+                    className="mt-0.5 h-7 w-full rounded-md border border-border bg-background px-2 text-xs"
+                  />
+                </div>
+              </>
             )}
           </div>
           <div>
@@ -547,9 +582,10 @@ function MarkLeavePopover({
               className="h-7 text-xs"
               disabled={busy}
               onClick={async () => {
-                await onMark(leaveType, reason);
+                await onMark(leaveType, reason, leaveType === "comp_off_advance" ? repayBy : null);
                 setOpen(false);
                 setReason("");
+                setRepayBy("");
               }}
             >
               {busy && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
@@ -573,19 +609,23 @@ function MarkLeaveDialog({
   onClose: () => void;
   defaultDate: string;
   users: ReturnType<typeof useDataStore>["users"];
-  onSubmit: (userId: string, workDate: string, uiKey: LeaveUiKey, reason: string) => Promise<void>;
+  onSubmit: (
+    userId: string, workDate: string, uiKey: LeaveUiKey, reason: string,
+    repayBy?: string | null,
+  ) => Promise<void>;
 }) {
   const [userId, setUserId] = useState<string>("");
   const [workDate, setWorkDate] = useState(defaultDate);
   const [leaveType, setLeaveType] = useState<LeaveUiKey>("casual_leave");
   const [reason, setReason] = useState("");
+  const [repayBy, setRepayBy] = useState("");
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
       setUserId(""); setWorkDate(defaultDate); setLeaveType("casual_leave");
-      setReason(""); setQ(""); setBusy(false);
+      setReason(""); setRepayBy(""); setQ(""); setBusy(false);
     }
   }, [open, defaultDate]);
 
@@ -601,7 +641,10 @@ function MarkLeaveDialog({
     if (!workDate) { sonner.error("Pick a date"); return; }
     setBusy(true);
     try {
-      await onSubmit(userId, workDate, leaveType, reason);
+      await onSubmit(
+        userId, workDate, leaveType, reason,
+        leaveType === "comp_off_advance" ? repayBy : null,
+      );
     } finally {
       setBusy(false);
     }
@@ -671,9 +714,20 @@ function MarkLeaveDialog({
           </div>
 
           {leaveType === "comp_off_advance" && (
-            <p className="text-[11px] text-warning">
-              IOU — comp-off balance will go negative until the employee works a future off-day.
-            </p>
+            <>
+              <p className="text-[11px] text-warning">
+                IOU — comp-off balance will go negative until repaid.
+              </p>
+              <div>
+                <Label className="text-xs">Plan to work which day to repay? (optional)</Label>
+                <Input
+                  type="date"
+                  value={repayBy}
+                  onChange={(e) => setRepayBy(e.target.value)}
+                  className="mt-1 h-9"
+                />
+              </div>
+            </>
           )}
 
           <div>

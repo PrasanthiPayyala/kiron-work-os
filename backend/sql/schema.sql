@@ -291,9 +291,17 @@ create table public.leave_requests (
   status public.leave_status not null default 'pending',
   hr_approver_id uuid references public.profiles(id),
   hr_comments text,
+  -- Comp-off advance only: planned date the employee will work an off-day
+  -- to repay this advance. NULL on every other leave type. See alembic 0031.
+  -- Scheduler nags HR once the date passes and the comp_off balance is
+  -- still negative.
+  comp_off_repay_by date,
   created_at timestamptz not null default now(),
   decided_at timestamptz
 );
+create index idx_leave_requests_comp_off_repay_by
+  on public.leave_requests (comp_off_repay_by)
+  where comp_off_repay_by is not null;
 
 create table public.conversations (
   id uuid primary key default gen_random_uuid(),

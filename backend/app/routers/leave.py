@@ -28,6 +28,9 @@ class LeaveCreate(BaseModel):
     end_date: str
     days: float = 1
     reason: str | None = None
+    # Only meaningful for comp-off advances. Ignored for other types.
+    # Planned date the employee will work an off-day to settle this advance.
+    comp_off_repay_by: str | None = None
 
 
 class LeaveUpdate(BaseModel):
@@ -47,11 +50,13 @@ def apply(body: LeaveCreate, user: CurrentUser = Depends(get_current_user), db: 
     new_id = str(uuid.uuid4())
     db.execute(
         text(
-            "INSERT INTO leave_requests (id, user_id, leave_type, start_date, end_date, days, reason, status) "
-            "VALUES (:id, :uid, :lt, :sd, :ed, :days, :reason, 'pending')"
+            "INSERT INTO leave_requests (id, user_id, leave_type, start_date, end_date, "
+            "                            days, reason, status, comp_off_repay_by) "
+            "VALUES (:id, :uid, :lt, :sd, :ed, :days, :reason, 'pending', :repay)"
         ),
         {"id": new_id, "uid": user.id, "lt": body.leave_type, "sd": body.start_date,
-         "ed": body.end_date, "days": body.days, "reason": body.reason},
+         "ed": body.end_date, "days": body.days, "reason": body.reason,
+         "repay": body.comp_off_repay_by if body.leave_type == "comp_off" else None},
     )
     db.commit()
     return _get(db, new_id)

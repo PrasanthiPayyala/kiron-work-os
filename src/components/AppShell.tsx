@@ -4,6 +4,7 @@ import { desktopPermission, requestDesktopPermission, type DesktopPermission } f
 import { toast } from "sonner";
 import { useAuth, roleNavAccess, roleLabel, canSeeTeamAttendance, type NavKey } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
+import { api } from "@/lib/api";
 import { UserAvatar } from "@/components/UserAvatar";
 import { CompanyBadge } from "@/components/CompanyBadge";
 import { cn } from "@/lib/utils";
@@ -52,7 +53,7 @@ const navItems: { key: NavKey; label: string; to: string; icon: typeof LayoutDas
 
 export default function AppShell() {
   const { user, signOut } = useAuth();
-  const { getCompany, notifications } = useDataStore();
+  const { getCompany, notifications, refresh } = useDataStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
@@ -71,7 +72,11 @@ export default function AppShell() {
   const visibleNav = navItems.filter((n) => allowed.has(n.key));
   const company = getCompany(user.homeCompanyId);
   const myNotifs = notifications.filter((n) => n.userId === user.id);
-  const unreadNotifs = myNotifs.filter((n) => !n.read).length;
+  // Only unread land in the bell dropdown — once read, they drop off so
+  // the list doesn't keep showing the same entries forever. Full history
+  // (read + unread) lives on the /notifications page via "View all".
+  const myUnreadNotifs = myNotifs.filter((n) => !n.read);
+  const unreadNotifs = myUnreadNotifs.length;
   const unreadChat = useUnreadChatCount();
   const online = useOnlineStatus();
   const { canInstall, install } = usePwaInstall();
@@ -306,16 +311,27 @@ export default function AppShell() {
                   </div>
                 )}
                 {notifPerm === "default" && <DropdownMenuSeparator />}
-                {myNotifs.length === 0 && (
+                {myUnreadNotifs.length === 0 && (
                   <p className="px-2 py-3 text-sm text-muted-foreground">You're all caught up.</p>
                 )}
-                {myNotifs.slice(0, 6).map((n) => (
-                  <DropdownMenuItem key={n.id} onClick={() => n.link && navigate(n.link)} className="flex flex-col items-start gap-0.5">
+                {myUnreadNotifs.slice(0, 6).map((n) => (
+                  <DropdownMenuItem
+                    key={n.id}
+                    onClick={async () => {
+                      // Mark read on the server + refresh the dataStore so
+                      // the entry drops off the bell immediately. Navigation
+                      // happens after so the page lands with fresh state.
+                      try { await api.markNotificationRead(n.id); } catch { /* swallow */ }
+                      void refresh();
+                      if (n.link) navigate(n.link);
+                    }}
+                    className="flex flex-col items-start gap-0.5"
+                  >
                     <span className="text-sm font-medium">{n.title}</span>
                     {n.body && <span className="text-xs text-muted-foreground">{n.body}</span>}
                   </DropdownMenuItem>
                 ))}
-                {myNotifs.length > 0 && <DropdownMenuSeparator />}
+                {myUnreadNotifs.length > 0 && <DropdownMenuSeparator />}
                 <DropdownMenuItem onClick={() => navigate("/notifications")} className="justify-center text-xs font-medium text-primary">
                   View all notifications
                 </DropdownMenuItem>

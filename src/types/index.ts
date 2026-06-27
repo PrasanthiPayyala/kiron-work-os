@@ -388,6 +388,9 @@ export interface LeaveRequest {
   status: LeaveStatus;
   decidedById?: ID;
   createdAt: ISODate;
+  /** Only set for comp-off advances ("repay later"). Planned date the
+   *  employee will work an off-day to settle this advance. */
+  compOffRepayBy?: ISODate;
 }
 
 // ---------- Chat ----------

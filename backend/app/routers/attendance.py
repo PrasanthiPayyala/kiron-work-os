@@ -256,6 +256,11 @@ class MarkLeaveBody(BaseModel):
     work_date: str             # YYYY-MM-DD
     leave_type: str            # one of MARK_LEAVE_TYPES
     reason: Optional[str] = None
+    # Only used when the UI sends a comp-off advance. Ignored for other
+    # leave types. Planned date the employee will work an off-day to
+    # repay the advance; scheduler nags HR after this date if balance
+    # is still negative.
+    comp_off_repay_by: Optional[str] = None
 
 
 @router.post("/mark-leave", status_code=status.HTTP_201_CREATED)
@@ -332,13 +337,16 @@ def mark_leave(
         text(
             "INSERT INTO leave_requests "
             "  (id, user_id, leave_type, start_date, end_date, days, reason, "
-            "   status, hr_approver_id, decided_at) "
-            "VALUES (:id, :uid, :lt, :d, :d, 1, :reason, 'approved', :approver, :decided)"
+            "   status, hr_approver_id, decided_at, comp_off_repay_by) "
+            "VALUES (:id, :uid, :lt, :d, :d, 1, :reason, 'approved', :approver, :decided, :repay)"
         ),
         {
             "id": leave_id, "uid": body.user_id, "lt": body.leave_type,
             "d": body.work_date, "reason": body.reason,
             "approver": user.id, "decided": now_iso,
+            # Only meaningful for comp_off; we still pass NULL for the rest
+            # so the column is never half-stamped on the wrong type.
+            "repay": body.comp_off_repay_by if body.leave_type == "comp_off" else None,
         },
     )
 
