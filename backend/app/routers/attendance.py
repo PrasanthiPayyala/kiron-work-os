@@ -43,17 +43,87 @@ def _get(db: Session, log_id: str) -> dict:
     return row(found)
 
 
+# Statuses that count as "working today" for comp-off earning purposes.
+# present + half_day + WFH + field_work all entitle the employee to a
+# comp-off credit when worked on an off-day; leave / weekly_off /
+# holiday / absent obviously don't.
+COMP_OFF_EARNING_STATUSES = {"present", "half_day", "work_from_home", "field_work"}
+
+
+def _is_off_day_for_user(db: Session, user_id: str, work_date: _dt.date) -> bool:
+    """True iff ``work_date`` is normally a non-working day for ``user_id``
+    (weekend, off-Saturday-of-month, or holiday on their home company).
+    Used by the check-in path to decide whether to stamp a pending
+    comp-off credit."""
+    p = db.execute(
+        text(
+            "SELECT work_days, saturday_weeks_working, home_company_id "
+            "FROM profiles WHERE id = :id"
+        ),
+        {"id": user_id},
+    ).mappings().first()
+    if not p:
+        return False
+    company = None
+    if p.get("home_company_id"):
+        c = db.execute(
+            text(
+                "SELECT work_days, saturday_weeks_working "
+                "FROM companies WHERE id = :id"
+            ),
+            {"id": str(p["home_company_id"])},
+        ).mappings().first()
+        company = dict(c) if c else None
+    work_days = _effective_work_days(dict(p), company)
+    iso_day = work_date.isoweekday()
+    if iso_day not in work_days:
+        return True
+    if iso_day == 6 and not _saturday_working_today(work_date, dict(p), company):
+        return True
+    # Holiday on the employee's company also counts as an off-day.
+    if p.get("home_company_id"):
+        h = db.execute(
+            text(
+                "SELECT 1 FROM holidays "
+                "WHERE company_id = :co AND date = :d LIMIT 1"
+            ),
+            {"co": str(p["home_company_id"]), "d": work_date.isoformat()},
+        ).first()
+        if h is not None:
+            return True
+    return False
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def check_in(body: CheckIn, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     new_id = str(uuid.uuid4())
+
+    # Off-day check-in -> stamp pending comp-off. HR approves/denies from
+    # Team Attendance; balance only credits on approval. Half-day status
+    # halves the earned amount.
+    comp_earned: float | None = None
+    comp_status: str | None = None
+    if body.status in COMP_OFF_EARNING_STATUSES:
+        try:
+            work_date_obj = _dt.date.fromisoformat(body.work_date)
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "work_date must be YYYY-MM-DD")
+        if _is_off_day_for_user(db, user.id, work_date_obj):
+            comp_earned = 0.5 if body.status == "half_day" else 1.0
+            comp_status = "pending"
+
     try:
         db.execute(
             text(
-                "INSERT INTO attendance_logs (id, user_id, work_date, check_in_at, status, source) "
-                "VALUES (:id, :uid, :work_date, :check_in_at, :status, :source)"
+                "INSERT INTO attendance_logs "
+                "  (id, user_id, work_date, check_in_at, status, source, "
+                "   comp_off_earned, comp_off_status) "
+                "VALUES (:id, :uid, :work_date, :check_in_at, :status, :source, "
+                "        :co_earned, CAST(:co_status AS public.comp_off_status))"
             ),
             {"id": new_id, "uid": user.id, "work_date": body.work_date,
-             "check_in_at": body.check_in_at, "status": body.status, "source": body.source},
+             "check_in_at": body.check_in_at, "status": body.status, "source": body.source,
+             "co_earned": comp_earned, "co_status": comp_status},
         )
         db.commit()
     except IntegrityError:
@@ -87,6 +157,94 @@ def update(
     # the patched row. Self-PATCHes also broadcast — cheap, idempotent on
     # the receiver (own POST already updated the local store, the WS event
     # then no-ops via the id-match guard in dataStore).
+    background.add_task(ws_router.attendance_changed, fresh)
+    return fresh
+
+
+# -------------------- HR: approve / deny a pending comp-off --------------------
+
+class CompOffDecision(BaseModel):
+    decision: str  # 'approved' or 'denied'
+    note: Optional[str] = None
+
+
+@router.post("/{log_id}/decide-comp-off")
+def decide_comp_off(
+    log_id: str,
+    body: CompOffDecision,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """HR approves or denies a pending comp-off credit.
+
+    When an employee checks in on a non-working day (2nd/4th Saturday,
+    Sunday, a company holiday), the check-in handler stamps
+    ``comp_off_status='pending'`` and ``comp_off_earned`` (1.0 full /
+    0.5 half). The balance is NOT credited at that point — HR has to
+    review and approve from the Team Attendance review queue.
+
+    On 'approved': flips status, stamps the decider + decision time,
+    and calls ``apply_balance_delta(-earned, comp_off)`` — negative
+    delta because available = opening + accrued + adjustment - used,
+    so subtracting from ``used`` adds to ``available``.
+
+    On 'denied': flips status + decider stamps; balance untouched.
+    The row stays for audit ("we saw you, we said no").
+
+    Idempotent: a row already approved/denied 409s — re-decide isn't
+    a thing. To reverse, edit ``adjustment`` on the leave_balance row
+    via PATCH /leave/balances/{id}.
+    """
+    if not has_any_role(user.roles, HR_ROLES):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Only HR / super_admin / founder can decide comp-off")
+    if body.decision not in {"approved", "denied"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "decision must be 'approved' or 'denied'")
+
+    log = _get(db, log_id)
+    if log.get("comp_off_status") != "pending":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Comp-off is not pending (current state: {log.get('comp_off_status') or 'none'})",
+        )
+
+    earned = float(log.get("comp_off_earned") or 0)
+    if earned <= 0 and body.decision == "approved":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Nothing to credit (comp_off_earned is 0)")
+
+    # Stamp the decision first so the audit row exists even if the
+    # balance call fails later.
+    note_clause = ""
+    params: dict = {"id": log_id, "by": user.id, "d": body.decision}
+    if body.note:
+        note_clause = ", notes = COALESCE(notes, '') || :n"
+        params["n"] = f"\nComp-off {body.decision} by HR: {body.note}"
+    db.execute(
+        text(
+            "UPDATE attendance_logs SET "
+            "  comp_off_status = CAST(:d AS public.comp_off_status), "
+            "  comp_off_decided_by = :by, "
+            "  comp_off_decided_at = now()"
+            + note_clause
+            + " WHERE id = :id"
+        ),
+        params,
+    )
+
+    if body.decision == "approved":
+        # Negative `used` delta = adds to available comp-off balance.
+        # Year derived from the work_date so credits land in the same
+        # accounting year the work happened in (matters at year-end).
+        year = _dt.date.fromisoformat(str(log["work_date"])).year
+        apply_balance_delta(db, log["user_id"], "comp_off", -earned, year)
+
+    db.commit()
+    fresh = _get(db, log_id)
+    # Push the change so the employee's attendance page reflects the
+    # new comp_off_status without a refresh.
     background.add_task(ws_router.attendance_changed, fresh)
     return fresh
 

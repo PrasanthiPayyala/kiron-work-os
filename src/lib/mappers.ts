@@ -352,6 +352,9 @@ export function mapAttendance(r: DbAttendance): AttendanceLog {
     status: attStatusIn(r.status),
     workedHours: r.worked_hours ?? undefined,
     source: (r.source === "biometric" ? "biometric" : r.source === "system" ? "system" : "self"),
+    compOffEarned: r.comp_off_earned != null ? Number(r.comp_off_earned) : undefined,
+    compOffStatus: r.comp_off_status ?? undefined,
+    compOffDecidedById: r.comp_off_decided_by ?? undefined,
   };
 }
 

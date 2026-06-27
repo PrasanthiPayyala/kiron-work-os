@@ -379,6 +379,15 @@ export default function Attendance() {
     return minutesBetween(todayLog.checkIn, todayLog.checkOut);
   }, [todayLog]);
 
+  // Is today an off-day for the signed-in user? Combines schedule
+  // (weekend / Saturday-of-month pattern) + their company's holidays.
+  // Checked in the check-in banner + post-check-in toast to surface
+  // the pending comp-off they just earned.
+  const todayIsOffDay = useMemo(() => {
+    const t = new Date();
+    return isNonWorkingDate(t, schedule) || holidayByDate.has(today);
+  }, [schedule, holidayByDate, today]);
+
   const handleCheckIn = async () => {
     if (!user) return;
     if (todayLog) return toast.info("Already checked in for today");
@@ -395,11 +404,16 @@ export default function Attendance() {
         status: dbStatus,
         source: "self_checkin",
       });
+      const earnsCompOff = todayIsOffDay && status !== "wfh"
+        ? (status === "half_day" ? "0.5" : "1")
+        : null;
       toast.success(
-        status === "wfh" ? "Checked in (WFH)" :
-        status === "half_day" ? "Checked in (half day)" :
-        status === "field_work" ? "Checked in (field work)" :
-        "Checked in",
+        earnsCompOff
+          ? `Checked in — ${earnsCompOff} comp-off pending HR approval`
+          : status === "wfh" ? "Checked in (WFH)"
+          : status === "half_day" ? "Checked in (half day)"
+          : status === "field_work" ? "Checked in (field work)"
+          : "Checked in",
       );
       refresh();
     } catch (e) {
@@ -472,6 +486,28 @@ export default function Attendance() {
               <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-foreground">
                 <Plane className="mt-0.5 h-3.5 w-3.5 text-warning" />
                 <span>You have approved <b>{myApprovedLeaveToday.type.replace("_", " ")}</b> for today. Check-in is optional.</span>
+              </div>
+            )}
+
+            {todayIsOffDay && !todayLog && !myApprovedLeaveToday && (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-primary/40 bg-primary/5 p-2.5 text-xs text-foreground">
+                <CalendarCheck className="mt-0.5 h-3.5 w-3.5 text-primary" />
+                <span>Today is normally an off-day. Checking in earns <b>1 comp-off</b> ({" "}
+                  <b>0.5</b> if half day) — Karunya reviews and approves it from Team Attendance, then it adds to your comp-off balance.
+                </span>
+              </div>
+            )}
+
+            {todayLog?.compOffStatus === "pending" && (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-foreground">
+                <Plane className="mt-0.5 h-3.5 w-3.5 text-warning" />
+                <span>{todayLog.compOffEarned} comp-off pending HR approval for today's off-day work.</span>
+              </div>
+            )}
+            {todayLog?.compOffStatus === "approved" && (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-status-done/40 bg-status-done/10 p-2.5 text-xs text-foreground">
+                <CalendarCheck className="mt-0.5 h-3.5 w-3.5 text-status-done" />
+                <span>{todayLog.compOffEarned} comp-off credited for today's off-day work.</span>
               </div>
             )}
 

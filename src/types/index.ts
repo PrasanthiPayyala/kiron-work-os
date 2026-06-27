@@ -359,6 +359,12 @@ export interface AttendanceLog {
   status: AttendanceStatus;
   workedHours?: number;
   source: "self" | "biometric" | "system";
+  /** Comp-off earned by working an off-day. 1.0 / 0.5 / undefined. */
+  compOffEarned?: number;
+  /** Workflow state for the credit. undefined on regular working days. */
+  compOffStatus?: "pending" | "approved" | "denied";
+  /** HR (or super_admin/founder) who approved/denied. */
+  compOffDecidedById?: ID;
 }
 
 export type LeaveType =

@@ -34,7 +34,7 @@ const LEAVE_TYPE_LABEL: Record<string, string> = {
 
 export default function Leave() {
   const { user } = useAuth();
-  const { leaveRequests, companies, getUser, refresh } = useDataStore();
+  const { leaveRequests, companies, getUser, refresh, attendance } = useDataStore();
   const [type, setType] = useState("casual");
   const [days, setDays] = useState(1);
   const [from, setFrom] = useState("");
@@ -133,12 +133,24 @@ export default function Leave() {
           {BALANCE_DISPLAY.map((b) => {
             const row = balanceByType.get(b.type);
             const value = row ? Math.max(0, row.available) : 0;
+            // For comp-off, add a small "(+ X pending)" hint so the
+            // employee knows what HR still has to approve.
+            let hint: string | undefined;
+            if (b.type === "comp_off" && user) {
+              const pending = attendance
+                .filter((a) => a.userId === user.id && a.compOffStatus === "pending")
+                .reduce((sum, a) => sum + (a.compOffEarned ?? 0), 0);
+              if (pending > 0) {
+                hint = `+ ${Number.isInteger(pending) ? pending : pending.toFixed(1)} pending HR approval`;
+              }
+            }
             return (
               <StatCard
                 key={b.type}
                 label={`${b.label} remaining`}
                 value={Number.isInteger(value) ? value : value.toFixed(1)}
                 accent={b.accent}
+                hint={hint}
               />
             );
           })}

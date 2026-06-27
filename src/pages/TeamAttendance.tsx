@@ -68,6 +68,7 @@ export default function TeamAttendance() {
   const [loading, setLoading] = useState(false);
   const [resumingUserId, setResumingUserId] = useState<string | null>(null);
   const [markingLeaveUserId, setMarkingLeaveUserId] = useState<string | null>(null);
+  const [decidingCompOffId, setDecidingCompOffId] = useState<string | null>(null);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -146,6 +147,49 @@ export default function TeamAttendance() {
   const onLeave = useMemo(() => filterByCompany(data?.on_leave ?? []), [data, companyFilter]);
   const offToday = useMemo(() => filterByCompany(data?.off_today ?? []), [data, companyFilter]);
 
+  // Pending comp-offs across the whole roster (not just `date`) so HR
+  // sees what's been queued up. Sourced from the local dataStore — HR
+  // already gets every attendance log via the backend's ATTENDANCE_VIEW
+  // gate, so no extra fetch needed.
+  const pendingCompOffs = useMemo(() => {
+    const list = attendance
+      .filter((a) => a.compOffStatus === "pending" && (a.compOffEarned ?? 0) > 0)
+      .map((a) => {
+        const u = getUser(a.userId);
+        return {
+          log_id: a.id,
+          user_id: a.userId,
+          name: u?.name ?? "Unknown",
+          designation: u?.designation,
+          home_company_id: u?.homeCompanyId,
+          work_date: a.date,
+          earned: a.compOffEarned ?? 0,
+        };
+      })
+      .filter((r) => companyFilter === "all" || r.home_company_id === companyFilter)
+      .sort((a, b) => (a.work_date < b.work_date ? 1 : -1));
+    return list;
+  }, [attendance, getUser, companyFilter]);
+
+  const decideCompOff = async (
+    logId: string, name: string, decision: "approved" | "denied",
+  ) => {
+    setDecidingCompOffId(logId);
+    try {
+      await api.decideCompOff(logId, { decision });
+      sonner.success(
+        decision === "approved"
+          ? `Comp-off approved for ${name}`
+          : `Comp-off denied for ${name}`,
+      );
+      refresh();
+    } catch (e) {
+      sonner.error(e instanceof ApiError ? e.message : "Couldn't decide comp-off");
+    } finally {
+      setDecidingCompOffId(null);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -211,6 +255,12 @@ export default function TeamAttendance() {
               Off today
               <Badge variant="secondary" className="ml-1 text-[10px]">{offToday.length}</Badge>
             </TabsTrigger>
+            <TabsTrigger value="comp_off" className="gap-1.5">
+              Comp-off pending
+              <Badge variant={pendingCompOffs.length > 0 ? "destructive" : "secondary"} className="ml-1 text-[10px]">
+                {pendingCompOffs.length}
+              </Badge>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="need_followup">
@@ -234,6 +284,56 @@ export default function TeamAttendance() {
           </TabsContent>
           <TabsContent value="off_today">
             <PersonList rows={offToday} getCompany={getCompany} getUser={getUser} emptyText="Everyone is working today." />
+          </TabsContent>
+          <TabsContent value="comp_off">
+            {pendingCompOffs.length === 0 ? (
+              <p className="mt-4 text-center text-sm text-muted-foreground">No comp-offs waiting on you. ✓</p>
+            ) : (
+              <ul className="mt-4 divide-y divide-border rounded-lg border bg-surface">
+                {pendingCompOffs.map((r) => {
+                  const co = r.home_company_id ? getCompany(r.home_company_id) : null;
+                  const busy = decidingCompOffId === r.log_id;
+                  return (
+                    <li key={r.log_id} className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium">{r.name}</p>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {r.earned} day{r.earned === 1 ? "" : "s"}
+                          </Badge>
+                          {co && <Badge variant="outline" className="text-[10px]">{co.shortName || co.name}</Badge>}
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {r.designation && <>{r.designation} · </>}
+                          Worked off-day <b>{r.work_date}</b>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void decideCompOff(r.log_id, r.name, "denied")}
+                          className="gap-1.5"
+                        >
+                          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          Deny
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => void decideCompOff(r.log_id, r.name, "approved")}
+                          className="gap-1.5"
+                        >
+                          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          Approve
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </TabsContent>
         </Tabs>
       </div>

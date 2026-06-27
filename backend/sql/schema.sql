@@ -252,6 +252,8 @@ create table public.approvals (
   created_at timestamptz not null default now()
 );
 
+create type public.comp_off_status as enum ('pending', 'approved', 'denied');
+
 create table public.attendance_logs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -262,9 +264,21 @@ create table public.attendance_logs (
   status public.attendance_status not null default 'present',
   source text default 'self_checkin',
   notes text,
+  -- Comp-off earning fields (see alembic 0030). NULL on regular
+  -- working days. Stamped 'pending' on check-in when work_date is an
+  -- off-day for that user; HR flips to 'approved' or 'denied' from
+  -- the Team Attendance review queue. apply_balance_delta is called
+  -- only on the approved transition.
+  comp_off_earned numeric(3,1),
+  comp_off_status public.comp_off_status,
+  comp_off_decided_by uuid references public.profiles(id),
+  comp_off_decided_at timestamptz,
   created_at timestamptz not null default now(),
   unique(user_id, work_date)
 );
+create index idx_attendance_logs_pending_comp_off
+  on public.attendance_logs (work_date desc)
+  where comp_off_status = 'pending';
 
 create table public.leave_requests (
   id uuid primary key default gen_random_uuid(),

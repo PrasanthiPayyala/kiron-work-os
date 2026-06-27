@@ -927,6 +927,18 @@ export const api = {
   }): Promise<{ attendance: Record<string, unknown>; leave: Record<string, unknown> }> {
     return request("/attendance/mark-leave", { method: "POST", body: JSON.stringify(payload) });
   },
+  /** HR approves or denies a pending comp-off credit on an attendance
+   * log. On approve, the comp_off leave balance increases by the
+   * earned amount. On deny, the row stays for audit but no credit. */
+  decideCompOff(
+    logId: string,
+    payload: { decision: "approved" | "denied"; note?: string | null },
+  ): Promise<Record<string, unknown>> {
+    return request(`/attendance/${logId}/decide-comp-off`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
 
   // ---------- Bank accounts (finance-scoped — HR can't see/edit) ----------
   listBankAccounts(companyId: string): Promise<Record<string, unknown>[]> {
