@@ -130,6 +130,11 @@ export default function TeamAttendance() {
   // Core mark-as-leave call shared by the inline popover (always for
   // the page's selected `date`) and the page-level dialog (any user /
   // any date). repayBy is only sent when uiKey === 'comp_off_advance'.
+  //
+  // On 409 (existing attendance log for the date) we prompt to overwrite
+  // and retry — the backend refunds the prior balance + replaces the
+  // pair atomically when overwrite=true. Lets HR fix a mistyped leave
+  // type without resorting to a manual PATCH.
   const markLeaveCore = async (
     userId: string, name: string,
     workDate: string,
@@ -146,15 +151,30 @@ export default function TeamAttendance() {
     const finalReason = isAdvance
       ? (COMP_OFF_ADVANCE_PREFIX + (trimmed || "—")).trim()
       : (trimmed || null);
-    await api.markAttendanceAsLeave({
+    const payload = {
       user_id: userId,
       work_date: workDate,
       leave_type: dbLeaveType,
       reason: finalReason,
       comp_off_repay_by: isAdvance && repayBy ? repayBy : null,
-    });
+    };
     const label = LEAVE_TYPE_OPTIONS.find((o) => o.value === uiKey)?.label ?? uiKey;
-    sonner.success(`${name} marked on ${label} for ${workDate}`);
+    try {
+      await api.markAttendanceAsLeave(payload);
+      sonner.success(`${name} marked on ${label} for ${workDate}`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        const ok = window.confirm(
+          `${name} already has an entry for ${workDate}. Overwrite it with "${label}"?\n\n` +
+          "The previous leave row's balance will be refunded before the new one is applied.",
+        );
+        if (!ok) return;
+        await api.markAttendanceAsLeave({ ...payload, overwrite: true });
+        sonner.success(`${name} overwritten — now on ${label} for ${workDate}`);
+      } else {
+        throw e;
+      }
+    }
     refresh();
     void load(date);
   };

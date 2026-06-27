@@ -261,6 +261,12 @@ class MarkLeaveBody(BaseModel):
     # repay the advance; scheduler nags HR after this date if balance
     # is still negative.
     comp_off_repay_by: Optional[str] = None
+    # When true, any existing attendance_log + approved leave_request for
+    # this (user, date) is reverted (balance refunded) before inserting
+    # the new pair. Used by the "Overwrite" confirm in the UI when HR
+    # picks the wrong leave type the first time. Without this, the
+    # second call 409s.
+    overwrite: bool = False
 
 
 @router.post("/mark-leave", status_code=status.HTTP_201_CREATED)
@@ -310,6 +316,45 @@ def mark_leave(
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Employee not found")
 
+    # --- 0. Overwrite path — revert the existing (attendance + leave +
+    # balance) so the day is cleanly re-stampable. Only fires when the
+    # caller explicitly opts in (frontend confirms after a first-call
+    # 409). We refund the balance for any approved leave we're about to
+    # delete so quotas don't end up double-charged.
+    if body.overwrite:
+        existing_leaves = db.execute(
+            text(
+                "SELECT id, leave_type, days, status "
+                "FROM leave_requests "
+                "WHERE user_id = :uid AND start_date = :d AND end_date = :d"
+            ),
+            {"uid": body.user_id, "d": body.work_date},
+        ).mappings().all()
+        for lr in existing_leaves:
+            if lr["status"] == "approved":
+                # Refund the prior balance hit. apply_balance_delta is a
+                # no-op for unbalanced types (loss_of_pay etc.), so this
+                # is safe to call unconditionally.
+                try:
+                    refund_year = int(body.work_date[:4])
+                except ValueError:
+                    refund_year = _dt.date.today().year
+                apply_balance_delta(
+                    db, user_id=body.user_id, leave_type=lr["leave_type"],
+                    days=-float(lr["days"]), year=refund_year,
+                )
+            db.execute(
+                text("DELETE FROM leave_requests WHERE id = :id"),
+                {"id": str(lr["id"])},
+            )
+        db.execute(
+            text(
+                "DELETE FROM attendance_logs "
+                "WHERE user_id = :uid AND work_date = :d"
+            ),
+            {"uid": body.user_id, "d": body.work_date},
+        )
+
     # --- 1. Insert the attendance log
     att_id = str(uuid.uuid4())
     now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -328,7 +373,7 @@ def mark_leave(
         db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "An attendance log already exists for this date — edit that row instead.",
+            "An attendance log already exists for this date — overwrite to replace it.",
         )
 
     # --- 2. Insert the approved leave request

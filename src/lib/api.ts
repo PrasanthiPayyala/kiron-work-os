@@ -928,6 +928,10 @@ export const api = {
      *  to work an off-day to settle the IOU. Backend persists it on the
      *  leave_requests row and the scheduler nags HR once it passes. */
     comp_off_repay_by?: string | null;
+    /** When true, the backend reverts any existing attendance log + leave
+     *  request for this (user, date) before inserting the new pair. Used
+     *  by the UI's "Overwrite?" confirm after a first-call 409. */
+    overwrite?: boolean;
   }): Promise<{ attendance: Record<string, unknown>; leave: Record<string, unknown> }> {
     return request("/attendance/mark-leave", { method: "POST", body: JSON.stringify(payload) });
   },
