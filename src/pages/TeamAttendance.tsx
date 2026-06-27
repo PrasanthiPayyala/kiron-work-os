@@ -16,6 +16,9 @@ import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut,
 import { api, ApiError } from "@/lib/api";
 import { toast as sonner } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { UserAvatar } from "@/components/UserAvatar";
 
 type LeaveTypeKey = "casual_leave" | "sick_leave" | "loss_of_pay" | "comp_off" | "optional_holiday";
 // UI option value can be a leave_type OR the synthetic 'comp_off_advance'
@@ -66,7 +69,7 @@ const fmtTime = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
 
 export default function TeamAttendance() {
-  const { companies, getUser, getCompany, attendance, refresh } = useDataStore();
+  const { companies, users, getUser, getCompany, attendance, refresh } = useDataStore();
   const { toast } = useToast();
   const [date, setDate] = useState<string>(today());
   const [companyFilter, setCompanyFilter] = useState<string>("all");
@@ -75,6 +78,7 @@ export default function TeamAttendance() {
   const [resumingUserId, setResumingUserId] = useState<string | null>(null);
   const [markingLeaveUserId, setMarkingLeaveUserId] = useState<string | null>(null);
   const [decidingCompOffId, setDecidingCompOffId] = useState<string | null>(null);
+  const [markLeaveDialogOpen, setMarkLeaveDialogOpen] = useState(false);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -123,9 +127,13 @@ export default function TeamAttendance() {
   // HR flips a missed-check-in row into an approved-leave row. The
   // backend creates BOTH the attendance log AND the leave_requests row
   // (and bumps the balance) so payroll's day-by-day rollup picks it up.
-  const handleMarkAsLeave = async (userId: string, name: string,
-                                    uiKey: LeaveUiKey, reason: string) => {
-    setMarkingLeaveUserId(userId);
+  // Core mark-as-leave call shared by the inline missed-check-in popover
+  // (always for `date`) and the page-level dialog (any user / any date).
+  const markLeaveCore = async (
+    userId: string, name: string,
+    workDate: string,
+    uiKey: LeaveUiKey, reason: string,
+  ) => {
     // 'comp_off_advance' is a UI-only key — backend stores it as a
     // regular comp_off leave with the advance prefix in the reason so
     // audit + reports can tell the two apart. Negative balance is what
@@ -136,17 +144,23 @@ export default function TeamAttendance() {
     const finalReason = isAdvance
       ? (COMP_OFF_ADVANCE_PREFIX + (trimmed || "—")).trim()
       : (trimmed || null);
+    await api.markAttendanceAsLeave({
+      user_id: userId,
+      work_date: workDate,
+      leave_type: dbLeaveType,
+      reason: finalReason,
+    });
+    const label = LEAVE_TYPE_OPTIONS.find((o) => o.value === uiKey)?.label ?? uiKey;
+    sonner.success(`${name} marked on ${label} for ${workDate}`);
+    refresh();
+    void load(date);
+  };
+
+  const handleMarkAsLeave = async (userId: string, name: string,
+                                    uiKey: LeaveUiKey, reason: string) => {
+    setMarkingLeaveUserId(userId);
     try {
-      await api.markAttendanceAsLeave({
-        user_id: userId,
-        work_date: date,
-        leave_type: dbLeaveType,
-        reason: finalReason,
-      });
-      const label = LEAVE_TYPE_OPTIONS.find((o) => o.value === uiKey)?.label ?? uiKey;
-      sonner.success(`${name} marked on ${label} for ${date}`);
-      refresh();
-      void load(date);
+      await markLeaveCore(userId, name, date, uiKey, reason);
     } catch (e) {
       sonner.error(e instanceof ApiError ? e.message : `Couldn't mark ${name} on leave`);
     } finally {
@@ -213,10 +227,16 @@ export default function TeamAttendance() {
         description="Today's check-in status. Need follow-up = late no check-in, or checked out before end-of-day without WFH / half day / field work / approved leave."
         icon={<ClipboardCheck className="h-5 w-5" />}
         actions={
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void load(date)} disabled={loading}>
-            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" className="gap-1.5" onClick={() => setMarkLeaveDialogOpen(true)}>
+              <Plane className="h-3.5 w-3.5" />
+              Mark leave
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void load(date)} disabled={loading}>
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -353,6 +373,23 @@ export default function TeamAttendance() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <MarkLeaveDialog
+        open={markLeaveDialogOpen}
+        onClose={() => setMarkLeaveDialogOpen(false)}
+        defaultDate={date}
+        users={users.filter((u) => u.isActive)}
+        onSubmit={async (userId, workDate, uiKey, reason) => {
+          const u = users.find((x) => x.id === userId);
+          if (!u) return;
+          try {
+            await markLeaveCore(u.id, u.name, workDate, uiKey, reason);
+            setMarkLeaveDialogOpen(false);
+          } catch (e) {
+            sonner.error(e instanceof ApiError ? e.message : `Couldn't mark ${u.name} on leave`);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -522,5 +559,141 @@ function MarkLeavePopover({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+// Page-level "Mark leave" dialog — covers the cases the inline missed-
+// check-in popover doesn't: marking leave proactively for any day (past,
+// today, future), or marking leave for someone who isn't in the Need
+// follow-up bucket (e.g. on a Saturday when nobody's there to follow up).
+function MarkLeaveDialog({
+  open, onClose, defaultDate, users, onSubmit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  defaultDate: string;
+  users: ReturnType<typeof useDataStore>["users"];
+  onSubmit: (userId: string, workDate: string, uiKey: LeaveUiKey, reason: string) => Promise<void>;
+}) {
+  const [userId, setUserId] = useState<string>("");
+  const [workDate, setWorkDate] = useState(defaultDate);
+  const [leaveType, setLeaveType] = useState<LeaveUiKey>("casual_leave");
+  const [reason, setReason] = useState("");
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setUserId(""); setWorkDate(defaultDate); setLeaveType("casual_leave");
+      setReason(""); setQ(""); setBusy(false);
+    }
+  }, [open, defaultDate]);
+
+  const filteredUsers = useMemo(() => {
+    const hay = q.toLowerCase();
+    return users
+      .filter((u) => !hay || u.name.toLowerCase().includes(hay) || u.email.toLowerCase().includes(hay))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [users, q]);
+
+  const submit = async () => {
+    if (!userId) { sonner.error("Pick an employee"); return; }
+    if (!workDate) { sonner.error("Pick a date"); return; }
+    setBusy(true);
+    try {
+      await onSubmit(userId, workDate, leaveType, reason);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Mark leave for someone</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Creates an approved leave + attendance row + balance delta for the chosen day.
+            Works for past, today, or future dates. 409s if the employee already has an attendance log for that date.
+          </p>
+
+          <div>
+            <Label className="text-xs">Employee</Label>
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search teammates by name or email"
+              className="mt-1 h-9"
+            />
+            <ul className="mt-1.5 max-h-48 divide-y divide-border overflow-y-auto rounded-md border border-border">
+              {filteredUsers.length === 0 && (
+                <li className="px-3 py-3 text-center text-xs text-muted-foreground">No one matches.</li>
+              )}
+              {filteredUsers.map((u) => (
+                <li
+                  key={u.id}
+                  onClick={() => setUserId(u.id)}
+                  className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm ${userId === u.id ? "bg-primary-soft" : "hover:bg-surface-muted"}`}
+                >
+                  <UserAvatar userId={u.id} size="xs" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{u.name}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{u.designation} · {u.email}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Date</Label>
+              <Input
+                type="date"
+                value={workDate}
+                onChange={(e) => setWorkDate(e.target.value)}
+                className="mt-1 h-9"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Leave type</Label>
+              <Select value={leaveType} onValueChange={(v) => setLeaveType(v as LeaveUiKey)}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {LEAVE_TYPE_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {leaveType === "comp_off_advance" && (
+            <p className="text-[11px] text-warning">
+              IOU — comp-off balance will go negative until the employee works a future off-day.
+            </p>
+          )}
+
+          <div>
+            <Label className="text-xs">Reason (optional)</Label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Phoned in sick, family emergency..."
+              className="mt-1 h-9"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy || !userId || !workDate}>
+            {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+            Mark leave
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
