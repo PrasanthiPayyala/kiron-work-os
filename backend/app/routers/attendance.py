@@ -537,8 +537,23 @@ def followup(
             on_leave.append(row_data)
             continue
 
+        att = att_by_user.get(pid)
+
+        # Off-day work — they chose to come in on a normally-off day.
+        # Always bucket as present (no late / early-leave follow-up;
+        # they're voluntarily working, the late_cutoff doesn't apply).
+        # The Comp-off pending tab sees their earned credit separately
+        # via the local dataStore.
         if not is_work_day:
-            off_today.append(row_data)
+            if att:
+                ci = att.get("check_in_at")
+                co = att.get("check_out_at")
+                row_data["check_in_at"] = ci.isoformat() if ci else None
+                row_data["check_in_status"] = att.get("status")
+                row_data["check_out_at"] = co.isoformat() if co else None
+                present.append(row_data)
+            else:
+                off_today.append(row_data)
             continue
 
         # Resolve their work-window for the target date in IST.
@@ -549,7 +564,6 @@ def followup(
         late_cutoff = work_start_dt + _dt.timedelta(minutes=GRACE_LATE_MINUTES)
         early_cutoff = work_end_dt - _dt.timedelta(minutes=GRACE_EARLY_MINUTES)
 
-        att = att_by_user.get(pid)
         if not att:
             # Hasn't checked in. Was the cutoff hit?
             if reference_now < late_cutoff:
