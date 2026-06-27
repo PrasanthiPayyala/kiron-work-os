@@ -304,5 +304,16 @@ def mark_read(
         ),
         {"c": conv_id, "u": user.id},
     )
+    # Also mark any per-message bell notifications for this conversation as
+    # read so the bell badge doesn't keep counting stale entries after the
+    # user has caught up in chat. Links are written by chat.send() as
+    # "/chat?conv=<id>", so a LIKE match is enough.
+    db.execute(
+        text(
+            "UPDATE notifications SET is_read = true "
+            "WHERE user_id = :u AND link = :link AND is_read = false"
+        ),
+        {"u": user.id, "link": f"/chat?conv={conv_id}"},
+    )
     db.commit()
     return None

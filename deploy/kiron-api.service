@@ -17,7 +17,13 @@ Group=kiron
 WorkingDirectory=/opt/kiron/backend
 EnvironmentFile=/etc/kiron/backend.env
 # Bind to loopback only — nginx is the public entrypoint and proxies /api here.
-ExecStart=/opt/kiron/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8787 --workers 2
+# --workers 1: the WebSocket hub (app/routers/ws.py) holds an in-memory dict
+# of {user_id -> set[WebSocket]}, so cross-worker broadcasts silently miss
+# (sender's POST hits worker A, recipient's socket on worker B never hears).
+# At current scale (~30 active users) one worker is plenty. If concurrent
+# load ever justifies horizontal scaling, migrate the hub to Redis pub/sub
+# per the comment in ws.py before bumping workers back up.
+ExecStart=/opt/kiron/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8787 --workers 1
 Restart=on-failure
 RestartSec=3
 # Hardening

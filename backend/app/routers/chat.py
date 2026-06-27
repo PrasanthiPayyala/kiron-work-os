@@ -7,6 +7,7 @@ File flow:
        broadcast the enriched row over WebSocket so other recipients see it
        without refreshing.
 """
+import datetime as _dt
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -91,6 +92,56 @@ def send(
             for r in rows
         ]
 
+    # Create one in-app notification per non-sender member of the conversation
+    # so the bell + dashboard surface incoming messages without the recipient
+    # needing to keep the Chat page open. Title carries the sender's name +
+    # group label (if applicable); body is a short preview; link deep-links
+    # to the conversation. Cleared when the recipient opens the conversation
+    # (see POST /conversations/{id}/read).
+    sender_row = db.execute(
+        text("SELECT full_name FROM profiles WHERE id = :id"), {"id": user.id},
+    ).mappings().first()
+    sender_name = sender_row["full_name"] if sender_row else "Someone"
+    conv_row = db.execute(
+        text("SELECT channel_type, title FROM conversations WHERE id = :id"),
+        {"id": body.conversation_id},
+    ).mappings().first()
+    is_group = conv_row and conv_row.get("channel_type") != "direct"
+    group_title = (conv_row.get("title") if conv_row else None) or "Team Chat"
+    notif_title = f"{sender_name} in {group_title}" if is_group else f"{sender_name}"
+    notif_body = (body.body[:140] if body.body else "(attachment)")
+    notif_link = f"/chat?conv={body.conversation_id}"
+
+    other_member_ids = db.execute(
+        text(
+            "SELECT user_id FROM conversation_members "
+            "WHERE conversation_id = :c AND user_id <> :u"
+        ),
+        {"c": body.conversation_id, "u": user.id},
+    ).all()
+    new_notif_rows: list[dict] = []
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    for r in other_member_ids:
+        nid = str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO notifications "
+                "  (id, user_id, notification_type, title, body, link) "
+                "VALUES (:id, :u, 'general', :t, :b, :l)"
+            ),
+            {"id": nid, "u": str(r[0]), "t": notif_title, "b": notif_body, "l": notif_link},
+        )
+        new_notif_rows.append({
+            "id": nid,
+            "user_id": str(r[0]),
+            "notification_type": "general",
+            "title": notif_title,
+            "body": notif_body,
+            "link": notif_link,
+            "is_read": False,
+            "created_at": now_iso,
+        })
+
     db.commit()
     saved = db.execute(text("SELECT * FROM messages WHERE id = :id"), {"id": new_id}).mappings().first()
     payload = {**row(saved), "attachments": attachments_meta}
@@ -100,6 +151,8 @@ def send(
     # isn't blocked and the broadcast actually fires (the older
     # asyncio.create_task path silently failed from the threadpool).
     background.add_task(ws_router.message_new, payload, body.conversation_id)
+    for nrow in new_notif_rows:
+        background.add_task(ws_router.notification_new, nrow)
 
     return payload
 
