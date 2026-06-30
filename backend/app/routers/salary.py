@@ -259,14 +259,14 @@ def _fy_label_for_period(period: str) -> str:
     return f"FY {start_year}-{end_yy:02d}"
 
 
-def _fy_bounds(fy_label: str) -> tuple[_dt.date, _dt.date]:
+def _fy_bounds(fy_label: str) -> tuple[dt.date, dt.date]:
     """Return (fy_start, fy_end) inclusive for a label like 'FY 2025-26'."""
     # "FY 2025-26" -> 2025
     start_year = int(fy_label.split()[1].split("-")[0])
-    return _dt.date(start_year, 4, 1), _dt.date(start_year + 1, 3, 31)
+    return dt.date(start_year, 4, 1), dt.date(start_year + 1, 3, 31)
 
 
-def _months_between_inclusive(start: _dt.date, end: _dt.date) -> int:
+def _months_between_inclusive(start: dt.date, end: dt.date) -> int:
     """Whole-month count between two dates, inclusive of both endpoints.
     Used for 'how many monthly TDS slices left in this FY?' math."""
     if end < start:
@@ -295,7 +295,7 @@ def _compute_tds(
     db: Session,
     monthly_gross: float,
     regime: str | None,
-    doj: _dt.date | None,
+    doj: dt.date | None,
     period: str,
 ) -> float:
     """Returns the monthly TDS to deduct on this period's payslip.
@@ -348,7 +348,7 @@ def _compute_tds(
     # FY end.
     eff_join = max(doj, fy_start) if doj else fy_start
     working_months = _months_between_inclusive(
-        _dt.date(eff_join.year, eff_join.month, 1), fy_end,
+        dt.date(eff_join.year, eff_join.month, 1), fy_end,
     )
     if working_months <= 0:
         return 0.0
@@ -369,7 +369,7 @@ def _compute_tds(
     # Spread across months remaining in the FY (inclusive of `period`).
     # First-of-FY -> ~ /12. Mid-year setup -> /smaller, so any unpaid
     # tax catches up across what's left.
-    period_first = _dt.date(int(period[:4]), int(period[5:7]), 1)
+    period_first = dt.date(int(period[:4]), int(period[5:7]), 1)
     months_left = _months_between_inclusive(period_first, fy_end)
     if months_left <= 0:
         return 0.0
