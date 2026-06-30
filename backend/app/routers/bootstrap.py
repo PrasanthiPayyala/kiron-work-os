@@ -223,6 +223,20 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "SELECT * FROM pt_slabs WHERE is_active = true ORDER BY state, min_gross",
     )
 
+    # --- tax_slabs + tax_regime_config (active rows only). Used by the
+    # salary structure editor for the live TDS preview. Tiny tables —
+    # ~6-8 rows per (regime, FY).
+    tax_slabs = _rows(
+        db,
+        "SELECT * FROM tax_slabs WHERE is_active = true "
+        "ORDER BY fy_label DESC, regime, min_income",
+    )
+    tax_regime_config = _rows(
+        db,
+        "SELECT * FROM tax_regime_config WHERE is_active = true "
+        "ORDER BY fy_label DESC, regime",
+    )
+
     # --- teams ---
     # Global-team viewers (super_admin / founder / founder_office_coordinator)
     # see every team; everyone else sees only the teams they belong to.
@@ -267,6 +281,8 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "holidays": holidays,
         "offices": offices,
         "pt_slabs": pt_slabs,
+        "tax_slabs": tax_slabs,
+        "tax_regime_config": tax_regime_config,
         "teams": teams_rows,
         "team_members": team_members,
     }

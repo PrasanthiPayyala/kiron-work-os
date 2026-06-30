@@ -241,6 +241,141 @@ def _lookup_pt(db: Session, state: str | None, gross: float) -> float:
     return float(found[0]) if found else 0.0
 
 
+# ----- TDS (auto-computed) -----
+# Indian financial year runs April 1 -> March 31. A YYYY-MM payroll
+# period in April-December belongs to FY YYYY-(YYYY+1); January-March
+# belongs to FY (YYYY-1)-YYYY. The fy_label format mirrors the seed
+# in migration 0036: "FY 2025-26".
+
+
+def _fy_label_for_period(period: str) -> str:
+    """Return the financial-year label for a YYYY-MM payroll period."""
+    year, mon = int(period[:4]), int(period[5:7])
+    if mon >= 4:
+        start_year = year
+    else:
+        start_year = year - 1
+    end_yy = (start_year + 1) % 100
+    return f"FY {start_year}-{end_yy:02d}"
+
+
+def _fy_bounds(fy_label: str) -> tuple[_dt.date, _dt.date]:
+    """Return (fy_start, fy_end) inclusive for a label like 'FY 2025-26'."""
+    # "FY 2025-26" -> 2025
+    start_year = int(fy_label.split()[1].split("-")[0])
+    return _dt.date(start_year, 4, 1), _dt.date(start_year + 1, 3, 31)
+
+
+def _months_between_inclusive(start: _dt.date, end: _dt.date) -> int:
+    """Whole-month count between two dates, inclusive of both endpoints.
+    Used for 'how many monthly TDS slices left in this FY?' math."""
+    if end < start:
+        return 0
+    return (end.year - start.year) * 12 + (end.month - start.month) + 1
+
+
+def _slab_tax(annual_taxable: float, slabs: list[dict]) -> float:
+    """Walk an ordered list of {min_income, max_income, rate_pct} dicts
+    and sum the per-slab tax. Caller supplies slabs already sorted by
+    min_income ascending. Open-ended top slab has max_income = None."""
+    if annual_taxable <= 0 or not slabs:
+        return 0.0
+    tax = 0.0
+    for s in slabs:
+        lo = float(s["min_income"])
+        hi = float(s["max_income"]) if s.get("max_income") is not None else float("inf")
+        if annual_taxable <= lo:
+            break
+        slice_top = min(annual_taxable, hi)
+        tax += (slice_top - lo) * (float(s["rate_pct"]) / 100.0)
+    return tax
+
+
+def _compute_tds(
+    db: Session,
+    monthly_gross: float,
+    regime: str | None,
+    doj: _dt.date | None,
+    period: str,
+) -> float:
+    """Returns the monthly TDS to deduct on this period's payslip.
+
+    Steps:
+      1. Derive FY label from the period.
+      2. Annualise: monthly_gross * working_months_in_fy. For mid-year
+         joiners (doj after FY start) working_months = months between
+         join and FY end, inclusive.
+      3. Subtract standard deduction => annual_taxable.
+      4. Apply slabs => annual_tax_before_rebate.
+      5. If annual_taxable <= rebate_threshold, zero the tax (87A).
+      6. Multiply by (1 + cess/100).
+      7. Divide by months remaining in FY from this period (inclusive).
+
+    Returns 0 when no slab/config is configured for the (regime, FY) —
+    HR can then either configure it or fill TDS manually per payslip.
+    """
+    if not regime:
+        return 0.0
+    regime = regime.strip()
+    fy_label = _fy_label_for_period(period)
+    fy_start, fy_end = _fy_bounds(fy_label)
+
+    cfg = db.execute(
+        text(
+            "SELECT standard_deduction, rebate_threshold, cess_pct "
+            "FROM tax_regime_config "
+            "WHERE regime = :r AND fy_label = :f AND is_active = true"
+        ),
+        {"r": regime, "f": fy_label},
+    ).mappings().first()
+    if not cfg:
+        return 0.0
+
+    slabs = db.execute(
+        text(
+            "SELECT min_income, max_income, rate_pct "
+            "FROM tax_slabs "
+            "WHERE regime = :r AND fy_label = :f AND is_active = true "
+            "ORDER BY min_income ASC"
+        ),
+        {"r": regime, "f": fy_label},
+    ).mappings().all()
+    if not slabs:
+        return 0.0
+
+    # Working months in this FY for the employee. Joined before FY start
+    # (or no DOJ on file) -> 12. Joined during FY -> from join month to
+    # FY end.
+    eff_join = max(doj, fy_start) if doj else fy_start
+    working_months = _months_between_inclusive(
+        _dt.date(eff_join.year, eff_join.month, 1), fy_end,
+    )
+    if working_months <= 0:
+        return 0.0
+
+    annual_gross = float(monthly_gross or 0) * working_months
+    std_ded = float(cfg["standard_deduction"] or 0)
+    annual_taxable = max(0.0, annual_gross - std_ded)
+
+    tax = _slab_tax(annual_taxable, [dict(s) for s in slabs])
+
+    rebate = cfg.get("rebate_threshold")
+    if rebate is not None and annual_taxable <= float(rebate):
+        tax = 0.0
+
+    cess_pct = float(cfg.get("cess_pct") or 0)
+    annual_tax_with_cess = tax * (1 + cess_pct / 100.0)
+
+    # Spread across months remaining in the FY (inclusive of `period`).
+    # First-of-FY -> ~ /12. Mid-year setup -> /smaller, so any unpaid
+    # tax catches up across what's left.
+    period_first = _dt.date(int(period[:4]), int(period[5:7]), 1)
+    months_left = _months_between_inclusive(period_first, fy_end)
+    if months_left <= 0:
+        return 0.0
+    return round(annual_tax_with_cess / months_left, 2)
+
+
 # ----- Salary structures -----
 
 
@@ -410,10 +545,11 @@ def create_run(
 
     # Generate payslips. Pull (employee, structure) joined for the
     # company. Inactive employees + employees without a structure are
-    # skipped (HR can add them later via individual create).
+    # skipped (HR can add them later via individual create). DOJ comes
+    # along for TDS mid-year-joiner proration.
     rows = db.execute(
         text(
-            "SELECT p.id AS user_id, s.* "
+            "SELECT p.id AS user_id, p.doj AS doj, s.* "
             "FROM profiles p "
             "JOIN salary_structures s "
             "  ON s.user_id = p.id AND s.effective_to IS NULL "
@@ -431,14 +567,15 @@ def create_run(
 
     for r in rows:
         gross = sum(float(r.get(c) or 0) for c in _EARNINGS_COLS)
-        # Pre-compute PF / ESI / PT from the structure's scheme config.
-        # HR can still manually override any cell on the draft payslip
-        # before finalizing; this just primes it with the right numbers
-        # so they don't type 26 PF amounts every month.
+        # Pre-compute PF / ESI / PT / TDS from structure + reference
+        # tables. HR can still manually override any cell on the draft
+        # payslip before finalizing; this just primes it with the right
+        # numbers so they don't retype them every month.
         pf_emp, pf_er = _compute_pf(float(r["basic"] or 0), r.get("pf_scheme"))
         esi_emp, esi_er = _compute_esi(gross, r.get("esi_eligibility"))
         pt = _lookup_pt(db, pt_state, gross)
-        total_ded = pf_emp + esi_emp + pt    # tds + other_deductions stay 0; HR fills
+        tds = _compute_tds(db, gross, r.get("tds_regime"), r.get("doj"), body.period)
+        total_ded = pf_emp + esi_emp + pt + tds   # other_deductions stays 0; HR fills if needed
         net = max(0.0, gross - total_ded)
 
         db.execute(
@@ -454,7 +591,7 @@ def create_run(
                 "  :id, :run, :u, :p, "
                 "  :basic, :hra, :con, :med, :lta, :sa, :oe, "
                 "  :gross, "
-                "  :pf_emp, :esi_emp, :pt, 0, 0, "
+                "  :pf_emp, :esi_emp, :pt, :tds, 0, "
                 "  :pf_er, :esi_er, "
                 "  :td, :net"
                 ")"
@@ -465,7 +602,7 @@ def create_run(
                 "basic": r["basic"], "hra": r["hra"], "con": r["conveyance"],
                 "med": r["medical"], "lta": r["lta"], "sa": r["special_allowance"],
                 "oe": r["other_earnings"], "gross": gross,
-                "pf_emp": pf_emp, "esi_emp": esi_emp, "pt": pt,
+                "pf_emp": pf_emp, "esi_emp": esi_emp, "pt": pt, "tds": tds,
                 "pf_er": pf_er, "esi_er": esi_er,
                 "td": total_ded, "net": net,
             },

@@ -1009,6 +1009,62 @@ export const api = {
     return request(`/pt-slabs/${encodeURIComponent(slabId)}`, { method: "DELETE" });
   },
 
+  // ---------- Tax slabs (income tax slabs per regime / FY) ----------
+  listTaxSlabs(): Promise<Array<Record<string, unknown>>> {
+    return request(`/tax-slabs`);
+  },
+  createTaxSlab(payload: {
+    regime: "new" | "old";
+    fy_label: string;
+    min_income: number;
+    max_income?: number | null;
+    rate_pct: number;
+  }): Promise<Record<string, unknown>> {
+    return request(`/tax-slabs`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateTaxSlab(slabId: string, patch: {
+    regime?: "new" | "old";
+    fy_label?: string;
+    min_income?: number;
+    max_income?: number | null;
+    rate_pct?: number;
+    is_active?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return request(`/tax-slabs/${encodeURIComponent(slabId)}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    });
+  },
+  deactivateTaxSlab(slabId: string): Promise<void> {
+    return request(`/tax-slabs/${encodeURIComponent(slabId)}`, { method: "DELETE" });
+  },
+
+  // ---------- Tax regime config (standard deduction / rebate / cess) ----------
+  listTaxRegimeConfigs(): Promise<Array<Record<string, unknown>>> {
+    return request(`/tax-regime-config`);
+  },
+  createTaxRegimeConfig(payload: {
+    regime: "new" | "old";
+    fy_label: string;
+    standard_deduction?: number;
+    rebate_threshold?: number | null;
+    cess_pct?: number;
+  }): Promise<Record<string, unknown>> {
+    return request(`/tax-regime-config`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  updateTaxRegimeConfig(cfgId: string, patch: {
+    standard_deduction?: number;
+    rebate_threshold?: number | null;
+    cess_pct?: number;
+    is_active?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return request(`/tax-regime-config/${encodeURIComponent(cfgId)}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    });
+  },
+  deactivateTaxRegimeConfig(cfgId: string): Promise<void> {
+    return request(`/tax-regime-config/${encodeURIComponent(cfgId)}`, { method: "DELETE" });
+  },
+
   /** Push a confirmed idle interval to the server. The client's
    *  useIdleDetector hook fires this after ≥30 min of inactivity (or
    *  on visibility change). Backend deduplicates by (user, started_at)

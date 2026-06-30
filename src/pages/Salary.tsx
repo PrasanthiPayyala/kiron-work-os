@@ -537,7 +537,7 @@ function CreateRunDialog({
 function CreateStructureDialog({
   onClose, onSaved,
 }: { onClose: () => void; onSaved: () => void }) {
-  const { users, companies, ptSlabs } = useDataStore();
+  const { users, companies, ptSlabs, taxSlabs, taxRegimeConfigs } = useDataStore();
   const [userId, setUserId] = useState("");
   const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
   const [basic, setBasic] = useState("0");
@@ -589,6 +589,66 @@ function CreateStructureDialog({
         && (s.maxGross == null || s.maxGross > total))
       .sort((a, b) => b.minGross - a.minGross)[0];
     return slab?.amount ?? 0;
+  })();
+
+  // TDS preview — mirrors backend _compute_tds in salary.py. Uses the
+  // employee's DOJ for mid-year-joiner proration and the slabs / config
+  // for the FY containing `effectiveFrom`.
+  const tdsPreview = (() => {
+    // Derive FY label from the structure's effective_from (best-guess
+    // for which FY this structure will first deduct in).
+    const ef = effectiveFrom ? new Date(effectiveFrom) : new Date();
+    const startYear = ef.getMonth() + 1 >= 4 ? ef.getFullYear() : ef.getFullYear() - 1;
+    const endYY = String((startYear + 1) % 100).padStart(2, "0");
+    const fyLabel = `FY ${startYear}-${endYY}`;
+    const fyStart = new Date(startYear, 3, 1);          // April 1
+    const fyEnd = new Date(startYear + 1, 2, 31);       // March 31
+
+    const cfg = taxRegimeConfigs.find(
+      (c) => c.isActive && c.regime === tdsRegime && c.fyLabel === fyLabel,
+    );
+    const slabs = taxSlabs
+      .filter((s) => s.isActive && s.regime === tdsRegime && s.fyLabel === fyLabel)
+      .sort((a, b) => a.minIncome - b.minIncome);
+    if (!cfg || slabs.length === 0) {
+      return { monthly: 0, fyLabel, annualTaxable: 0, workingMonths: 12, configured: false };
+    }
+
+    // Working months in FY from DOJ (or FY start if no DOJ).
+    const dojStr = (pickedUser as any)?.doj as string | undefined;
+    const dojDate = dojStr ? new Date(dojStr) : null;
+    const effJoin = dojDate && dojDate > fyStart ? dojDate : fyStart;
+    const monthsBetween = (a: Date, b: Date) =>
+      Math.max(0, (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + 1);
+    const workingMonths = monthsBetween(
+      new Date(effJoin.getFullYear(), effJoin.getMonth(), 1),
+      fyEnd,
+    );
+    if (workingMonths <= 0) {
+      return { monthly: 0, fyLabel, annualTaxable: 0, workingMonths: 0, configured: true };
+    }
+
+    const annualGross = total * workingMonths;
+    const annualTaxable = Math.max(0, annualGross - cfg.standardDeduction);
+
+    let tax = 0;
+    for (const s of slabs) {
+      const hi = s.maxIncome ?? Infinity;
+      if (annualTaxable <= s.minIncome) break;
+      const sliceTop = Math.min(annualTaxable, hi);
+      tax += (sliceTop - s.minIncome) * (s.ratePct / 100);
+    }
+    if (cfg.rebateThreshold != null && annualTaxable <= cfg.rebateThreshold) tax = 0;
+    tax = tax * (1 + cfg.cessPct / 100);
+
+    // Months remaining in FY from effective_from (inclusive).
+    const monthsLeft = monthsBetween(
+      new Date(ef.getFullYear(), ef.getMonth(), 1),
+      fyEnd,
+    );
+    const monthly = monthsLeft > 0 ? Math.round((tax / monthsLeft) * 100) / 100 : 0;
+
+    return { monthly, fyLabel, annualTaxable, workingMonths, configured: true };
   })();
 
   const submit = async () => {
@@ -705,13 +765,6 @@ function CreateStructureDialog({
             </p>
           )}
 
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Employer contributions (CTC display only — separate from PF scheme above)</p>
-          <div className="grid grid-cols-3 gap-3">
-            <Money label="Employer PF" value={employerPf} onChange={setEmployerPf} />
-            <Money label="Employer ESI" value={employerEsi} onChange={setEmployerEsi} />
-            <Money label="Other employer" value={employerOther} onChange={setEmployerOther} />
-          </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs">TDS regime</Label>
@@ -722,6 +775,13 @@ function CreateStructureDialog({
                   <SelectItem value="old">Old regime</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {!tdsPreview.configured
+                  ? `No tax slabs configured for ${tdsPreview.fyLabel} ${tdsRegime} regime. Add them in Settings → Tax slabs.`
+                  : tdsPreview.monthly > 0
+                    ? `${tdsPreview.fyLabel} · annual taxable ₹${inr(tdsPreview.annualTaxable)} (${tdsPreview.workingMonths} mo) · TDS ~₹${inr(tdsPreview.monthly)} / month.`
+                    : `${tdsPreview.fyLabel} · annual taxable ₹${inr(tdsPreview.annualTaxable)} ≤ rebate threshold — no TDS will deduct.`}
+              </p>
             </div>
             <div>
               <Label className="text-xs">Notes</Label>
@@ -729,9 +789,16 @@ function CreateStructureDialog({
             </div>
           </div>
 
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Employer contributions (CTC display only — separate from PF scheme above)</p>
+          <div className="grid grid-cols-3 gap-3">
+            <Money label="Employer PF" value={employerPf} onChange={setEmployerPf} />
+            <Money label="Employer ESI" value={employerEsi} onChange={setEmployerEsi} />
+            <Money label="Other employer" value={employerOther} onChange={setEmployerOther} />
+          </div>
+
           <p className="text-[11px] text-muted-foreground">
             Saving creates a new version. The previous current row (if any) is closed automatically.
-            PF / ESI / PT auto-compute when you next "Generate" a payroll run — HR can still override any cell on the draft payslip.
+            PF / ESI / PT / TDS auto-compute when you next "Generate" a payroll run — HR can still override any cell on the draft payslip.
           </p>
         </div>
         <DialogFooter>

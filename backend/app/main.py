@@ -35,6 +35,7 @@ from .routers import (
     projects,
     pt_slabs,
     salary,
+    tax_slabs,
     tasks,
     teams,
     users,
@@ -95,6 +96,7 @@ app.include_router(compliance.router)
 app.include_router(expenses.router)
 app.include_router(salary.router)
 app.include_router(pt_slabs.router)
+app.include_router(tax_slabs.router)
 app.include_router(ledger.router)
 app.include_router(ws.router)
 

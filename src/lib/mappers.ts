@@ -527,6 +527,30 @@ export function mapPtSlab(r: any): import("@/types").PtSlab {
   };
 }
 
+export function mapTaxSlab(r: any): import("@/types").TaxSlab {
+  return {
+    id: r.id,
+    regime: r.regime,
+    fyLabel: r.fy_label,
+    minIncome: Number(r.min_income ?? 0),
+    maxIncome: r.max_income == null ? null : Number(r.max_income),
+    ratePct: Number(r.rate_pct ?? 0),
+    isActive: r.is_active !== false,
+  };
+}
+
+export function mapTaxRegimeConfig(r: any): import("@/types").TaxRegimeConfig {
+  return {
+    id: r.id,
+    regime: r.regime,
+    fyLabel: r.fy_label,
+    standardDeduction: Number(r.standard_deduction ?? 0),
+    rebateThreshold: r.rebate_threshold == null ? null : Number(r.rebate_threshold),
+    cessPct: Number(r.cess_pct ?? 0),
+    isActive: r.is_active !== false,
+  };
+}
+
 // ---------- Contacts & Organizations ----------
 export function mapOrganization(r: any): import("@/types").Organization {
   return {

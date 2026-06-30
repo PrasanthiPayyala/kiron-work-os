@@ -589,6 +589,29 @@ export interface PtSlab {
   isActive: boolean;
 }
 
+// ---------- Payroll (income tax slabs + regime config) ----------
+export type TaxRegime = "new" | "old";
+
+export interface TaxSlab {
+  id: ID;
+  regime: TaxRegime;
+  fyLabel: string;          // e.g. "FY 2025-26"
+  minIncome: number;
+  maxIncome: number | null; // null = top slab, open-ended
+  ratePct: number;
+  isActive: boolean;
+}
+
+export interface TaxRegimeConfig {
+  id: ID;
+  regime: TaxRegime;
+  fyLabel: string;
+  standardDeduction: number;
+  rebateThreshold: number | null;  // 87A — full rebate if taxable <= this
+  cessPct: number;
+  isActive: boolean;
+}
+
 // ---------- Contacts & Organizations ----------
 export type ContactCategory =
   // Compliance
