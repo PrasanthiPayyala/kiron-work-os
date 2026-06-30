@@ -591,7 +591,7 @@ function HoursRosterTable({ companyFilter }: { companyFilter: string }) {
             type="month"
             value={month}
             onChange={(e) => setMonth(e.target.value)}
-            className="h-8 w-[150px]"
+            className="h-9 w-[180px] cursor-pointer pr-2"
           />
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
