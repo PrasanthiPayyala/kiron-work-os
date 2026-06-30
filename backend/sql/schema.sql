@@ -112,6 +112,26 @@ create table public.departments (
   unique(company_id, name)
 );
 
+-- Per-company addressable office locations with optional geofence.
+-- profiles.office_id picks one for each employee; attendance.check_in
+-- compares the captured lat/lng against (latitude, longitude, radius_m)
+-- and stamps geo_outside_office=true on the log when out of range.
+-- See alembic 0033.
+create table public.offices (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  name text not null,
+  address text,
+  latitude numeric(10,7),
+  longitude numeric(10,7),
+  radius_m int not null default 200 check (radius_m > 0 and radius_m <= 10000),
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (company_id, name)
+);
+create index idx_offices_company_active
+  on public.offices (company_id) where is_active = true;
+
 create table public.profiles (
   id uuid primary key references public.users(id) on delete cascade,
   full_name text not null,
@@ -119,6 +139,10 @@ create table public.profiles (
   phone text,
   designation text,
   home_company_id uuid references public.companies(id),
+  -- Per-employee office assignment for the geofence check on check-in.
+  -- NULL = no office assigned, geofence skipped (back-compat with the
+  -- 26 employees onboarded before offices existed).
+  office_id uuid references public.offices(id),
   department_id uuid references public.departments(id),
   reporting_manager_id uuid references public.profiles(id),
   reviewer_id uuid references public.profiles(id),
@@ -273,12 +297,44 @@ create table public.attendance_logs (
   comp_off_status public.comp_off_status,
   comp_off_decided_by uuid references public.profiles(id),
   comp_off_decided_at timestamptz,
+  -- Geo capture on check-in (see alembic 0033). NULL when geo was not
+  -- captured (denied, timed out, or the employee was on WFH /
+  -- field_work so the check was skipped).
+  check_in_lat numeric(10,7),
+  check_in_lng numeric(10,7),
+  check_in_accuracy_m int,
+  geo_denied boolean not null default false,
+  geo_outside_office boolean not null default false,
+  -- Daily aggregate of idle minutes pushed by the client's
+  -- useIdleDetector hook. Raw per-interval audit lives in
+  -- public.idle_intervals; HoursSummaryCard uses this aggregate.
+  idle_minutes int not null default 0,
   created_at timestamptz not null default now(),
   unique(user_id, work_date)
 );
 create index idx_attendance_logs_pending_comp_off
   on public.attendance_logs (work_date desc)
   where comp_off_status = 'pending';
+
+-- Per-interval audit of idle gaps detected by the client's
+-- useIdleDetector hook (30-min threshold for `idle`; immediate for
+-- `hidden` when the tab/window loses focus). attendance_logs.idle_minutes
+-- is the daily aggregate used by HoursSummaryCard; this is the raw
+-- detail HR can drill into if ever needed. UNIQUE (user, started_at)
+-- makes POST idempotent on retry.
+create table public.idle_intervals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  work_date date not null,
+  started_at timestamptz not null,
+  ended_at timestamptz not null,
+  minutes int not null check (minutes > 0),
+  source text not null check (source in ('idle', 'hidden')),
+  created_at timestamptz not null default now(),
+  unique (user_id, started_at)
+);
+create index idx_idle_intervals_user_date
+  on public.idle_intervals (user_id, work_date desc);
 
 create table public.leave_requests (
   id uuid primary key default gen_random_uuid(),

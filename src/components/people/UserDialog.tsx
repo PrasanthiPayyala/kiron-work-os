@@ -41,7 +41,7 @@ type Props = {
 };
 
 export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
-  const { companies, users } = useDataStore();
+  const { companies, users, offices } = useDataStore();
   const { toast } = useToast();
 
   const [fullName, setFullName] = useState("");
@@ -51,6 +51,10 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
   const [employmentType, setEmploymentType] = useState<EmploymentType>("full_time");
   const [role, setRole] = useState<Role>("employee");
   const [companyId, setCompanyId] = useState("");
+  // Optional per-employee office. "none" = no office assigned (geofence
+  // skipped on check-in). Auto-selects when the chosen company has
+  // exactly one active office; otherwise renders a dropdown.
+  const [officeId, setOfficeId] = useState<string>("none");
   const [managerId, setManagerId] = useState<string>("none");
   const [reviewerId, setReviewerId] = useState<string>("none");
   const [doj, setDoj] = useState("");
@@ -72,6 +76,29 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
   // "custom" doesn't drop the user straight onto unrelated values.
   const selectedCompany = companies.find((c) => c.id === companyId);
 
+  // Active offices belonging to the picked company. Memoising would be
+  // overkill — offices is a small list and recomputing on each render
+  // keeps the auto-select behaviour deterministic.
+  const companyOffices = offices.filter((o) => o.companyId === companyId && o.isActive);
+
+  // Auto-select the office when there's exactly one. If the picked
+  // office no longer belongs to the company (e.g. company changed in
+  // edit mode), reset to 'none' so we don't send a stale FK.
+  useEffect(() => {
+    if (!companyId) {
+      if (officeId !== "none") setOfficeId("none");
+      return;
+    }
+    if (officeId !== "none" && !companyOffices.some((o) => o.id === officeId)) {
+      setOfficeId("none");
+      return;
+    }
+    if (officeId === "none" && companyOffices.length === 1) {
+      setOfficeId(companyOffices[0].id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, companyOffices.length]);
+
   // Reset / hydrate every time the dialog opens.
   useEffect(() => {
     if (!open) return;
@@ -83,6 +110,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setEmploymentType(user.employmentType);
       setRole(user.role);
       setCompanyId(user.homeCompanyId);
+      setOfficeId(user.officeId ?? "none");
       setManagerId(user.reportingManagerId ?? "none");
       setReviewerId(user.reviewerId ?? "none");
       setDoj(user.joinedAt ?? "");
@@ -104,6 +132,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
       setRole("employee");
       const firstCo = companies[0];
       setCompanyId(firstCo?.id ?? "");
+      setOfficeId("none");
       setManagerId("none");
       setReviewerId("none");
       setDoj("");
@@ -140,6 +169,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
           email: email.trim(),
           password,
           home_company_id: companyId,
+          office_id: officeId === "none" ? null : officeId,
           designation: designation.trim(),
           employment_type: employmentType,
           role,
@@ -159,6 +189,7 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
           designation: designation.trim(),
           employment_type: employmentType,
           home_company_id: companyId,
+          office_id: officeId === "none" ? null : officeId,
           reporting_manager_id: managerId === "none" ? null : managerId,
           reviewer_id: reviewerId === "none" ? null : reviewerId,
           doj: doj || null,
@@ -303,6 +334,30 @@ export function UserDialog({ open, onOpenChange, mode, user, onSaved }: Props) {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Office picker — only rendered when the chosen company actually
+              has any offices configured. With one office we auto-selected
+              it above; the user can still override here. */}
+          {companyOffices.length > 0 && (
+            <div className="grid gap-1.5">
+              <Label>Office (geofence)</Label>
+              <Select value={officeId} onValueChange={setOfficeId}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— No office assigned —</SelectItem>
+                  {companyOffices.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}{o.latitude == null ? " (no geofence)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Drives the geo check at check-in. No office = geofence off.
+                Office without coordinates = address-only, no warn.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">

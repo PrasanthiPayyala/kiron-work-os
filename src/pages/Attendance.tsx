@@ -394,6 +394,42 @@ export default function Attendance() {
     return isNonWorkingDate(t, schedule) || holidayByDate.has(today);
   }, [schedule, holidayByDate, today]);
 
+  // Best-effort geolocation read for the check-in geofence. Resolves
+  // with either {lat, lng, accuracy_m} or {denied:true} after at most
+  // 6 seconds. Never throws — geo is a soft signal, never blocks
+  // check-in.
+  const readGeo = (): Promise<{ lat?: number; lng?: number; accuracy_m?: number; denied: boolean }> => {
+    if (!("geolocation" in navigator)) {
+      return Promise.resolve({ denied: true });
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const t = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve({ denied: true });
+      }, 6000);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (settled) return;
+          settled = true; clearTimeout(t);
+          resolve({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy_m: Math.round(pos.coords.accuracy || 0),
+            denied: false,
+          });
+        },
+        () => {
+          if (settled) return;
+          settled = true; clearTimeout(t);
+          resolve({ denied: true });
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 30_000 },
+      );
+    });
+  };
+
   const handleCheckIn = async () => {
     if (!user) return;
     if (todayLog) return toast.info("Already checked in for today");
@@ -403,13 +439,33 @@ export default function Attendance() {
     // Field work uses 'field_work' directly (matches the DB enum value
     // added in migration 0015).
     const dbStatus = status === "wfh" ? "work_from_home" : status;
+    // WFH / field_work skip geo capture entirely — they're not at the
+    // office, so the geofence question doesn't apply.
+    const skipGeo = status === "wfh" || status === "field_work";
+    const geo = skipGeo ? null : await readGeo();
     try {
-      await api.checkIn({
+      const checkInResp = await api.checkIn({
         work_date: today,
         check_in_at: new Date().toISOString(),
         status: dbStatus,
         source: "self_checkin",
+        ...(geo && !geo.denied ? {
+          check_in_lat: geo.lat,
+          check_in_lng: geo.lng,
+          check_in_accuracy_m: geo.accuracy_m,
+        } : {}),
+        ...(geo?.denied ? { geo_denied: true } : {}),
       });
+      // Soft geofence warning — backend stamps geo_outside_office=true
+      // and returns the distance + office name. We surface a toast so
+      // the employee knows HR will see the flag.
+      const warning = (checkInResp as any)?.geo_warning;
+      if (warning) {
+        toast.warning(
+          `Checked in — you're ~${warning.distance_m}m from ${warning.office_name}. ` +
+          `HR has been notified for review.`,
+        );
+      }
       const earnsCompOff = todayIsOffDay && status !== "wfh"
         ? (status === "half_day" ? "0.5" : "1")
         : null;

@@ -70,6 +70,11 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
     home_company_id: str
+    # Per-employee office assignment for the geofence check on
+    # attendance check-in. Optional — null leaves the geofence off, same
+    # back-compat path as the 26 employees onboarded before offices
+    # existed. Must belong to home_company_id when set.
+    office_id: Optional[str] = None
     department_id: Optional[str] = None
     designation: str = Field("", max_length=120)
     employment_type: str = "full_time"
@@ -102,6 +107,23 @@ def create_user(
     if dup:
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
 
+    # Validate the office (if given) belongs to the chosen company
+    # before we insert anything — keeps the data sane and surfaces the
+    # error cleanly instead of through a FK violation.
+    if body.office_id:
+        ok = db.execute(
+            text(
+                "SELECT 1 FROM offices "
+                "WHERE id = :id AND company_id = :co"
+            ),
+            {"id": body.office_id, "co": body.home_company_id},
+        ).first()
+        if not ok:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Chosen office doesn't belong to this company",
+            )
+
     uid = str(uuid.uuid4())
     db.execute(
         text("INSERT INTO users (id, email, password_hash) VALUES (:id, :em, :ph)"),
@@ -115,17 +137,18 @@ def create_user(
     db.execute(
         text(
             "INSERT INTO profiles ("
-            " id, full_name, email, designation, home_company_id, department_id,"
-            " reporting_manager_id, reviewer_id, initials, status, doj,"
-            " employment_type, is_active, must_change_password"
+            " id, full_name, email, designation, home_company_id, office_id,"
+            " department_id, reporting_manager_id, reviewer_id, initials,"
+            " status, doj, employment_type, is_active, must_change_password"
             ") VALUES ("
-            " :id, :name, :em, :des, :co, :dep, :mgr, :rev, :ini, :st, :doj,"
-            " :emp, true, true"
+            " :id, :name, :em, :des, :co, :off, :dep, :mgr, :rev, :ini, :st,"
+            " :doj, :emp, true, true"
             ")"
         ),
         {
             "id": uid, "name": body.full_name, "em": body.email,
             "des": body.designation, "co": body.home_company_id,
+            "off": body.office_id,
             "dep": body.department_id, "mgr": body.reporting_manager_id,
             "rev": body.reviewer_id, "ini": _initials(body.full_name),
             "st": profile_status, "doj": body.doj or None,
@@ -151,6 +174,8 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     designation: Optional[str] = Field(None, max_length=120)
     home_company_id: Optional[str] = None
+    # Per-employee office assignment. Pass null to clear (geofence off).
+    office_id: Optional[str] = None
     department_id: Optional[str] = None
     reporting_manager_id: Optional[str] = None
     reviewer_id: Optional[str] = None
@@ -206,6 +231,35 @@ def update_user(
     # column so the profile inherits the company default again.
     if fields.get("saturday_weeks_working") == []:
         fields["saturday_weeks_working"] = None
+
+    # office_id (if provided) must belong to the effective home company.
+    # The effective company is either the new value being set or the
+    # existing row's value.
+    if "office_id" in fields and fields["office_id"]:
+        effective_co = fields.get("home_company_id")
+        if not effective_co:
+            row_co = db.execute(
+                text("SELECT home_company_id FROM profiles WHERE id = :id"),
+                {"id": user_id},
+            ).first()
+            effective_co = str(row_co[0]) if row_co and row_co[0] else None
+        if not effective_co:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Set home_company_id before assigning an office",
+            )
+        ok = db.execute(
+            text(
+                "SELECT 1 FROM offices "
+                "WHERE id = :id AND company_id = :co"
+            ),
+            {"id": fields["office_id"], "co": effective_co},
+        ).first()
+        if not ok:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Chosen office doesn't belong to this employee's company",
+            )
 
     # Email change is special: lives in BOTH users (auth) and profiles (display).
     # Take it out of `fields` so it doesn't go into the profiles UPDATE blindly,

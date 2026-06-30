@@ -947,6 +947,56 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  // ---------- Offices ----------
+  /** List a company's offices. Active + inactive both returned —
+   *  the UI filters by `is_active` when populating People dropdowns. */
+  listOffices(companyId: string): Promise<Array<Record<string, unknown>>> {
+    return request(`/companies/${encodeURIComponent(companyId)}/offices`);
+  },
+  createOffice(companyId: string, payload: {
+    name: string;
+    address?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    radius_m?: number;
+  }): Promise<Record<string, unknown>> {
+    return request(`/companies/${encodeURIComponent(companyId)}/offices`, {
+      method: "POST", body: JSON.stringify(payload),
+    });
+  },
+  updateOffice(officeId: string, patch: {
+    name?: string;
+    address?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    radius_m?: number;
+    is_active?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return request(`/offices/${encodeURIComponent(officeId)}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    });
+  },
+  /** Soft-deactivate an office (is_active=false). Historical attendance
+   *  rows referencing this office still resolve. */
+  deactivateOffice(officeId: string): Promise<void> {
+    return request(`/offices/${encodeURIComponent(officeId)}`, { method: "DELETE" });
+  },
+
+  /** Push a confirmed idle interval to the server. The client's
+   *  useIdleDetector hook fires this after ≥30 min of inactivity (or
+   *  on visibility change). Backend deduplicates by (user, started_at)
+   *  so a retry is safe. Returns {recorded, minutes?} so the caller
+   *  can decide whether to log telemetry. */
+  postIdleInterval(payload: {
+    started_at: string;
+    ended_at: string;
+    source: "idle" | "hidden";
+  }): Promise<{ recorded: boolean; minutes?: number; reason?: string }> {
+    return request("/attendance/idle-intervals", {
+      method: "POST", body: JSON.stringify(payload),
+    });
+  },
+
   /** File an hour-scale attendance permission (late-in / early-out /
    *  mid-out). Without `user_id` / `pre_approve` the caller files for
    *  themselves and the row starts pending. HR can pass user_id +
@@ -985,6 +1035,10 @@ export const api = {
     month: string; from: string; to: string;
     days_in_period: number;
     expected_hours: number; actual_hours: number;
+    /** Stamped worked hours BEFORE idle gaps are subtracted. */
+    raw_actual_hours: number;
+    /** Sum of idle interval minutes for the period. */
+    idle_minutes: number;
     full_leave_hours: number; half_day_count: number;
     permission_minutes: number;
     net_expected_hours: number;
@@ -1002,6 +1056,8 @@ export const api = {
     month: string; from: string; to: string;
     days_in_period: number;
     expected_hours: number; actual_hours: number;
+    raw_actual_hours: number;
+    idle_minutes: number;
     full_leave_hours: number; half_day_count: number;
     permission_minutes: number;
     net_expected_hours: number;

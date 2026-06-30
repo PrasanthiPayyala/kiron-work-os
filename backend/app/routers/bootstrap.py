@@ -207,6 +207,14 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
     # --- holidays (all rows; the client filters by company_id where needed) ---
     holidays = _rows(db, "SELECT * FROM holidays ORDER BY date ASC, name ASC")
 
+    # --- offices (active rows only; the client filters by company_id
+    # in the People + Attendance flows). Cheap query — at our scale this
+    # is a couple dozen rows max.
+    offices = _rows(
+        db,
+        "SELECT * FROM offices WHERE is_active = true ORDER BY company_id, name",
+    )
+
     # --- teams ---
     # Global-team viewers (super_admin / founder / founder_office_coordinator)
     # see every team; everyone else sees only the teams they belong to.
@@ -249,6 +257,7 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "messages": messages,
         "notifications": notifications,
         "holidays": holidays,
+        "offices": offices,
         "teams": teams_rows,
         "team_members": team_members,
     }

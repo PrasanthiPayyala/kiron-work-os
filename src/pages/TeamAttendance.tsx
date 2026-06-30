@@ -12,10 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock, LogIn, Plane } from "lucide-react";
+import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock, LogIn, Plane, MapPin, Plus } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { toast as sonner } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { GrantPermissionDialog } from "@/components/attendance/GrantPermissionDialog";
 
 type LeaveTypeKey = "casual_leave" | "sick_leave" | "loss_of_pay" | "comp_off" | "optional_holiday";
 // UI option value can be a leave_type OR the synthetic 'comp_off_advance'
@@ -47,6 +48,12 @@ type Row = {
   reason?: "missed_check_in" | "left_early";
   minutes_early?: number;
   expected_by?: string;
+  /** True when this person's check-in was outside their assigned office's
+   *  geofence. Renders the "📍 outside office" chip on Present rows. */
+  geo_outside_office?: boolean;
+  /** Sum of idle minutes today (≥30 min gaps detected by the client).
+   *  Surfaced as a small "· idle Xm" suffix in the row metadata. */
+  idle_minutes?: number;
 };
 
 type FollowupResponse = {
@@ -76,6 +83,7 @@ export default function TeamAttendance() {
   const [markingLeaveUserId, setMarkingLeaveUserId] = useState<string | null>(null);
   const [decidingCompOffId, setDecidingCompOffId] = useState<string | null>(null);
   const [decidingPermId, setDecidingPermId] = useState<string | null>(null);
+  const [grantDialogOpen, setGrantDialogOpen] = useState(false);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -445,6 +453,16 @@ export default function TeamAttendance() {
           </TabsContent>
 
           <TabsContent value="permissions">
+            <div className="mt-4 mb-3 flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Pending requests filed by employees. Use <b>Grant</b> to record
+                a permission you approved over WhatsApp / in person — it lands
+                pre-approved without going through the queue.
+              </p>
+              <Button size="sm" className="gap-1.5" onClick={() => setGrantDialogOpen(true)}>
+                <Plus className="h-3.5 w-3.5" /> Grant permission
+              </Button>
+            </div>
             {pendingPermissions.length === 0 ? (
               <p className="mt-4 text-center text-sm text-muted-foreground">No permissions waiting on you. ✓</p>
             ) : (
@@ -499,6 +517,11 @@ export default function TeamAttendance() {
         </Tabs>
       </div>
 
+      <GrantPermissionDialog
+        open={grantDialogOpen}
+        onClose={() => setGrantDialogOpen(false)}
+        onGranted={() => refresh()}
+      />
     </div>
   );
 }
@@ -572,6 +595,7 @@ function HoursRosterTable({ companyFilter }: { companyFilter: string }) {
               <th className="px-3 py-2 text-left font-medium">Employee</th>
               <th className="px-3 py-2 text-right font-medium">Expected</th>
               <th className="px-3 py-2 text-right font-medium">Worked</th>
+              <th className="px-3 py-2 text-right font-medium">Idle</th>
               <th className="px-3 py-2 text-right font-medium">Permissions</th>
               <th className="px-3 py-2 text-right font-medium">Shortfall</th>
               <th className="px-3 py-2 text-right font-medium">Surplus</th>
@@ -583,6 +607,7 @@ function HoursRosterTable({ companyFilter }: { companyFilter: string }) {
                 <td className="px-3 py-2">{r.name}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{formatHM(r.net_expected_hours)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{formatHM(r.actual_hours)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{r.idle_minutes > 0 ? `${r.idle_minutes}m` : "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{r.permission_minutes}m</td>
                 <td className="px-3 py-2 text-right tabular-nums text-destructive">{r.net_shortfall_hours > 0 ? formatHM(r.net_shortfall_hours) : "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-success">{r.net_surplus_hours > 0 ? formatHM(r.net_surplus_hours) : "—"}</td>
@@ -634,6 +659,11 @@ function PersonList({
                 {reasonChip}
                 {r.check_in_status && !r.reason && <Badge variant="outline" className="text-[10px] capitalize">{r.check_in_status.replace("_", " ")}</Badge>}
                 {r.leave_type && <Badge variant="secondary" className="text-[10px] capitalize">{r.leave_type.replace("_", " ")}</Badge>}
+                {r.geo_outside_office && (
+                  <Badge variant="destructive" className="gap-1 text-[10px]">
+                    <MapPin className="h-2.5 w-2.5" /> outside office
+                  </Badge>
+                )}
               </div>
               <p className="truncate text-xs text-muted-foreground">
                 {r.designation && <>{r.designation} · </>}
@@ -641,6 +671,9 @@ function PersonList({
                 {mgr && <> · Manager: {mgr.name}</>}
                 {r.check_in_at && <> · In {fmtTime(r.check_in_at)}</>}
                 {r.check_out_at && <> · Out {fmtTime(r.check_out_at)}</>}
+                {!!r.idle_minutes && r.idle_minutes > 0 && (
+                  <> · idle {r.idle_minutes}m</>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-1.5">

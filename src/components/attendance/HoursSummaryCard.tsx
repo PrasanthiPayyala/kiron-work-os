@@ -88,9 +88,19 @@ export function HoursSummaryCard({
         )}
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat label="Expected" value={formatHours(data.expected_hours)} />
-        <Stat label="Worked" value={formatHours(data.actual_hours)} accent="primary" />
+        <Stat
+          label="Worked"
+          value={formatHours(data.actual_hours)}
+          accent="primary"
+          subtle={data.idle_minutes > 0 ? `${data.idle_minutes}m idle excluded` : undefined}
+        />
+        <Stat
+          label="Idle excluded"
+          value={formatHours((data.idle_minutes ?? 0) / 60)}
+          accent="muted"
+        />
         <Stat
           label="Leave + permission"
           value={formatHours(
@@ -109,7 +119,8 @@ export function HoursSummaryCard({
 
       <p className="mt-3 text-[11px] text-muted-foreground">
         Net expected = work-hours minus approved leaves, half-days, and approved permissions.
-        Surplus / shortfall is your worked hours vs that net expected.
+        Worked is your stamped hours minus idle gaps (≥30 min). Surplus / shortfall is
+        worked vs net expected.
       </p>
     </div>
   );

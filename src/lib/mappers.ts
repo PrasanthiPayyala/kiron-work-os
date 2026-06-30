@@ -195,6 +195,7 @@ export function mapProfile(r: DbProfile, role: Role = "employee"): User {
     email: r.email ?? "",
     role,
     homeCompanyId: r.home_company_id ?? "",
+    officeId: r.office_id ?? undefined,
     departmentId: r.department_id ?? undefined,
     designation: r.designation ?? "",
     reportingManagerId: r.reporting_manager_id ?? undefined,
@@ -339,6 +340,19 @@ export function mapApproval(r: DbApproval): Approval {
     note: r.comments ?? undefined,
     createdAt: r.created_at?.slice(0, 10) ?? "",
     decidedAt: r.decided_at ? r.decided_at.slice(0, 10) : undefined,
+  };
+}
+
+export function mapOffice(r: any): import("@/types").Office {
+  return {
+    id: r.id,
+    companyId: r.company_id,
+    name: r.name,
+    address: r.address ?? undefined,
+    latitude: r.latitude != null ? Number(r.latitude) : undefined,
+    longitude: r.longitude != null ? Number(r.longitude) : undefined,
+    radiusM: Number(r.radius_m ?? 200),
+    isActive: r.is_active !== false,
   };
 }
 

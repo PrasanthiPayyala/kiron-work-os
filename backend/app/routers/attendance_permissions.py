@@ -492,14 +492,19 @@ def hours_summary(
     actual_row = db.execute(
         text(
             "SELECT COALESCE(SUM(worked_hours), 0) AS h, "
-            "       COUNT(*) FILTER (WHERE status = 'half_day') AS half "
+            "       COUNT(*) FILTER (WHERE status = 'half_day') AS half, "
+            "       COALESCE(SUM(idle_minutes), 0) AS idle "
             "FROM attendance_logs "
             "WHERE user_id = :u AND work_date BETWEEN :s AND :e"
         ),
         {"u": target_uid, "s": start_date, "e": end_date},
     ).mappings().first()
-    actual_hours = float(actual_row["h"] or 0)
+    raw_actual_hours = float(actual_row["h"] or 0)
     half_day_count = int(actual_row["half"] or 0)
+    idle_minutes_total = int(actual_row["idle"] or 0)
+    # Active hours = stamped hours minus idle gaps. Floor at 0 in case
+    # idle exceeds stamped (shouldn't happen but defensive).
+    actual_hours = max(0.0, raw_actual_hours - idle_minutes_total / 60)
 
     # Full-day approved leaves in period (each day with an approved leave
     # subtracts per_day_minutes from expected).
@@ -558,6 +563,8 @@ def hours_summary(
         "days_in_period": days_in_period,
         "expected_hours": round(expected_minutes / 60, 2),
         "actual_hours": round(actual_hours, 2),
+        "raw_actual_hours": round(raw_actual_hours, 2),
+        "idle_minutes": idle_minutes_total,
         "full_leave_hours": round(full_leave_minutes / 60, 2),
         "half_day_count": half_day_count,
         "permission_minutes": permission_minutes,

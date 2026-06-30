@@ -158,6 +158,9 @@ export interface User {
   email: string;
   role: Role;
   homeCompanyId: ID;
+  /** Optional per-employee office (FK to Office.id). Drives the
+   *  geofence on attendance check-in. NULL = geofence skipped. */
+  officeId?: ID;
   departmentId?: ID;
   designation: string;
   reportingManagerId?: ID;
@@ -391,6 +394,23 @@ export interface LeaveRequest {
   /** Only set for comp-off advances ("repay later"). Planned date the
    *  employee will work an off-day to settle this advance. */
   compOffRepayBy?: ISODate;
+}
+
+// ---------- Offices ----------
+/** A per-company addressable location with an optional geofence. The
+ *  geofence (latitude + longitude + radius_m) is checked on attendance
+ *  check-in when the employee is assigned to this office. Skipping
+ *  latitude/longitude leaves the geofence off — the office still
+ *  serves as an address label. */
+export interface Office {
+  id: ID;
+  companyId: ID;
+  name: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  radiusM: number;
+  isActive: boolean;
 }
 
 // ---------- Attendance permissions ----------

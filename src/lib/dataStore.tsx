@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth";
 import {
   mapCompany, mapDepartment, mapProfile, mapProject, mapTask, mapApproval,
   mapAttendance, mapAttendancePermission, mapLeave, mapConversation, mapMessage,
-  mapNotification, mapHoliday, mapTeam, pickPrimaryRole,
+  mapNotification, mapHoliday, mapOffice, mapTeam, pickPrimaryRole,
 } from "@/lib/mappers";
 import { offlineDB, replaceTable, setMeta, getMeta, clearAllData } from "@/lib/offline/db";
 import { drainQueue } from "@/lib/offline/mutationQueue";
@@ -22,7 +22,7 @@ import { showDesktopNotification } from "@/lib/desktopNotifications";
 import type {
   Company, Department, User, Project, Task, Approval,
   AttendanceLog, AttendancePermission, LeaveRequest, Conversation, Message,
-  Notification, Role, Holiday, Team,
+  Notification, Office, Role, Holiday, Team,
 } from "@/types";
 
 type Store = {
@@ -39,6 +39,7 @@ type Store = {
   messages: Message[];
   notifications: Notification[];
   holidays: Holiday[];
+  offices: Office[];
   teams: Team[];
   rolesByUser: Record<string, Role[]>;
 };
@@ -65,7 +66,8 @@ const empty: Store = {
   companies: [], departments: [], users: [], projects: [], tasks: [],
   approvals: [], attendance: [], attendancePermissions: [],
   leaveRequests: [], conversations: [],
-  messages: [], notifications: [], holidays: [], teams: [], rolesByUser: {},
+  messages: [], notifications: [], holidays: [], offices: [], teams: [],
+  rolesByUser: {},
 };
 
 const DataCtx = createContext<Ctx | null>(null);
@@ -83,7 +85,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     tasks: any[]; approvals: any[]; attendance: any[]; leaves: any[];
     attendancePermissions?: any[];
     conversations: any[]; convMembers: { conversation_id: string; user_id: string; last_read_at?: string | null }[];
-    messages: any[]; notifications: any[]; holidays?: any[];
+    messages: any[]; notifications: any[]; holidays?: any[]; offices?: any[];
     teams?: any[]; teamMembers?: { team_id: string; user_id: string; member_role: string }[];
     currentUserId?: string;
   }): Store => {
@@ -125,6 +127,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       messages: raw.messages.map(mapMessage),
       notifications: raw.notifications.map(mapNotification),
       holidays: (raw.holidays ?? []).map(mapHoliday),
+      offices: (raw.offices ?? []).map(mapOffice),
       teams: (raw.teams ?? []).map((t: any) => mapTeam(t, teamMembersByTeam[t.id] ?? [])),
       rolesByUser,
     };
@@ -184,6 +187,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       approvals: b.approvals,
       attendance: b.attendance_logs,
       attendancePermissions: (b as any).attendance_permissions ?? [],
+      offices: (b as any).offices ?? [],
       leaves: b.leave_requests,
       conversations: b.conversations,
       convMembers: b.conversation_members,

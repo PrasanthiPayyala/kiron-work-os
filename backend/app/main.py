@@ -31,6 +31,7 @@ from .routers import (
     leave,
     leave_balances,
     notifications,
+    offices,
     projects,
     salary,
     tasks,
@@ -78,6 +79,7 @@ app.include_router(files.router)
 app.include_router(notifications.router)
 app.include_router(projects.router)
 app.include_router(companies.router)
+app.include_router(offices.router)
 app.include_router(bank_accounts.router)
 app.include_router(contacts.router)
 app.include_router(documents.router)

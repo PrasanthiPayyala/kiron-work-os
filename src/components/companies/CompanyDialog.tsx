@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, X, Upload, Loader2 } from "lucide-react";
 import { BankAccountsSection } from "./BankAccountsSection";
+import { OfficesTab } from "./OfficesTab";
 
 // ---------- Repeatable string list (URLs, addresses, phones, certificates) ----------
 function MultiInput({
@@ -610,14 +611,15 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
         </DialogHeader>
 
         <Tabs defaultValue="basics" className="flex-1 min-h-0 flex flex-col">
-          <TabsList className={canEditFinance ? "grid w-full grid-cols-6" : "grid w-full grid-cols-5"}>
+          <TabsList className={canEditFinance ? "grid w-full grid-cols-7" : "grid w-full grid-cols-6"}>
             <TabsTrigger value="basics">Basics</TabsTrigger>
             <TabsTrigger value="registration">Registration</TabsTrigger>
             <TabsTrigger value="addresses">Addresses</TabsTrigger>
+            <TabsTrigger value="offices">Offices</TabsTrigger>
             <TabsTrigger value="people">People</TabsTrigger>
             <TabsTrigger value="compliance">Compliance</TabsTrigger>
             {/* Bank tab is finance-scoped — HR doesn't even see it. The
-                column shrinks to 5 in that case so the tabs still fill. */}
+                column shrinks to 6 in that case so the tabs still fill. */}
             {canEditFinance && <TabsTrigger value="bank">Bank</TabsTrigger>}
           </TabsList>
 
@@ -780,6 +782,10 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
                 onChange={(v) => set("phoneNumbers", v)}
                 inputType="tel"
               />
+            </TabsContent>
+
+            <TabsContent value="offices" className="space-y-3">
+              <OfficesTab companyId={company?.id} />
             </TabsContent>
 
             <TabsContent value="people" className="space-y-3">

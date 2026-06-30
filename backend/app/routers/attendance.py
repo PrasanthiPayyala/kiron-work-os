@@ -34,6 +34,27 @@ class CheckIn(BaseModel):
     check_in_at: str
     status: str = "present"
     source: str = "self_checkin"
+    # Geo capture from navigator.geolocation (Attendance.tsx). Optional —
+    # browser denial or 5s timeout sends geo_denied=true with no coords.
+    # WFH / field_work skip geo entirely on the client side.
+    check_in_lat: Optional[float] = None
+    check_in_lng: Optional[float] = None
+    check_in_accuracy_m: Optional[int] = None
+    geo_denied: bool = False
+
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Distance in metres between two (lat, lng) points. Uses the standard
+    haversine on the earth's mean radius (6,371,000 m)."""
+    import math
+    r = 6_371_000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    c = 2 * math.asin(min(1.0, math.sqrt(a)))
+    return r * c
 
 
 def _get(db: Session, log_id: str) -> dict:
@@ -112,24 +133,69 @@ def check_in(body: CheckIn, user: CurrentUser = Depends(get_current_user), db: S
             comp_earned = 0.5 if body.status == "half_day" else 1.0
             comp_status = "pending"
 
+    # Geofence: WFH / field_work skip entirely. Otherwise, if the
+    # employee has an office_id and the office has a (lat, lng), compute
+    # haversine distance and flag if outside radius. Soft warn — the
+    # check-in still saves regardless.
+    geo_outside_office = False
+    geo_warning: dict | None = None
+    if (
+        body.status not in {"work_from_home", "field_work"}
+        and body.check_in_lat is not None
+        and body.check_in_lng is not None
+    ):
+        office = db.execute(
+            text(
+                "SELECT o.id, o.name, o.latitude, o.longitude, o.radius_m "
+                "FROM profiles p "
+                "JOIN offices o ON o.id = p.office_id "
+                "WHERE p.id = :uid AND o.is_active = true"
+            ),
+            {"uid": user.id},
+        ).mappings().first()
+        if office and office.get("latitude") is not None and office.get("longitude") is not None:
+            distance_m = _haversine_m(
+                float(body.check_in_lat), float(body.check_in_lng),
+                float(office["latitude"]), float(office["longitude"]),
+            )
+            radius_m = int(office["radius_m"])
+            if distance_m > radius_m:
+                geo_outside_office = True
+                geo_warning = {
+                    "office_name": office["name"],
+                    "distance_m": int(distance_m),
+                    "radius_m": radius_m,
+                }
+
     try:
         db.execute(
             text(
                 "INSERT INTO attendance_logs "
                 "  (id, user_id, work_date, check_in_at, status, source, "
-                "   comp_off_earned, comp_off_status) "
+                "   comp_off_earned, comp_off_status, "
+                "   check_in_lat, check_in_lng, check_in_accuracy_m, "
+                "   geo_denied, geo_outside_office) "
                 "VALUES (:id, :uid, :work_date, :check_in_at, :status, :source, "
-                "        :co_earned, CAST(:co_status AS public.comp_off_status))"
+                "        :co_earned, CAST(:co_status AS public.comp_off_status), "
+                "        :lat, :lng, :acc, :gd, :goo)"
             ),
-            {"id": new_id, "uid": user.id, "work_date": body.work_date,
-             "check_in_at": body.check_in_at, "status": body.status, "source": body.source,
-             "co_earned": comp_earned, "co_status": comp_status},
+            {
+                "id": new_id, "uid": user.id, "work_date": body.work_date,
+                "check_in_at": body.check_in_at, "status": body.status, "source": body.source,
+                "co_earned": comp_earned, "co_status": comp_status,
+                "lat": body.check_in_lat, "lng": body.check_in_lng,
+                "acc": body.check_in_accuracy_m,
+                "gd": bool(body.geo_denied), "goo": geo_outside_office,
+            },
         )
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Already checked in for this date")
-    return _get(db, new_id)
+    log_row = _get(db, new_id)
+    if geo_warning:
+        log_row["geo_warning"] = geo_warning
+    return log_row
 
 
 @router.patch("/{log_id}")
@@ -541,7 +607,8 @@ def followup(
 
     today_attendance = db.execute(
         text(
-            "SELECT user_id, check_in_at, check_out_at, status, source "
+            "SELECT user_id, check_in_at, check_out_at, status, source, "
+            "       geo_outside_office, geo_denied, idle_minutes "
             "FROM attendance_logs WHERE work_date = :d"
         ),
         {"d": target.isoformat()},
@@ -604,6 +671,8 @@ def followup(
                 row_data["check_in_at"] = ci.isoformat() if ci else None
                 row_data["check_in_status"] = att.get("status")
                 row_data["check_out_at"] = co.isoformat() if co else None
+                row_data["geo_outside_office"] = bool(att.get("geo_outside_office"))
+                row_data["idle_minutes"] = int(att.get("idle_minutes") or 0)
                 present.append(row_data)
             else:
                 off_today.append(row_data)
@@ -633,6 +702,8 @@ def followup(
         att_status = att.get("status")
         row_data["check_in_at"] = ci.isoformat() if ci else None
         row_data["check_in_status"] = att_status
+        row_data["geo_outside_office"] = bool(att.get("geo_outside_office"))
+        row_data["idle_minutes"] = int(att.get("idle_minutes") or 0)
 
         # Early checkout follow-up — only meaningful if they have a
         # check_out and it's before the early_cutoff. Excused if the
@@ -674,3 +745,101 @@ def followup(
         "on_leave": on_leave,
         "off_today": off_today,
     }
+
+
+# -------------------- Idle intervals --------------------
+
+class IdleInterval(BaseModel):
+    started_at: str   # ISO 8601
+    ended_at: str     # ISO 8601
+    source: str       # 'idle' | 'hidden'
+
+
+@router.post("/idle-intervals", status_code=status.HTTP_201_CREATED)
+def record_idle_interval(
+    body: IdleInterval,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Client pushes a confirmed idle interval (≥30 min of no input, or
+    a `visibilitychange` hidden→visible flip with elapsed time). Two
+    side-effects, atomic:
+
+    * INSERT into idle_intervals (deduped by UNIQUE(user_id, started_at)
+      so retries don't double-count)
+    * BUMP attendance_logs.idle_minutes for the (user, work_date) row
+
+    Returns {"recorded": true, "minutes": N} or {"recorded": false}
+    when this is a duplicate POST.
+
+    No-op if the user hasn't checked in for this date — idle before
+    check-in doesn't make sense to track (lunchtime walkup, off-day
+    browsing, etc.).
+    """
+    if body.source not in {"idle", "hidden"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "source must be 'idle' or 'hidden'")
+    try:
+        started = _dt.datetime.fromisoformat(body.started_at.replace("Z", "+00:00"))
+        ended = _dt.datetime.fromisoformat(body.ended_at.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "started_at and ended_at must be ISO 8601")
+    if ended <= started:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "ended_at must be after started_at")
+    minutes = int((ended - started).total_seconds() // 60)
+    if minutes <= 0:
+        return {"recorded": False, "reason": "zero_minutes"}
+    if minutes > 24 * 60:
+        # Sanity guard — a single idle interval longer than a day is a
+        # client bug. Clip rather than reject so the rest of the day's
+        # idle still records.
+        minutes = 24 * 60
+
+    # Work date in IST. We use the started_at calendar day so a 30-min
+    # idle that spans midnight gets attributed to the day it started.
+    started_ist = started.astimezone(IST) if started.tzinfo else started.replace(tzinfo=IST)
+    work_date = started_ist.date()
+
+    # Skip if no attendance log exists for that day — no point bumping
+    # idle_minutes on a row the rollup won't read.
+    log = db.execute(
+        text(
+            "SELECT id FROM attendance_logs "
+            "WHERE user_id = :u AND work_date = :d"
+        ),
+        {"u": user.id, "d": work_date.isoformat()},
+    ).first()
+    if not log:
+        return {"recorded": False, "reason": "no_checkin"}
+
+    # Idempotent insert. ON CONFLICT (user_id, started_at) DO NOTHING +
+    # check RETURNING to know if the row was actually new.
+    inserted = db.execute(
+        text(
+            "INSERT INTO idle_intervals "
+            "  (user_id, work_date, started_at, ended_at, minutes, source) "
+            "VALUES (:u, :d, :s, :e, :m, :src) "
+            "ON CONFLICT (user_id, started_at) DO NOTHING "
+            "RETURNING id"
+        ),
+        {
+            "u": user.id, "d": work_date.isoformat(),
+            "s": started, "e": ended, "m": minutes, "src": body.source,
+        },
+    ).first()
+    if inserted is None:
+        db.rollback()
+        return {"recorded": False, "reason": "duplicate", "minutes": minutes}
+
+    db.execute(
+        text(
+            "UPDATE attendance_logs "
+            "SET idle_minutes = idle_minutes + :m "
+            "WHERE user_id = :u AND work_date = :d"
+        ),
+        {"m": minutes, "u": user.id, "d": work_date.isoformat()},
+    )
+    db.commit()
+    return {"recorded": True, "minutes": minutes}

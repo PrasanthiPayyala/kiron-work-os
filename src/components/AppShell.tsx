@@ -4,6 +4,7 @@ import { desktopPermission, requestDesktopPermission, type DesktopPermission } f
 import { toast } from "sonner";
 import { useAuth, roleNavAccess, roleLabel, canSeeTeamAttendance, type NavKey } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
+import { useIdleDetector } from "@/hooks/useIdleDetector";
 import { api } from "@/lib/api";
 import { UserAvatar } from "@/components/UserAvatar";
 import { CompanyBadge } from "@/components/CompanyBadge";
@@ -79,6 +80,10 @@ export default function AppShell() {
   const unreadNotifs = myUnreadNotifs.length;
   const unreadChat = useUnreadChatCount();
   const online = useOnlineStatus();
+  // Conservative 30-min idle detection. Runs everywhere, not just on
+  // /attendance — captures the case where the employee checks in,
+  // navigates elsewhere in the app, then locks the screen.
+  useIdleDetector(!!user);
   const { canInstall, install } = usePwaInstall();
   const { needRefresh, update } = useServiceWorkerUpdate();
   const [updateDismissed, setUpdateDismissed] = useState(false);
