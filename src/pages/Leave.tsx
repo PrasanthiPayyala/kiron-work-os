@@ -1,12 +1,11 @@
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { LeaveStatusBadge } from "@/components/StatusBadges";
-import { UserAvatar } from "@/components/UserAvatar";
 import { useDataStore } from "@/lib/dataStore";
 import { api, ApiError, type LeaveBalanceRow, type LeavePolicyRow } from "@/lib/api";
-import { Plane, Plus, RefreshCw, Settings as SettingsIcon, Loader2 } from "lucide-react";
+import { Plane, Plus, RefreshCw, Settings as SettingsIcon, Loader2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -55,7 +54,7 @@ const LEAVE_TYPE_LABEL: Record<string, string> = {
 
 export default function Leave() {
   const { user } = useAuth();
-  const { leaveRequests, companies, getUser, refresh, attendance } = useDataStore();
+  const { leaveRequests, companies, refresh, attendance } = useDataStore();
   const [type, setType] = useState("casual");
   const [days, setDays] = useState(1);
   const [from, setFrom] = useState("");
@@ -126,17 +125,6 @@ export default function Leave() {
       setFrom(""); setTo(""); setReason(""); setRepayBy(""); refresh();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Failed to submit leave");
-    }
-  };
-
-  const decide = async (id: string, status: "approved" | "rejected") => {
-    if (!user) return;
-    try {
-      await api.updateLeave(id, { status });
-      toast.success(`Leave ${status}`);
-      refresh();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Failed to update leave");
     }
   };
 
@@ -276,33 +264,31 @@ export default function Leave() {
           </div>
         </div>
 
-        {isHR && (
-          <div className="rounded-xl border border-border bg-surface shadow-card">
-            <div className="border-b border-border p-4"><h3 className="font-display text-sm font-semibold">HR approval queue</h3></div>
-            <Tabs defaultValue="pending" className="p-4">
-              <TabsList><TabsTrigger value="pending">Pending</TabsTrigger><TabsTrigger value="approved">Approved</TabsTrigger><TabsTrigger value="rejected">Rejected</TabsTrigger></TabsList>
-              {(["pending","approved","rejected"] as const).map((s) => (
-                <TabsContent key={s} value={s}>
-                  <ul className="divide-y divide-border">
-                    {leaveRequests.filter((l) => l.status === s).map((l) => (
-                      <li key={l.id} className="flex items-center gap-3 py-3">
-                        <UserAvatar userId={l.userId} size="sm" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">{getUser(l.userId)?.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {leaveRowLabel(l.type, l.reason)} · {l.fromDate} → {l.toDate} · {l.reason}
-                            {l.compOffRepayBy && <> · repay by <b>{l.compOffRepayBy}</b></>}
-                          </p>
-                        </div>
-                        {s === "pending" && (<><Button size="sm" variant="outline" onClick={() => decide(l.id, "rejected")}>Reject</Button><Button size="sm" onClick={() => decide(l.id, "approved")}>Approve</Button></>)}
-                      </li>
-                    ))}
-                  </ul>
-                </TabsContent>
-              ))}
-            </Tabs>
-          </div>
-        )}
+        {isHR && (() => {
+          const pendingCount = leaveRequests.filter((l) => l.status === "pending").length;
+          return (
+            <Link
+              to="/team-attendance?tab=pending_leave"
+              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface p-4 shadow-card transition hover:border-primary"
+            >
+              <div>
+                <p className="text-sm font-medium">Manage team leave requests in Team Attendance</p>
+                <p className="text-xs text-muted-foreground">
+                  Approve or reject pending leaves there — alongside the working-days
+                  view so you can see who's actually off when.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {pendingCount > 0 && (
+                  <span className="rounded-full bg-warning/15 px-2.5 py-0.5 text-xs font-semibold text-warning">
+                    {pendingCount} pending
+                  </span>
+                )}
+                <ArrowRight className="h-4 w-4 text-muted-foreground" />
+              </div>
+            </Link>
+          );
+        })()}
       </div>
 
       {isHR && (

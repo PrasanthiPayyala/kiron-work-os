@@ -1,15 +1,16 @@
 import datetime as dt
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..authz import can_update_leave
+from ..authz import HR_ROLES, can_update_leave
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
+from . import ws as ws_router
 from .leave_balances import apply_balance_delta
 
 router = APIRouter(prefix="/leave", tags=["leave"])
@@ -45,8 +46,22 @@ def _get(db: Session, leave_id: str) -> dict:
     return row(found)
 
 
+_LEAVE_TYPE_LABELS = {
+    "casual_leave": "Casual leave",
+    "sick_leave": "Sick leave",
+    "loss_of_pay": "Unpaid leave",
+    "comp_off": "Comp-off",
+    "optional_holiday": "Optional holiday",
+}
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
-def apply(body: LeaveCreate, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def apply(
+    body: LeaveCreate,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     new_id = str(uuid.uuid4())
     db.execute(
         text(
@@ -59,11 +74,71 @@ def apply(body: LeaveCreate, user: CurrentUser = Depends(get_current_user), db: 
          "repay": body.comp_off_repay_by if body.leave_type == "comp_off" else None},
     )
     db.commit()
-    return _get(db, new_id)
+    fresh = _get(db, new_id)
+
+    # Notify HR + the requester's reporting manager so the bell pings them
+    # (and the Team Attendance "Pending leave" tab updates in realtime).
+    # Mirrors the attendance_permissions pattern.
+    hr_user_ids = {
+        str(r[0]) for r in db.execute(
+            text(
+                "SELECT DISTINCT ur.user_id FROM user_roles ur "
+                "JOIN profiles p ON p.id = ur.user_id "
+                "WHERE p.is_active = true AND ur.role::text = ANY(:roles)"
+            ),
+            {"roles": list(HR_ROLES)},
+        ).all()
+    }
+    mgr_row = db.execute(
+        text(
+            "SELECT reporting_manager_id, full_name FROM profiles WHERE id = :id"
+        ),
+        {"id": user.id},
+    ).mappings().first()
+    req_name = (mgr_row or {}).get("full_name") or "Someone"
+    if mgr_row and mgr_row.get("reporting_manager_id"):
+        hr_user_ids.add(str(mgr_row["reporting_manager_id"]))
+    hr_user_ids.discard(user.id)  # don't ping self when HR applies own leave
+
+    if hr_user_ids:
+        type_label = _LEAVE_TYPE_LABELS.get(body.leave_type, body.leave_type.replace("_", " "))
+        days_str = f"{body.days:g} day" + ("s" if body.days != 1 else "")
+        date_part = (body.start_date
+                     if body.start_date == body.end_date
+                     else f"{body.start_date} → {body.end_date}")
+        title = f"{req_name}: {type_label} ({days_str})"
+        body_text = (body.reason[:140] if body.reason else
+                     f"Requested for {date_part}. Tap to review.")
+        link = f"/team-attendance?leave={new_id}"
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+        for uid in hr_user_ids:
+            nid = str(uuid.uuid4())
+            db.execute(
+                text(
+                    "INSERT INTO notifications "
+                    "  (id, user_id, notification_type, title, body, link) "
+                    "VALUES (:id, :u, 'pending_approval', :t, :b, :l)"
+                ),
+                {"id": nid, "u": uid, "t": title, "b": body_text, "l": link},
+            )
+            background.add_task(ws_router.notification_new, {
+                "id": nid, "user_id": uid,
+                "notification_type": "pending_approval",
+                "title": title, "body": body_text, "link": link,
+                "is_read": False, "created_at": now_iso,
+            })
+        db.commit()
+    return fresh
 
 
 @router.patch("/{leave_id}")
-def update(leave_id: str, body: LeaveUpdate, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def update(
+    leave_id: str,
+    body: LeaveUpdate,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     leave = _get(db, leave_id)
     if not can_update_leave(leave, user.id, user.roles):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to update this leave request")
@@ -105,4 +180,37 @@ def update(leave_id: str, body: LeaveUpdate, user: CurrentUser = Depends(get_cur
             year=year,
         )
     db.commit()
+
+    # Notify the applicant when an HR/manager decides their request,
+    # unless they decided their own (HR cancelling their own pending).
+    applicant_id = str(leave.get("user_id") or "")
+    if body.status in DECISION_STATUSES and applicant_id and applicant_id != user.id:
+        type_label = _LEAVE_TYPE_LABELS.get(
+            str(leave.get("leave_type") or ""),
+            str(leave.get("leave_type") or "leave").replace("_", " "),
+        )
+        sd, ed = leave.get("start_date"), leave.get("end_date")
+        date_part = str(sd) if sd == ed else f"{sd} → {ed}"
+        verdict = "approved" if body.status == "approved" else "rejected"
+        title = f"{type_label} {verdict}"
+        body_text = (body.hr_comments[:140] if body.hr_comments else
+                     f"Your leave for {date_part} was {verdict}.")
+        link = "/leave"
+        nid = str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO notifications "
+                "  (id, user_id, notification_type, title, body, link) "
+                "VALUES (:id, :u, 'general', :t, :b, :l)"
+            ),
+            {"id": nid, "u": applicant_id, "t": title, "b": body_text, "l": link},
+        )
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+        background.add_task(ws_router.notification_new, {
+            "id": nid, "user_id": applicant_id,
+            "notification_type": "general",
+            "title": title, "body": body_text, "link": link,
+            "is_read": False, "created_at": now_iso,
+        })
+        db.commit()
     return _get(db, leave_id)

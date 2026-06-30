@@ -17,6 +17,7 @@ import { api, ApiError } from "@/lib/api";
 import { toast as sonner } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { GrantPermissionDialog } from "@/components/attendance/GrantPermissionDialog";
+import { useSearchParams } from "react-router-dom";
 
 type LeaveTypeKey = "casual_leave" | "sick_leave" | "loss_of_pay" | "comp_off" | "optional_holiday";
 // UI option value can be a leave_type OR the synthetic 'comp_off_advance'
@@ -73,7 +74,7 @@ const fmtTime = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
 
 export default function TeamAttendance() {
-  const { companies, getUser, getCompany, attendance, attendancePermissions, refresh } = useDataStore();
+  const { companies, getUser, getCompany, attendance, attendancePermissions, leaveRequests, refresh } = useDataStore();
   const { toast } = useToast();
   const [date, setDate] = useState<string>(today());
   const [companyFilter, setCompanyFilter] = useState<string>("all");
@@ -83,7 +84,11 @@ export default function TeamAttendance() {
   const [markingLeaveUserId, setMarkingLeaveUserId] = useState<string | null>(null);
   const [decidingCompOffId, setDecidingCompOffId] = useState<string | null>(null);
   const [decidingPermId, setDecidingPermId] = useState<string | null>(null);
+  const [decidingLeaveId, setDecidingLeaveId] = useState<string | null>(null);
   const [grantDialogOpen, setGrantDialogOpen] = useState(false);
+  const [searchParams] = useSearchParams();
+  // Deep-link support: /team-attendance?tab=pending_leave opens that tab.
+  const initialTab = searchParams.get("tab") || "need_followup";
 
   const load = async (d: string) => {
     setLoading(true);
@@ -282,6 +287,45 @@ export default function TeamAttendance() {
     }
   };
 
+  // Pending leave requests across the whole roster. Sourced from the
+  // dataStore — HR scope hydrates every pending row via bootstrap.
+  // Sorted by start_date asc so the soonest-starting bubble to the top
+  // (most time-sensitive to decide).
+  const pendingLeaves = useMemo(() => {
+    return leaveRequests
+      .filter((l) => l.status === "pending")
+      .map((l) => {
+        const u = getUser(l.userId);
+        return {
+          ...l,
+          name: u?.name ?? "Unknown",
+          designation: u?.designation,
+          home_company_id: u?.homeCompanyId,
+        };
+      })
+      .filter((l) => companyFilter === "all" || l.home_company_id === companyFilter)
+      .sort((a, b) => (a.fromDate < b.fromDate ? -1 : 1));
+  }, [leaveRequests, getUser, companyFilter]);
+
+  const decideLeave = async (
+    leaveId: string, name: string, decision: "approved" | "rejected",
+  ) => {
+    setDecidingLeaveId(leaveId);
+    try {
+      await api.updateLeave(leaveId, { status: decision });
+      sonner.success(
+        decision === "approved"
+          ? `Leave approved for ${name}`
+          : `Leave rejected for ${name}`,
+      );
+      refresh();
+    } catch (e) {
+      sonner.error(e instanceof ApiError ? e.message : "Couldn't decide leave");
+    } finally {
+      setDecidingLeaveId(null);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -329,7 +373,7 @@ export default function TeamAttendance() {
           )}
         </div>
 
-        <Tabs defaultValue="need_followup">
+        <Tabs defaultValue={initialTab}>
           <TabsList>
             <TabsTrigger value="need_followup" className="gap-1.5">
               Need follow-up
@@ -342,6 +386,12 @@ export default function TeamAttendance() {
             <TabsTrigger value="on_leave" className="gap-1.5">
               On leave
               <Badge variant="secondary" className="ml-1 text-[10px]">{onLeave.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="pending_leave" className="gap-1.5">
+              Pending leave
+              <Badge variant={pendingLeaves.length > 0 ? "destructive" : "secondary"} className="ml-1 text-[10px]">
+                {pendingLeaves.length}
+              </Badge>
             </TabsTrigger>
             <TabsTrigger value="off_today" className="gap-1.5">
               Off today
@@ -392,6 +442,61 @@ export default function TeamAttendance() {
               onMarkLeave={handleMarkAsLeave}
               markingLeaveUserId={markingLeaveUserId}
             />
+          </TabsContent>
+          <TabsContent value="pending_leave">
+            <p className="mt-4 mb-3 text-xs text-muted-foreground">
+              Pending leave applications across the roster. Approving counts
+              the days against the employee's balance and surfaces them on
+              the "On leave" tab on the relevant dates.
+            </p>
+            {pendingLeaves.length === 0 ? (
+              <p className="mt-4 text-center text-sm text-muted-foreground">No leaves waiting on you. ✓</p>
+            ) : (
+              <ul className="mt-4 divide-y divide-border rounded-lg border bg-surface">
+                {pendingLeaves.map((l) => {
+                  const co = l.home_company_id ? getCompany(l.home_company_id) : null;
+                  const busy = decidingLeaveId === l.id;
+                  const sameDay = l.fromDate === l.toDate;
+                  const dateLabel = sameDay ? l.fromDate : `${l.fromDate} → ${l.toDate}`;
+                  const typeLabel = LEAVE_TYPE_OPTIONS.find((o) => o.value === l.type)?.label
+                    ?? l.type.replace(/_/g, " ");
+                  return (
+                    <li key={l.id} className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium">{l.name}</p>
+                          <Badge variant="secondary" className="text-[10px]">{typeLabel}</Badge>
+                          <Badge variant="outline" className="text-[10px]">
+                            {l.days} day{l.days === 1 ? "" : "s"}
+                          </Badge>
+                          {co && <Badge variant="outline" className="text-[10px]">{co.shortName || co.name}</Badge>}
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {l.designation && <>{l.designation} · </>}
+                          For <b>{dateLabel}</b>
+                          {l.reason && <> · {l.reason}</>}
+                          {l.compOffRepayBy && <> · repay by <b>{l.compOffRepayBy}</b></>}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button size="sm" variant="outline" disabled={busy}
+                          onClick={() => void decideLeave(l.id, l.name, "rejected")}
+                          className="gap-1.5">
+                          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          Reject
+                        </Button>
+                        <Button size="sm" disabled={busy}
+                          onClick={() => void decideLeave(l.id, l.name, "approved")}
+                          className="gap-1.5">
+                          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          Approve
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </TabsContent>
           <TabsContent value="off_today">
             <PersonList
