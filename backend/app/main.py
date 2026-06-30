@@ -13,6 +13,7 @@ from .routers import (
     approvals,
     assets,
     attendance,
+    attendance_permissions,
     auth,
     bank_accounts,
     bootstrap,
@@ -67,6 +68,7 @@ app.include_router(auth.router)
 app.include_router(bootstrap.router)
 app.include_router(tasks.router)
 app.include_router(attendance.router)
+app.include_router(attendance_permissions.router)
 app.include_router(leave.router)
 app.include_router(leave_balances.router)
 app.include_router(approvals.router)

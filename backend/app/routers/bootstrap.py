@@ -108,6 +108,14 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         l for l in all_leaves if l.get("user_id") == uid or l.get("user_id") in managed_user_ids
     ]
 
+    # Attendance permissions: hour-scale signed-off shortfalls. HR sees
+    # everything for the approval queue + hours rollup; everyone else
+    # sees their own + their managed reports' (so a manager can review).
+    all_permissions = _rows(db, "SELECT * FROM attendance_permissions")
+    attendance_permissions = all_permissions if elevated_hr else [
+        p for p in all_permissions if p.get("user_id") == uid or p.get("user_id") in managed_user_ids
+    ]
+
     # --- conversations / members / messages ---
     all_convs = _rows(db, "SELECT * FROM conversations")
     is_elevated = has_any_role(roles, CONV_ELEVATED)
@@ -235,6 +243,7 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "approvals": approvals,
         "attendance_logs": attendance,
         "leave_requests": leaves,
+        "attendance_permissions": attendance_permissions,
         "conversations": conversations,
         "conversation_members": conv_members,
         "messages": messages,

@@ -66,7 +66,7 @@ const fmtTime = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
 
 export default function TeamAttendance() {
-  const { companies, getUser, getCompany, attendance, refresh } = useDataStore();
+  const { companies, getUser, getCompany, attendance, attendancePermissions, refresh } = useDataStore();
   const { toast } = useToast();
   const [date, setDate] = useState<string>(today());
   const [companyFilter, setCompanyFilter] = useState<string>("all");
@@ -75,6 +75,7 @@ export default function TeamAttendance() {
   const [resumingUserId, setResumingUserId] = useState<string | null>(null);
   const [markingLeaveUserId, setMarkingLeaveUserId] = useState<string | null>(null);
   const [decidingCompOffId, setDecidingCompOffId] = useState<string | null>(null);
+  const [decidingPermId, setDecidingPermId] = useState<string | null>(null);
 
   const load = async (d: string) => {
     setLoading(true);
@@ -240,6 +241,39 @@ export default function TeamAttendance() {
     }
   };
 
+  // Pending attendance permissions across the whole roster. Sourced from
+  // the local dataStore — HR gets the full list via bootstrap thanks to
+  // elevated_hr scoping. Sorted by date desc so today's bubble to the top.
+  const pendingPermissions = useMemo(() => {
+    return attendancePermissions
+      .filter((p) => p.status === "pending")
+      .map((p) => {
+        const u = getUser(p.userId);
+        return { ...p, name: u?.name ?? "Unknown", designation: u?.designation, home_company_id: u?.homeCompanyId };
+      })
+      .filter((p) => companyFilter === "all" || p.home_company_id === companyFilter)
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [attendancePermissions, getUser, companyFilter]);
+
+  const decidePermission = async (
+    permId: string, name: string, decision: "approved" | "rejected",
+  ) => {
+    setDecidingPermId(permId);
+    try {
+      await api.decideAttendancePermission(permId, { decision });
+      sonner.success(
+        decision === "approved"
+          ? `Permission approved for ${name}`
+          : `Permission rejected for ${name}`,
+      );
+      refresh();
+    } catch (e) {
+      sonner.error(e instanceof ApiError ? e.message : "Couldn't decide permission");
+    } finally {
+      setDecidingPermId(null);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -310,6 +344,15 @@ export default function TeamAttendance() {
               <Badge variant={pendingCompOffs.length > 0 ? "destructive" : "secondary"} className="ml-1 text-[10px]">
                 {pendingCompOffs.length}
               </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="permissions" className="gap-1.5">
+              Permissions
+              <Badge variant={pendingPermissions.length > 0 ? "destructive" : "secondary"} className="ml-1 text-[10px]">
+                {pendingPermissions.length}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="hours" className="gap-1.5">
+              Hours
             </TabsTrigger>
           </TabsList>
 
@@ -400,9 +443,154 @@ export default function TeamAttendance() {
               </ul>
             )}
           </TabsContent>
+
+          <TabsContent value="permissions">
+            {pendingPermissions.length === 0 ? (
+              <p className="mt-4 text-center text-sm text-muted-foreground">No permissions waiting on you. ✓</p>
+            ) : (
+              <ul className="mt-4 divide-y divide-border rounded-lg border bg-surface">
+                {pendingPermissions.map((p) => {
+                  const co = p.home_company_id ? getCompany(p.home_company_id) : null;
+                  const busy = decidingPermId === p.id;
+                  const kindLabel = p.kind === "late_in" ? "Late arrival"
+                    : p.kind === "early_out" ? "Early logout" : "Mid-day step-out";
+                  const hours = Math.floor(p.minutes / 60);
+                  const mins = p.minutes % 60;
+                  const dur = hours ? (mins ? `${hours}h${mins}m` : `${hours}h`) : `${mins}m`;
+                  return (
+                    <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium">{p.name}</p>
+                          <Badge variant="secondary" className="text-[10px]">{kindLabel}</Badge>
+                          <Badge variant="outline" className="text-[10px]">{dur}</Badge>
+                          {co && <Badge variant="outline" className="text-[10px]">{co.shortName || co.name}</Badge>}
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {p.designation && <>{p.designation} · </>}
+                          For <b>{p.date}</b>
+                          {p.reason && <> · {p.reason}</>}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button size="sm" variant="outline" disabled={busy}
+                          onClick={() => void decidePermission(p.id, p.name, "rejected")}
+                          className="gap-1.5">
+                          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          Reject
+                        </Button>
+                        <Button size="sm" disabled={busy}
+                          onClick={() => void decidePermission(p.id, p.name, "approved")}
+                          className="gap-1.5">
+                          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          Approve
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </TabsContent>
+
+          <TabsContent value="hours">
+            <HoursRosterTable companyFilter={companyFilter} />
+          </TabsContent>
         </Tabs>
       </div>
 
+    </div>
+  );
+}
+
+// ----- Roster-wide hours rollup -------------------------------------------
+// Pulls /attendance-permissions/hours-summary/roster — one row per active
+// employee for the chosen month, sorted by shortfall descending so the
+// people who owe the most hours bubble to the top of HR's review.
+function HoursRosterTable({ companyFilter }: { companyFilter: string }) {
+  const { getUser } = useDataStore();
+  const [month, setMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof api.attendanceHoursSummaryRoster>>>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = async (m: string) => {
+    setLoading(true);
+    try {
+      const r = await api.attendanceHoursSummaryRoster(m);
+      setRows(r);
+    } catch (e) {
+      sonner.error(e instanceof ApiError ? e.message : "Couldn't load hours rollup");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { void load(month); /* eslint-disable-next-line */ }, [month]);
+
+  const filtered = useMemo(() => {
+    return rows
+      .filter((r) => {
+        if (companyFilter === "all") return true;
+        const u = getUser(r.user_id);
+        return u?.homeCompanyId === companyFilter;
+      })
+      .sort((a, b) => b.net_shortfall_hours - a.net_shortfall_hours);
+  }, [rows, companyFilter, getUser]);
+
+  const formatHM = (h: number) => {
+    const whole = Math.floor(h);
+    const m = Math.round((h - whole) * 60);
+    if (whole === 0 && m === 0) return "0h";
+    return m === 0 ? `${whole}h` : `${whole}h${m}m`;
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Month:</span>
+          <Input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="h-8 w-[150px]"
+          />
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Expected after leave + permission. Shortfall = expected − worked.
+        </p>
+      </div>
+      {filtered.length === 0 ? (
+        <p className="p-6 text-center text-sm text-muted-foreground">No data for this month.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="border-b border-border bg-surface-muted/50 text-xs text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Employee</th>
+              <th className="px-3 py-2 text-right font-medium">Expected</th>
+              <th className="px-3 py-2 text-right font-medium">Worked</th>
+              <th className="px-3 py-2 text-right font-medium">Permissions</th>
+              <th className="px-3 py-2 text-right font-medium">Shortfall</th>
+              <th className="px-3 py-2 text-right font-medium">Surplus</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r) => (
+              <tr key={r.user_id} className="border-b border-border last:border-0">
+                <td className="px-3 py-2">{r.name}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatHM(r.net_expected_hours)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatHM(r.actual_hours)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{r.permission_minutes}m</td>
+                <td className="px-3 py-2 text-right tabular-nums text-destructive">{r.net_shortfall_hours > 0 ? formatHM(r.net_shortfall_hours) : "—"}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-success">{r.net_surplus_hours > 0 ? formatHM(r.net_surplus_hours) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

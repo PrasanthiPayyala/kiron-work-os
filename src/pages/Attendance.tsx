@@ -1,6 +1,8 @@
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { AttendanceBadge } from "@/components/StatusBadges";
+import { HoursSummaryCard } from "@/components/attendance/HoursSummaryCard";
+import { RequestPermissionDialog } from "@/components/attendance/RequestPermissionDialog";
 import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { getEffectiveSchedule, isNonWorkingDate } from "@/lib/mappers";
@@ -307,6 +309,10 @@ export default function Attendance() {
   // Day drawer — opens when a calendar cell is clicked, scrolls to the
   // selected date so the user can see their in/out + hours for past days.
   const [dayDrawer, setDayDrawer] = useState<string | null>(null);
+  // Permission-request dialog. Drives the "Request permission" CTA on
+  // the hours card. On close, the dataStore picks the new row up on the
+  // next refresh / WS event (no manual splice needed for v1).
+  const [permDialogOpen, setPermDialogOpen] = useState(false);
   // Calendar UI state. Tab is "month" by default so the user lands on the
   // most useful view; currentMonth is initialised to today's month.
   const todayDate = useMemo(() => new Date(), []);
@@ -476,6 +482,8 @@ export default function Attendance() {
           <StatCard label="Leaves" value={myLogs.filter((l) => l.status === "leave").length} accent="warning" />
           <StatCard label="Avg hours" value={avgMins ? formatHM(avgMins) : "—"} accent="primary" />
         </div>
+
+        <HoursSummaryCard onRequestPermission={() => setPermDialogOpen(true)} />
 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="rounded-xl border border-border bg-surface p-5 shadow-card lg:col-span-1">
@@ -658,6 +666,12 @@ export default function Attendance() {
         myLogs={myLogs}
         holidayByDate={holidayByDate}
         today={today}
+      />
+
+      <RequestPermissionDialog
+        open={permDialogOpen}
+        onClose={() => { setPermDialogOpen(false); refresh(); }}
+        defaultDate={today}
       />
     </div>
   );

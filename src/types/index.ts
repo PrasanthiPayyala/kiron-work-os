@@ -393,6 +393,29 @@ export interface LeaveRequest {
   compOffRepayBy?: ISODate;
 }
 
+// ---------- Attendance permissions ----------
+export type AttendancePermissionKind = "late_in" | "early_out" | "mid_out";
+export type AttendancePermissionStatus = "pending" | "approved" | "rejected";
+
+/** Hour-scale signed-off shortfall. Reduces expected hours for the
+ *  monthly rollup when approved, so a permitted late arrival doesn't
+ *  show up as a deficit. Distinct from LeaveRequest which is full /
+ *  half day. */
+export interface AttendancePermission {
+  id: ID;
+  userId: ID;
+  date: ISODate;
+  kind: AttendancePermissionKind;
+  minutes: number;
+  reason?: string;
+  status: AttendancePermissionStatus;
+  requestedById: ID;
+  decidedById?: ID;
+  decidedAt?: string;
+  decisionNote?: string;
+  createdAt: string;
+}
+
 // ---------- Chat ----------
 export type ConversationKind = "dm" | "team_group" | "company_group" | "project_group" | "announcement";
 

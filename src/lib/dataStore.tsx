@@ -12,8 +12,8 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   mapCompany, mapDepartment, mapProfile, mapProject, mapTask, mapApproval,
-  mapAttendance, mapLeave, mapConversation, mapMessage, mapNotification,
-  mapHoliday, mapTeam, pickPrimaryRole,
+  mapAttendance, mapAttendancePermission, mapLeave, mapConversation, mapMessage,
+  mapNotification, mapHoliday, mapTeam, pickPrimaryRole,
 } from "@/lib/mappers";
 import { offlineDB, replaceTable, setMeta, getMeta, clearAllData } from "@/lib/offline/db";
 import { drainQueue } from "@/lib/offline/mutationQueue";
@@ -21,7 +21,8 @@ import { onRealtime } from "@/lib/ws";
 import { showDesktopNotification } from "@/lib/desktopNotifications";
 import type {
   Company, Department, User, Project, Task, Approval,
-  AttendanceLog, LeaveRequest, Conversation, Message, Notification, Role, Holiday, Team,
+  AttendanceLog, AttendancePermission, LeaveRequest, Conversation, Message,
+  Notification, Role, Holiday, Team,
 } from "@/types";
 
 type Store = {
@@ -32,6 +33,7 @@ type Store = {
   tasks: Task[];
   approvals: Approval[];
   attendance: AttendanceLog[];
+  attendancePermissions: AttendancePermission[];
   leaveRequests: LeaveRequest[];
   conversations: Conversation[];
   messages: Message[];
@@ -61,7 +63,8 @@ type Ctx = Store & {
 
 const empty: Store = {
   companies: [], departments: [], users: [], projects: [], tasks: [],
-  approvals: [], attendance: [], leaveRequests: [], conversations: [],
+  approvals: [], attendance: [], attendancePermissions: [],
+  leaveRequests: [], conversations: [],
   messages: [], notifications: [], holidays: [], teams: [], rolesByUser: {},
 };
 
@@ -78,6 +81,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     userRoles: { user_id: string; role: string }[];
     projects: any[]; projectMembers: { project_id: string; user_id: string }[];
     tasks: any[]; approvals: any[]; attendance: any[]; leaves: any[];
+    attendancePermissions?: any[];
     conversations: any[]; convMembers: { conversation_id: string; user_id: string; last_read_at?: string | null }[];
     messages: any[]; notifications: any[]; holidays?: any[];
     teams?: any[]; teamMembers?: { team_id: string; user_id: string; member_role: string }[];
@@ -113,6 +117,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       tasks: raw.tasks.map(mapTask),
       approvals: raw.approvals.map(mapApproval),
       attendance: raw.attendance.map(mapAttendance),
+      attendancePermissions: (raw.attendancePermissions ?? []).map(mapAttendancePermission),
       leaveRequests: raw.leaves.map(mapLeave),
       conversations: raw.conversations.map((c) =>
         mapConversation(c, convMembers[c.id] ?? [], myLastReadByConv[c.id]),
@@ -178,6 +183,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       tasks: b.tasks,
       approvals: b.approvals,
       attendance: b.attendance_logs,
+      attendancePermissions: (b as any).attendance_permissions ?? [],
       leaves: b.leave_requests,
       conversations: b.conversations,
       convMembers: b.conversation_members,

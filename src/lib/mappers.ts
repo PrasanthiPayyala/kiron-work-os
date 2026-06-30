@@ -342,6 +342,23 @@ export function mapApproval(r: DbApproval): Approval {
   };
 }
 
+export function mapAttendancePermission(r: any): import("@/types").AttendancePermission {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    date: r.date,
+    kind: r.kind,
+    minutes: Number(r.minutes ?? 0),
+    reason: r.reason ?? undefined,
+    status: r.status,
+    requestedById: r.requested_by,
+    decidedById: r.decided_by ?? undefined,
+    decidedAt: r.decided_at ?? undefined,
+    decisionNote: r.decision_note ?? undefined,
+    createdAt: r.created_at ?? "",
+  };
+}
+
 export function mapAttendance(r: DbAttendance): AttendanceLog {
   return {
     id: r.id,

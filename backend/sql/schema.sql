@@ -303,6 +303,32 @@ create index idx_leave_requests_comp_off_repay_by
   on public.leave_requests (comp_off_repay_by)
   where comp_off_repay_by is not null;
 
+-- Hourly attendance permissions (see alembic 0032). Lets employees +
+-- HR record signed-off shortfalls (late-in / early-out / mid-day-out)
+-- so an approved late arrival doesn't show as a compliance breach in
+-- the hours-vs-expected rollup.
+create type public.attendance_permission_kind as enum ('late_in', 'early_out', 'mid_out');
+create type public.attendance_permission_status as enum ('pending', 'approved', 'rejected');
+create table public.attendance_permissions (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references public.profiles(id) on delete cascade,
+  date            date not null,
+  kind            public.attendance_permission_kind not null,
+  minutes         int not null check (minutes > 0 and minutes <= 720),
+  reason          text,
+  status          public.attendance_permission_status not null default 'pending',
+  requested_by    uuid not null references public.profiles(id),
+  decided_by      uuid references public.profiles(id),
+  decided_at      timestamptz,
+  decision_note   text,
+  created_at      timestamptz not null default now()
+);
+create index idx_attendance_permissions_user_date
+  on public.attendance_permissions (user_id, date desc);
+create index idx_attendance_permissions_pending
+  on public.attendance_permissions (date desc)
+  where status = 'pending';
+
 create table public.conversations (
   id uuid primary key default gen_random_uuid(),
   channel_type public.channel_type not null,

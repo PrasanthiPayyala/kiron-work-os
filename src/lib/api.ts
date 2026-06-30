@@ -947,6 +947,69 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  /** File an hour-scale attendance permission (late-in / early-out /
+   *  mid-out). Without `user_id` / `pre_approve` the caller files for
+   *  themselves and the row starts pending. HR can pass user_id +
+   *  pre_approve to retroactively grant on behalf of an employee. */
+  createAttendancePermission(payload: {
+    date: string;
+    kind: "late_in" | "early_out" | "mid_out";
+    minutes: number;
+    reason?: string | null;
+    user_id?: string;
+    pre_approve?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return request("/attendance-permissions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  /** HR / super_admin / founder approves or rejects a pending permission. */
+  decideAttendancePermission(
+    permId: string,
+    payload: { decision: "approved" | "rejected"; note?: string | null },
+  ): Promise<Record<string, unknown>> {
+    return request(`/attendance-permissions/${permId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+  /** Cancel a pending permission. Requester can do their own; HR can do any. */
+  cancelAttendancePermission(permId: string): Promise<void> {
+    return request(`/attendance-permissions/${permId}`, { method: "DELETE" });
+  },
+  /** Per-employee monthly hours rollup. Omit user_id for self; HR can
+   *  pass any user_id. Omit month for current IST month. */
+  attendanceHoursSummary(params?: { user_id?: string; month?: string }): Promise<{
+    user_id: string; name: string;
+    month: string; from: string; to: string;
+    days_in_period: number;
+    expected_hours: number; actual_hours: number;
+    full_leave_hours: number; half_day_count: number;
+    permission_minutes: number;
+    net_expected_hours: number;
+    net_shortfall_hours: number; net_surplus_hours: number;
+  }> {
+    const q = new URLSearchParams();
+    if (params?.user_id) q.set("user_id", params.user_id);
+    if (params?.month) q.set("month", params.month);
+    const qs = q.toString();
+    return request(`/attendance-permissions/hours-summary${qs ? `?${qs}` : ""}`);
+  },
+  /** Roster-wide monthly hours rollup. HR-only. */
+  attendanceHoursSummaryRoster(month?: string): Promise<Array<{
+    user_id: string; name: string;
+    month: string; from: string; to: string;
+    days_in_period: number;
+    expected_hours: number; actual_hours: number;
+    full_leave_hours: number; half_day_count: number;
+    permission_minutes: number;
+    net_expected_hours: number;
+    net_shortfall_hours: number; net_surplus_hours: number;
+  }>> {
+    const qs = month ? `?month=${encodeURIComponent(month)}` : "";
+    return request(`/attendance-permissions/hours-summary/roster${qs}`);
+  },
 
   // ---------- Bank accounts (finance-scoped — HR can't see/edit) ----------
   listBankAccounts(companyId: string): Promise<Record<string, unknown>[]> {
