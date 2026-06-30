@@ -10,7 +10,7 @@ import { api, ApiError } from "@/lib/api";
 import { mapContact, mapOrganization } from "@/lib/mappers";
 import { useToast } from "@/hooks/use-toast";
 import type { Contact, ContactCategory, Organization } from "@/types";
-import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone, Upload, Download } from "lucide-react";
+import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone, Upload, Download, Globe, MapPin } from "lucide-react";
 import { ContactDialog } from "@/components/contacts/ContactDialog";
 import { ContactsImportDialog, downloadContactsTemplate } from "@/components/contacts/ContactsImportDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -259,6 +259,23 @@ export default function Contacts() {
                       <a href={`tel:${c.phone}`} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
                         <Phone className="h-3 w-3" /> {c.phone}
                       </a>
+                    )}
+                    {org?.website && (
+                      <a
+                        href={/^https?:\/\//i.test(org.website) ? org.website : `https://${org.website}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <Globe className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{org.website}</span>
+                      </a>
+                    )}
+                    {org?.address && (
+                      <p className="flex items-start gap-1.5 text-muted-foreground">
+                        <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span className="line-clamp-2">{org.address}</span>
+                      </p>
                     )}
                   </div>
 

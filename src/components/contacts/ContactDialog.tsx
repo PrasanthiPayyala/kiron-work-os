@@ -71,6 +71,11 @@ type FormState = {
   phone: string;
   organizationId: string;    // "" = none; "__new__" = inline create
   newOrgName: string;        // only used when organizationId === "__new__"
+  /** Mirrors organizations.website. Edits here PATCH the linked org on save
+   *  so multiple contacts at the same firm share one source of truth. */
+  companyWebsite: string;
+  /** Mirrors organizations.address — same wire-through as website. */
+  companyAddress: string;
   notes: string;
   isActive: boolean;
   companyIds: string[];
@@ -78,21 +83,28 @@ type FormState = {
 
 const blank = (): FormState => ({
   fullName: "", category: "other", role: "", email: "", phone: "",
-  organizationId: "", newOrgName: "", notes: "", isActive: true, companyIds: [],
+  organizationId: "", newOrgName: "",
+  companyWebsite: "", companyAddress: "",
+  notes: "", isActive: true, companyIds: [],
 });
 
-const fromContact = (c: Contact): FormState => ({
-  fullName: c.fullName,
-  category: c.category,
-  role: c.role ?? "",
-  email: c.email ?? "",
-  phone: c.phone ?? "",
-  organizationId: c.organizationId ?? "",
-  newOrgName: "",
-  notes: c.notes ?? "",
-  isActive: c.isActive,
-  companyIds: [...c.companyIds],
-});
+const fromContact = (c: Contact, organizations: Organization[]): FormState => {
+  const org = c.organizationId ? organizations.find((o) => o.id === c.organizationId) : null;
+  return {
+    fullName: c.fullName,
+    category: c.category,
+    role: c.role ?? "",
+    email: c.email ?? "",
+    phone: c.phone ?? "",
+    organizationId: c.organizationId ?? "",
+    newOrgName: "",
+    companyWebsite: org?.website ?? "",
+    companyAddress: org?.address ?? "",
+    notes: c.notes ?? "",
+    isActive: c.isActive,
+    companyIds: [...c.companyIds],
+  };
+};
 
 export function ContactDialog({ open, onOpenChange, mode, contact, organizations, visibleCategories, onSaved }: Props) {
   const { toast } = useToast();
@@ -103,11 +115,31 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
 
   useEffect(() => {
     if (!open) return;
-    setForm(mode === "edit" && contact ? fromContact(contact) : blank());
-  }, [open, mode, contact]);
+    setForm(mode === "edit" && contact ? fromContact(contact, organizations) : blank());
+  }, [open, mode, contact, organizations]);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((cur) => ({ ...cur, [k]: v }));
+
+  /** Pick a different existing organization → prefill website/address from
+   *  that org so the user isn't re-typing what's already on file. */
+  const pickOrganization = (v: string) => {
+    if (v === "__none__" || v === "__new__") {
+      setForm((cur) => ({
+        ...cur,
+        organizationId: v === "__none__" ? "" : v,
+        companyWebsite: "", companyAddress: "",
+      }));
+      return;
+    }
+    const org = organizations.find((o) => o.id === v);
+    setForm((cur) => ({
+      ...cur,
+      organizationId: v,
+      companyWebsite: org?.website ?? "",
+      companyAddress: org?.address ?? "",
+    }));
+  };
 
   const allowedCategoryToEdit = myRole && canEditCategory(myRole, form.category);
 
@@ -131,8 +163,12 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
     }
     setSaving(true);
     try {
-      // Auto-create the organization if the user typed a new one.
+      // Auto-create the organization if the user typed a new one. Capture
+      // website + address with the create so the org row is complete on
+      // first save instead of needing a follow-up patch.
       let orgId: string | null = form.organizationId || null;
+      const websiteClean = form.companyWebsite.trim();
+      const addressClean = form.companyAddress.trim();
       if (form.organizationId === "__new__") {
         const name = form.newOrgName.trim();
         if (!name) {
@@ -140,8 +176,25 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
           setSaving(false);
           return;
         }
-        const created = await api.createOrganization({ name });
+        const created = await api.createOrganization({
+          name,
+          website: websiteClean || null,
+          address: addressClean || null,
+        });
         orgId = (created as any).id;
+      } else if (orgId) {
+        // Existing org — patch it if the user edited website/address.
+        // Multiple contacts at the same firm share this row, so this
+        // updates everyone's view simultaneously.
+        const currentOrg = organizations.find((o) => o.id === orgId);
+        const orgWebsite = currentOrg?.website ?? "";
+        const orgAddress = currentOrg?.address ?? "";
+        const patch: Record<string, unknown> = {};
+        if (websiteClean !== orgWebsite) patch.website = websiteClean || null;
+        if (addressClean !== orgAddress) patch.address = addressClean || null;
+        if (Object.keys(patch).length > 0) {
+          await api.updateOrganization(orgId, patch);
+        }
       }
 
       const payload: Record<string, unknown> = {
@@ -240,7 +293,7 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
 
             <div className="col-span-2 grid gap-1.5">
               <Label htmlFor="cn-org">Organization (firm / company)</Label>
-              <Select value={form.organizationId || "__none__"} onValueChange={(v) => set("organizationId", v === "__none__" ? "" : v)}>
+              <Select value={form.organizationId || "__none__"} onValueChange={pickOrganization}>
                 <SelectTrigger id="cn-org"><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— None —</SelectItem>
@@ -259,6 +312,34 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
                 />
               )}
             </div>
+
+            {(form.organizationId && form.organizationId !== "__none__") && (
+              <>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="cn-cwebsite">Company website</Label>
+                  <Input
+                    id="cn-cwebsite"
+                    type="url"
+                    value={form.companyWebsite}
+                    onChange={(e) => set("companyWebsite", e.target.value)}
+                    placeholder="https://firm.com"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="cn-caddress">Company address</Label>
+                  <Input
+                    id="cn-caddress"
+                    value={form.companyAddress}
+                    onChange={(e) => set("companyAddress", e.target.value)}
+                    placeholder="Street, City"
+                  />
+                </div>
+                <p className="col-span-2 -mt-1 text-[11px] text-muted-foreground">
+                  Saved on the organization — other contacts at the same firm
+                  will see the same address and website.
+                </p>
+              </>
+            )}
           </div>
 
           <div className="grid gap-1.5">
