@@ -1050,6 +1050,35 @@ export const api = {
     const qs = q.toString();
     return request(`/attendance-permissions/hours-summary${qs ? `?${qs}` : ""}`);
   },
+  /** Download the monthly attendance CSV (HR-only). The payroll team uses
+   *  this to calculate pay before the auto-pro-ration build lands. Browser
+   *  saves as `attendance-YYYY-MM.csv` via the Content-Disposition header. */
+  async downloadAttendanceMonthlyCsv(month: string, companyId?: string): Promise<void> {
+    const headers: Record<string, string> = {};
+    const access = tokens.access;
+    if (access) headers["Authorization"] = `Bearer ${access}`;
+    const q = new URLSearchParams({ month });
+    if (companyId) q.set("company_id", companyId);
+    const res = await fetch(`${BASE}/attendance-permissions/monthly-export?${q.toString()}`, { headers });
+    if (!res.ok) {
+      let message = res.statusText;
+      try {
+        const body = await res.json();
+        if (typeof body.detail === "string") message = body.detail;
+      } catch { /* non-JSON */ }
+      throw new ApiError(res.status, message);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `attendance-${month}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+
   /** Roster-wide monthly hours rollup. HR-only. */
   attendanceHoursSummaryRoster(month?: string): Promise<Array<{
     user_id: string; name: string;

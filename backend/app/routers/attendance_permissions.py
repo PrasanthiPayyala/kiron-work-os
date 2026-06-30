@@ -32,7 +32,11 @@ import datetime as _dt
 import uuid
 from typing import Optional
 
+import csv
+import io
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -608,3 +612,225 @@ def hours_summary_roster(
         except HTTPException:
             continue
     return out
+
+
+# ---------- Monthly attendance CSV export (payroll input) ----------
+
+@router.get("/monthly-export")
+def monthly_attendance_csv(
+    month: Optional[str] = Query(None, description="YYYY-MM, defaults to current IST month"),
+    company_id: Optional[str] = Query(None, description="Filter to one company"),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Monthly attendance CSV the payroll team uses to calculate pay.
+
+    One row per active employee, with the columns payroll needs:
+    presence/half-day/WFH/field counts, approved leave broken out by
+    type, approved permission minutes, stamped vs idle-excluded hours,
+    expected vs net-expected, shortfall/surplus, geo-outside-office
+    flag count. CSV opens directly in Excel, no extra deps required.
+
+    HR-only. Returns text/csv with a Content-Disposition attachment so
+    the browser saves it as `attendance-YYYY-MM.csv`.
+    """
+    if not _is_hr(user.roles):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only HR / super_admin / founder can download attendance",
+        )
+
+    # Resolve month string used in filename / header.
+    now_ist = _dt.datetime.now(IST)
+    if month:
+        try:
+            year, mon = month.split("-")
+            year, mon = int(year), int(mon)
+        except ValueError:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "month must be YYYY-MM",
+            )
+    else:
+        year, mon = now_ist.year, now_ist.month
+    month_str = f"{year:04d}-{mon:02d}"
+    start_date = _dt.date(year, mon, 1)
+    if mon == 12:
+        end_date = _dt.date(year + 1, 1, 1) - _dt.timedelta(days=1)
+    else:
+        end_date = _dt.date(year, mon + 1, 1) - _dt.timedelta(days=1)
+    today_ist = now_ist.date()
+    if end_date > today_ist:
+        end_date = today_ist
+
+    # Pull the roster (optionally filtered to one company).
+    params: dict = {}
+    where = ["p.is_active = true"]
+    if company_id:
+        where.append("p.home_company_id = :co")
+        params["co"] = company_id
+    profile_sql = (
+        "SELECT p.id, p.full_name, p.email, p.designation, "
+        "       p.home_company_id, p.department_id, "
+        "       c.name AS company_name, d.name AS department_name "
+        "FROM profiles p "
+        "LEFT JOIN companies c ON c.id = p.home_company_id "
+        "LEFT JOIN departments d ON d.id = p.department_id "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY c.name NULLS LAST, p.full_name ASC"
+    )
+    profiles = db.execute(text(profile_sql), params).mappings().all()
+
+    # Build CSV in memory — ~30 rows, tiny.
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Sr. No", "Employee Name", "Email", "Designation",
+        "Company", "Department",
+        "Working Days (calendar)",
+        "Days Present", "Days Half-day", "Days WFH", "Days Field Work",
+        "Days Casual", "Days Sick", "Days Comp-off",
+        "Days Unpaid (LOP)", "Days Optional Holiday",
+        "Approved Permission (min)",
+        "Stamped Hours", "Idle Excluded (h)", "Net Worked Hours",
+        "Expected Hours", "Net Expected Hours (after leave + perm)",
+        "Shortfall (h)", "Surplus (h)",
+        "Outside-Office Check-ins",
+    ])
+
+    for idx, p in enumerate(profiles, start=1):
+        uid = str(p["id"])
+
+        # Reuse the proven monthly rollup for hours numbers.
+        try:
+            summary = hours_summary(user_id=uid, month=month_str,
+                                    user=user, db=db)
+        except HTTPException:
+            continue
+
+        # Status counts from attendance_logs (present/wfh/half_day/field).
+        status_row = db.execute(
+            text(
+                "SELECT "
+                "  COUNT(*) FILTER (WHERE status = 'present')         AS present, "
+                "  COUNT(*) FILTER (WHERE status = 'half_day')        AS half_day, "
+                "  COUNT(*) FILTER (WHERE status = 'work_from_home')  AS wfh, "
+                "  COUNT(*) FILTER (WHERE status = 'field_work')      AS field_work, "
+                "  COUNT(*) FILTER (WHERE geo_outside_office = true)  AS outside "
+                "FROM attendance_logs "
+                "WHERE user_id = :u AND work_date BETWEEN :s AND :e"
+            ),
+            {"u": uid, "s": start_date, "e": end_date},
+        ).mappings().first() or {}
+
+        # Leave-day counts broken out by type. Clip ranges to the month
+        # so an across-month leave only counts the in-month days.
+        leave_counts = {
+            "casual_leave": 0, "sick_leave": 0, "loss_of_pay": 0,
+            "comp_off": 0, "optional_holiday": 0,
+        }
+        leave_rows = db.execute(
+            text(
+                "SELECT leave_type, start_date, end_date "
+                "FROM leave_requests "
+                "WHERE user_id = :u AND status = 'approved' "
+                "  AND start_date <= :e AND end_date >= :s"
+            ),
+            {"u": uid, "s": start_date, "e": end_date},
+        ).mappings().all()
+        for lr in leave_rows:
+            lt = str(lr["leave_type"])
+            if lt not in leave_counts:
+                continue
+            d = max(lr["start_date"], start_date)
+            last = min(lr["end_date"], end_date)
+            while d <= last:
+                leave_counts[lt] += 1
+                d += _dt.timedelta(days=1)
+
+        # Working-day count = the expected-working-day total the rollup
+        # already computed (per_day_minutes is fixed per employee, so
+        # expected_hours / per_day_hours = working_days).
+        # We re-derive cheaply from the summary: working_days from
+        # expected vs the same per-day used inside hours_summary. Since
+        # we don't expose that constant, recompute lightly.
+        working_days = 0
+        prof_sched = db.execute(
+            text(
+                "SELECT p.work_days, p.work_start, p.work_end, "
+                "       p.saturday_weeks_working, "
+                "       c.work_days AS c_wd, c.work_start AS c_ws, "
+                "       c.work_end AS c_we, "
+                "       c.saturday_weeks_working AS c_sat "
+                "FROM profiles p "
+                "LEFT JOIN companies c ON c.id = p.home_company_id "
+                "WHERE p.id = :u"
+            ),
+            {"u": uid},
+        ).mappings().first() or {}
+        work_days = list(prof_sched.get("work_days")
+                         or prof_sched.get("c_wd")
+                         or [1, 2, 3, 4, 5, 6])
+        sat_pat = list(prof_sched.get("saturday_weeks_working")
+                       or prof_sched.get("c_sat") or [])
+        co_id = str(p["home_company_id"]) if p.get("home_company_id") else None
+        holidays = {
+            r["date"] for r in db.execute(
+                text(
+                    "SELECT date FROM holidays "
+                    "WHERE date BETWEEN :s AND :e AND "
+                    "      (company_id IS NULL OR company_id = :co)"
+                ),
+                {"s": start_date, "e": end_date, "co": co_id},
+            ).mappings().all()
+        }
+        cur = start_date
+        while cur <= end_date:
+            iso = cur.isoweekday()
+            is_working = iso in work_days
+            if is_working and iso == 6 and sat_pat:
+                week_of_month = ((cur.day - 1) // 7) + 1
+                if week_of_month not in sat_pat:
+                    is_working = False
+            if is_working and cur in holidays:
+                is_working = False
+            if is_working:
+                working_days += 1
+            cur += _dt.timedelta(days=1)
+
+        idle_hours = round((summary.get("idle_minutes") or 0) / 60, 2)
+
+        writer.writerow([
+            idx,
+            p.get("full_name") or "",
+            p.get("email") or "",
+            p.get("designation") or "",
+            p.get("company_name") or "",
+            p.get("department_name") or "",
+            working_days,
+            int(status_row.get("present") or 0),
+            int(status_row.get("half_day") or 0),
+            int(status_row.get("wfh") or 0),
+            int(status_row.get("field_work") or 0),
+            leave_counts["casual_leave"],
+            leave_counts["sick_leave"],
+            leave_counts["comp_off"],
+            leave_counts["loss_of_pay"],
+            leave_counts["optional_holiday"],
+            int(summary.get("permission_minutes") or 0),
+            summary.get("raw_actual_hours") or 0,
+            idle_hours,
+            summary.get("actual_hours") or 0,
+            summary.get("expected_hours") or 0,
+            summary.get("net_expected_hours") or 0,
+            summary.get("net_shortfall_hours") or 0,
+            summary.get("net_surplus_hours") or 0,
+            int(status_row.get("outside") or 0),
+        ])
+
+    csv_bytes = buf.getvalue().encode("utf-8-sig")  # BOM so Excel opens UTF-8 right
+    filename = f"attendance-{month_str}.csv"
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

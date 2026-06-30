@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock, LogIn, Plane, MapPin, Plus } from "lucide-react";
+import { ClipboardCheck, Mail, Phone, RefreshCw, Loader2, AlertTriangle, LogOut, Clock, LogIn, Plane, MapPin, Plus, Download } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { toast as sonner } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -538,6 +538,7 @@ function HoursRosterTable({ companyFilter }: { companyFilter: string }) {
   });
   const [rows, setRows] = useState<Awaited<ReturnType<typeof api.attendanceHoursSummaryRoster>>>([]);
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const load = async (m: string) => {
     setLoading(true);
@@ -551,6 +552,18 @@ function HoursRosterTable({ companyFilter }: { companyFilter: string }) {
     }
   };
   useEffect(() => { void load(month); /* eslint-disable-next-line */ }, [month]);
+
+  const downloadCsv = async () => {
+    setDownloading(true);
+    try {
+      await api.downloadAttendanceMonthlyCsv(month, companyFilter === "all" ? undefined : companyFilter);
+      sonner.success(`Downloaded attendance-${month}.csv`);
+    } catch (e) {
+      sonner.error(e instanceof ApiError ? e.message : "Couldn't download CSV");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     return rows
@@ -582,9 +595,24 @@ function HoursRosterTable({ companyFilter }: { companyFilter: string }) {
           />
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          Expected after leave + permission. Shortfall = expected − worked.
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-[11px] text-muted-foreground">
+            Expected after leave + permission. Shortfall = expected − worked.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={downloadCsv}
+            disabled={downloading}
+            title="Download a per-employee CSV of presence days, leave by type, hours worked, and shortfall — payroll input"
+          >
+            {downloading
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Download className="h-3.5 w-3.5" />}
+            Download CSV
+          </Button>
+        </div>
       </div>
       {filtered.length === 0 ? (
         <p className="p-6 text-center text-sm text-muted-foreground">No data for this month.</p>
