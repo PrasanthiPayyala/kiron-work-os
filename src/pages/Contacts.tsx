@@ -10,7 +10,7 @@ import { api, ApiError } from "@/lib/api";
 import { mapContact, mapOrganization } from "@/lib/mappers";
 import { useToast } from "@/hooks/use-toast";
 import type { Contact, ContactCategory, Organization } from "@/types";
-import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone, Upload, Download, Globe, MapPin } from "lucide-react";
+import { BookUser, UserPlus, Pencil, Trash2, Building2, Mail, Phone, Upload, Download, Globe, MapPin, Linkedin } from "lucide-react";
 import { ContactDialog } from "@/components/contacts/ContactDialog";
 import { ContactsImportDialog, downloadContactsTemplate } from "@/components/contacts/ContactsImportDialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -260,6 +260,17 @@ export default function Contacts() {
                         <Phone className="h-3 w-3" /> {c.phone}
                       </a>
                     )}
+                    {c.linkedinUrl && (
+                      <a
+                        href={/^https?:\/\//i.test(c.linkedinUrl) ? c.linkedinUrl : `https://${c.linkedinUrl}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <Linkedin className="h-3 w-3 shrink-0" />
+                        <span className="truncate">LinkedIn profile</span>
+                      </a>
+                    )}
                     {org?.website && (
                       <a
                         href={/^https?:\/\//i.test(org.website) ? org.website : `https://${org.website}`}
@@ -269,6 +280,17 @@ export default function Contacts() {
                       >
                         <Globe className="h-3 w-3 shrink-0" />
                         <span className="truncate">{org.website}</span>
+                      </a>
+                    )}
+                    {org?.linkedinUrl && (
+                      <a
+                        href={/^https?:\/\//i.test(org.linkedinUrl) ? org.linkedinUrl : `https://${org.linkedinUrl}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <Linkedin className="h-3 w-3 shrink-0" />
+                        <span className="truncate">Company on LinkedIn</span>
                       </a>
                     )}
                     {org?.address && (

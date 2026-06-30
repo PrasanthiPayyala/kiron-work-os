@@ -593,6 +593,7 @@ export interface Organization {
   name: string;
   type?: string | null;
   website?: string | null;
+  linkedinUrl?: string | null;
   address?: string | null;
   gstin?: string | null;
   notes?: string | null;
@@ -613,6 +614,7 @@ export interface Contact {
   role?: string | null;
   email?: string | null;
   phone?: string | null;
+  linkedinUrl?: string | null;
   organizationId?: ID | null;
   notes?: string | null;
   isActive: boolean;

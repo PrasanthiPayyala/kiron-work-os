@@ -118,6 +118,7 @@ class OrganizationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     type: Optional[str] = None
     website: Optional[str] = None
+    linkedin_url: Optional[str] = None
     address: Optional[str] = None
     gstin: Optional[str] = None
     notes: Optional[str] = None
@@ -128,6 +129,7 @@ class OrganizationUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     type: Optional[str] = None
     website: Optional[str] = None
+    linkedin_url: Optional[str] = None
     address: Optional[str] = None
     gstin: Optional[str] = None
     notes: Optional[str] = None
@@ -221,6 +223,7 @@ class ContactCreate(BaseModel):
     role: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
+    linkedin_url: Optional[str] = None
     organization_id: Optional[str] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = True
@@ -234,6 +237,7 @@ class ContactUpdate(BaseModel):
     role: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
+    linkedin_url: Optional[str] = None
     organization_id: Optional[str] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None

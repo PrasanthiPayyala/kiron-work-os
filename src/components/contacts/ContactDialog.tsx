@@ -69,11 +69,15 @@ type FormState = {
   role: string;
   email: string;
   phone: string;
+  /** The person's own LinkedIn profile URL — saved on the contact row. */
+  linkedinUrl: string;
   organizationId: string;    // "" = none; "__new__" = inline create
   newOrgName: string;        // only used when organizationId === "__new__"
   /** Mirrors organizations.website. Edits here PATCH the linked org on save
    *  so multiple contacts at the same firm share one source of truth. */
   companyWebsite: string;
+  /** Mirrors organizations.linkedin_url — same wire-through. */
+  companyLinkedinUrl: string;
   /** Mirrors organizations.address — same wire-through as website. */
   companyAddress: string;
   notes: string;
@@ -83,8 +87,9 @@ type FormState = {
 
 const blank = (): FormState => ({
   fullName: "", category: "other", role: "", email: "", phone: "",
+  linkedinUrl: "",
   organizationId: "", newOrgName: "",
-  companyWebsite: "", companyAddress: "",
+  companyWebsite: "", companyLinkedinUrl: "", companyAddress: "",
   notes: "", isActive: true, companyIds: [],
 });
 
@@ -96,9 +101,11 @@ const fromContact = (c: Contact, organizations: Organization[]): FormState => {
     role: c.role ?? "",
     email: c.email ?? "",
     phone: c.phone ?? "",
+    linkedinUrl: c.linkedinUrl ?? "",
     organizationId: c.organizationId ?? "",
     newOrgName: "",
     companyWebsite: org?.website ?? "",
+    companyLinkedinUrl: org?.linkedinUrl ?? "",
     companyAddress: org?.address ?? "",
     notes: c.notes ?? "",
     isActive: c.isActive,
@@ -121,14 +128,14 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((cur) => ({ ...cur, [k]: v }));
 
-  /** Pick a different existing organization → prefill website/address from
-   *  that org so the user isn't re-typing what's already on file. */
+  /** Pick a different existing organization → prefill website / LinkedIn /
+   *  address from that org so the user isn't re-typing what's on file. */
   const pickOrganization = (v: string) => {
     if (v === "__none__" || v === "__new__") {
       setForm((cur) => ({
         ...cur,
         organizationId: v === "__none__" ? "" : v,
-        companyWebsite: "", companyAddress: "",
+        companyWebsite: "", companyLinkedinUrl: "", companyAddress: "",
       }));
       return;
     }
@@ -137,6 +144,7 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
       ...cur,
       organizationId: v,
       companyWebsite: org?.website ?? "",
+      companyLinkedinUrl: org?.linkedinUrl ?? "",
       companyAddress: org?.address ?? "",
     }));
   };
@@ -169,6 +177,7 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
       let orgId: string | null = form.organizationId || null;
       const websiteClean = form.companyWebsite.trim();
       const addressClean = form.companyAddress.trim();
+      const companyLnClean = form.companyLinkedinUrl.trim();
       if (form.organizationId === "__new__") {
         const name = form.newOrgName.trim();
         if (!name) {
@@ -179,18 +188,21 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
         const created = await api.createOrganization({
           name,
           website: websiteClean || null,
+          linkedin_url: companyLnClean || null,
           address: addressClean || null,
         });
         orgId = (created as any).id;
       } else if (orgId) {
-        // Existing org — patch it if the user edited website/address.
-        // Multiple contacts at the same firm share this row, so this
-        // updates everyone's view simultaneously.
+        // Existing org — patch it if the user edited website / LinkedIn /
+        // address. Multiple contacts at the same firm share this row, so
+        // this updates everyone's view simultaneously.
         const currentOrg = organizations.find((o) => o.id === orgId);
         const orgWebsite = currentOrg?.website ?? "";
+        const orgLinkedin = currentOrg?.linkedinUrl ?? "";
         const orgAddress = currentOrg?.address ?? "";
         const patch: Record<string, unknown> = {};
         if (websiteClean !== orgWebsite) patch.website = websiteClean || null;
+        if (companyLnClean !== orgLinkedin) patch.linkedin_url = companyLnClean || null;
         if (addressClean !== orgAddress) patch.address = addressClean || null;
         if (Object.keys(patch).length > 0) {
           await api.updateOrganization(orgId, patch);
@@ -203,6 +215,7 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
         role: form.role.trim() || null,
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
+        linkedin_url: form.linkedinUrl.trim() || null,
         organization_id: orgId,
         notes: form.notes.trim() || null,
         is_active: form.isActive,
@@ -292,6 +305,17 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
             </div>
 
             <div className="col-span-2 grid gap-1.5">
+              <Label htmlFor="cn-linkedin">LinkedIn profile</Label>
+              <Input
+                id="cn-linkedin"
+                type="url"
+                value={form.linkedinUrl}
+                onChange={(e) => set("linkedinUrl", e.target.value)}
+                placeholder="https://www.linkedin.com/in/username"
+              />
+            </div>
+
+            <div className="col-span-2 grid gap-1.5">
               <Label htmlFor="cn-org">Organization (firm / company)</Label>
               <Select value={form.organizationId || "__none__"} onValueChange={pickOrganization}>
                 <SelectTrigger id="cn-org"><SelectValue placeholder="—" /></SelectTrigger>
@@ -326,6 +350,16 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
                   />
                 </div>
                 <div className="grid gap-1.5">
+                  <Label htmlFor="cn-clinkedin">Company LinkedIn page</Label>
+                  <Input
+                    id="cn-clinkedin"
+                    type="url"
+                    value={form.companyLinkedinUrl}
+                    onChange={(e) => set("companyLinkedinUrl", e.target.value)}
+                    placeholder="https://www.linkedin.com/company/firm-slug"
+                  />
+                </div>
+                <div className="col-span-2 grid gap-1.5">
                   <Label htmlFor="cn-caddress">Company address</Label>
                   <Input
                     id="cn-caddress"
@@ -336,7 +370,7 @@ export function ContactDialog({ open, onOpenChange, mode, contact, organizations
                 </div>
                 <p className="col-span-2 -mt-1 text-[11px] text-muted-foreground">
                   Saved on the organization — other contacts at the same firm
-                  will see the same address and website.
+                  will see the same website, LinkedIn, and address.
                 </p>
               </>
             )}
