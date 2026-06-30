@@ -537,7 +537,7 @@ function CreateRunDialog({
 function CreateStructureDialog({
   onClose, onSaved,
 }: { onClose: () => void; onSaved: () => void }) {
-  const { users } = useDataStore();
+  const { users, companies, ptSlabs } = useDataStore();
   const [userId, setUserId] = useState("");
   const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
   const [basic, setBasic] = useState("0");
@@ -551,12 +551,45 @@ function CreateStructureDialog({
   const [employerEsi, setEmployerEsi] = useState("0");
   const [employerOther, setEmployerOther] = useState("0");
   const [tdsRegime, setTdsRegime] = useState<"old" | "new">("new");
+  const [pfScheme, setPfScheme] = useState<"none" | "standard_12pct" | "capped_15000">("none");
+  const [esiEligibility, setEsiEligibility] = useState<"auto" | "force_eligible" | "force_ineligible">("auto");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
 
   const total =
     Number(basic) + Number(hra) + Number(conveyance) + Number(medical) +
     Number(lta) + Number(specialAllowance) + Number(otherEarnings);
+
+  // Live deduction preview — mirrors the backend helpers in salary.py so
+  // HR can see exactly what the next payroll run will compute.
+  const pfPreview = (() => {
+    const b = Number(basic) || 0;
+    if (pfScheme === "standard_12pct") return Math.round(b * 0.12 * 100) / 100;
+    if (pfScheme === "capped_15000")   return Math.round(Math.min(b, 15000) * 0.12 * 100) / 100;
+    return 0;
+  })();
+  const esiPreview = (() => {
+    const g = total || 0;
+    if (esiEligibility === "force_ineligible") return 0;
+    if (esiEligibility === "force_eligible" || (esiEligibility === "auto" && g <= 21000)) {
+      return Math.round(g * 0.0075 * 100) / 100;
+    }
+    return 0;
+  })();
+  // PT lookup: which company is this employee in? structure carries no
+  // company; pull from the user's home company.
+  const pickedUser = users.find((u) => u.id === userId);
+  const company = pickedUser ? companies.find((c) => c.id === pickedUser.homeCompanyId) : undefined;
+  const ptState = company?.profile?.ptState ?? null;
+  const ptPreview = (() => {
+    if (!ptState) return 0;
+    const slab = ptSlabs
+      .filter((s) => s.isActive && s.state === ptState
+        && s.minGross <= total
+        && (s.maxGross == null || s.maxGross > total))
+      .sort((a, b) => b.minGross - a.minGross)[0];
+    return slab?.amount ?? 0;
+  })();
 
   const submit = async () => {
     if (!userId) return toast.error("Pick an employee");
@@ -573,6 +606,8 @@ function CreateStructureDialog({
         employer_pf: Number(employerPf), employer_esi: Number(employerEsi),
         employer_other: Number(employerOther),
         tds_regime: tdsRegime,
+        pf_scheme: pfScheme,
+        esi_eligibility: esiEligibility,
         notes: notes.trim() || null,
       });
       toast.success("Saved");
@@ -624,7 +659,53 @@ function CreateStructureDialog({
             </div>
           </div>
 
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Employer contributions (CTC only)</p>
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Statutory deductions (auto-computed each payroll run)</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">PF scheme</Label>
+              <Select value={pfScheme} onValueChange={(v) => setPfScheme(v as typeof pfScheme)}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No PF (opted out)</SelectItem>
+                  <SelectItem value="standard_12pct">Standard 12% on full basic</SelectItem>
+                  <SelectItem value="capped_15000">Statutory cap (12% of min(basic, ₹15,000))</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {pfScheme === "none"
+                  ? "No PF will be deducted."
+                  : `Will deduct ₹${inr(pfPreview)} PF from each side (employee + employer).`}
+              </p>
+            </div>
+            <div>
+              <Label className="text-xs">ESI eligibility</Label>
+              <Select value={esiEligibility} onValueChange={(v) => setEsiEligibility(v as typeof esiEligibility)}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto by ₹21k gross rule</SelectItem>
+                  <SelectItem value="force_eligible">Force eligible (always deduct)</SelectItem>
+                  <SelectItem value="force_ineligible">Not eligible (never deduct)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {esiPreview > 0
+                  ? `Will deduct ₹${inr(esiPreview)} ESI (employee 0.75%).`
+                  : esiEligibility === "auto" && total > 21000
+                    ? "Gross above ₹21,000 — ESI auto-skipped."
+                    : "No ESI will be deducted."}
+              </p>
+            </div>
+          </div>
+
+          {pickedUser && (
+            <p className="text-[11px] text-muted-foreground">
+              {ptState
+                ? `Professional Tax (${ptState}): ₹${inr(ptPreview)} / month at this gross.`
+                : "Professional Tax: company has no PT state set — no PT will deduct."}
+            </p>
+          )}
+
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Employer contributions (CTC display only — separate from PF scheme above)</p>
           <div className="grid grid-cols-3 gap-3">
             <Money label="Employer PF" value={employerPf} onChange={setEmployerPf} />
             <Money label="Employer ESI" value={employerEsi} onChange={setEmployerEsi} />
@@ -650,6 +731,7 @@ function CreateStructureDialog({
 
           <p className="text-[11px] text-muted-foreground">
             Saving creates a new version. The previous current row (if any) is closed automatically.
+            PF / ESI / PT auto-compute when you next "Generate" a payroll run — HR can still override any cell on the draft payslip.
           </p>
         </div>
         <DialogFooter>

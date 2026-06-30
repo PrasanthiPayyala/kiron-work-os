@@ -170,6 +170,7 @@ export function mapCompany(r: DbCompany): Company {
       shopsEstablishmentExpiresAt: isoDate((r as any).shops_establishment_expires_at),
       iecNumber: (r as any).iec_number ?? null,
       industryLicences: industryLicencesIn((r as any).industry_licenses),
+      ptState: (r as any).pt_state ?? null,
     },
   };
 }
@@ -511,6 +512,18 @@ export function mapTeam(r: any, memberIds: string[] = []): import("@/types").Tea
     createdAt: r.created_at ?? "",
     createdById: r.created_by ?? null,
     memberIds: Array.isArray(r.member_ids) ? r.member_ids : memberIds,
+  };
+}
+
+// ---------- Payroll (PT slab reference) ----------
+export function mapPtSlab(r: any): import("@/types").PtSlab {
+  return {
+    id: r.id,
+    state: r.state,
+    minGross: Number(r.min_gross ?? 0),
+    maxGross: r.max_gross == null ? null : Number(r.max_gross),
+    amount: Number(r.amount ?? 0),
+    isActive: r.is_active !== false,
   };
 }
 

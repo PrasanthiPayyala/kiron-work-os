@@ -33,6 +33,7 @@ from .routers import (
     notifications,
     offices,
     projects,
+    pt_slabs,
     salary,
     tasks,
     teams,
@@ -93,6 +94,7 @@ app.include_router(vendors.router)
 app.include_router(compliance.router)
 app.include_router(expenses.router)
 app.include_router(salary.router)
+app.include_router(pt_slabs.router)
 app.include_router(ledger.router)
 app.include_router(ws.router)
 

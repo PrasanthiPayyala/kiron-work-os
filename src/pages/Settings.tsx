@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { WorkingHoursSection } from "@/pages/settings/WorkingHours";
 import { HolidaysSection } from "@/pages/settings/Holidays";
 import { CompanyDialog } from "@/components/companies/CompanyDialog";
+import { PtSlabsTab } from "@/components/settings/PtSlabsTab";
 import { api, ApiError } from "@/lib/api";
 import type { Company } from "@/types";
 
@@ -118,6 +119,7 @@ export default function Settings() {
             <TabsTrigger value="departments">Departments</TabsTrigger>
             <TabsTrigger value="hours">Working hours</TabsTrigger>
             <TabsTrigger value="holidays">Holidays</TabsTrigger>
+            <TabsTrigger value="pt_slabs">PT slabs</TabsTrigger>
             <TabsTrigger value="roles">Roles</TabsTrigger>
             <TabsTrigger value="notifications">Notifications</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
@@ -220,6 +222,9 @@ export default function Settings() {
           </TabsContent>
           <TabsContent value="holidays" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <HolidaysSection />
+          </TabsContent>
+          <TabsContent value="pt_slabs" className="rounded-xl border border-border bg-surface shadow-card">
+            <PtSlabsTab />
           </TabsContent>
           <TabsContent value="roles" className="rounded-xl border border-border bg-surface p-5 shadow-card">
             <ul className="space-y-2 text-sm">

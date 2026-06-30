@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth";
 import {
   mapCompany, mapDepartment, mapProfile, mapProject, mapTask, mapApproval,
   mapAttendance, mapAttendancePermission, mapLeave, mapConversation, mapMessage,
-  mapNotification, mapHoliday, mapOffice, mapTeam, pickPrimaryRole,
+  mapNotification, mapHoliday, mapOffice, mapPtSlab, mapTeam, pickPrimaryRole,
 } from "@/lib/mappers";
 import { offlineDB, replaceTable, setMeta, getMeta, clearAllData } from "@/lib/offline/db";
 import { drainQueue } from "@/lib/offline/mutationQueue";
@@ -22,7 +22,7 @@ import { showDesktopNotification } from "@/lib/desktopNotifications";
 import type {
   Company, Department, User, Project, Task, Approval,
   AttendanceLog, AttendancePermission, LeaveRequest, Conversation, Message,
-  Notification, Office, Role, Holiday, Team,
+  Notification, Office, PtSlab, Role, Holiday, Team,
 } from "@/types";
 
 type Store = {
@@ -40,6 +40,7 @@ type Store = {
   notifications: Notification[];
   holidays: Holiday[];
   offices: Office[];
+  ptSlabs: PtSlab[];
   teams: Team[];
   rolesByUser: Record<string, Role[]>;
 };
@@ -66,7 +67,7 @@ const empty: Store = {
   companies: [], departments: [], users: [], projects: [], tasks: [],
   approvals: [], attendance: [], attendancePermissions: [],
   leaveRequests: [], conversations: [],
-  messages: [], notifications: [], holidays: [], offices: [], teams: [],
+  messages: [], notifications: [], holidays: [], offices: [], ptSlabs: [], teams: [],
   rolesByUser: {},
 };
 
@@ -86,6 +87,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     attendancePermissions?: any[];
     conversations: any[]; convMembers: { conversation_id: string; user_id: string; last_read_at?: string | null }[];
     messages: any[]; notifications: any[]; holidays?: any[]; offices?: any[];
+    ptSlabs?: any[];
     teams?: any[]; teamMembers?: { team_id: string; user_id: string; member_role: string }[];
     currentUserId?: string;
   }): Store => {
@@ -128,6 +130,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       notifications: raw.notifications.map(mapNotification),
       holidays: (raw.holidays ?? []).map(mapHoliday),
       offices: (raw.offices ?? []).map(mapOffice),
+      ptSlabs: (raw.ptSlabs ?? []).map(mapPtSlab),
       teams: (raw.teams ?? []).map((t: any) => mapTeam(t, teamMembersByTeam[t.id] ?? [])),
       rolesByUser,
     };
@@ -188,6 +191,7 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
       attendance: b.attendance_logs,
       attendancePermissions: (b as any).attendance_permissions ?? [],
       offices: (b as any).offices ?? [],
+      ptSlabs: (b as any).pt_slabs ?? [],
       leaves: b.leave_requests,
       conversations: b.conversations,
       convMembers: b.conversation_members,

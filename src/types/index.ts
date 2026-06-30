@@ -130,6 +130,10 @@ export interface Company {
     shopsEstablishmentExpiresAt?: ISODate | null;
     iecNumber?: string | null;
     industryLicences: IndustryLicence[];
+    /** Indian state code used to pick the Professional Tax slab when the
+     *  payroll-run generator computes pt_employee. NULL = no PT for this
+     *  entity. Mirrors companies.pt_state in the DB. */
+    ptState?: string | null;
   };
 }
 
@@ -573,6 +577,16 @@ export interface Notification {
   link?: string;
   read: boolean;
   createdAt: ISODate;
+}
+
+// ---------- Payroll (Professional Tax slab reference data) ----------
+export interface PtSlab {
+  id: ID;
+  state: string;
+  minGross: number;
+  maxGross: number | null;
+  amount: number;
+  isActive: boolean;
 }
 
 // ---------- Contacts & Organizations ----------

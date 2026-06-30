@@ -77,6 +77,16 @@ class StructureCreate(BaseModel):
     employer_esi: float = 0
     employer_other: float = 0
     tds_regime: str = "new"
+    # PF scheme drives the deduction the payroll-run generator computes:
+    #   none           — employee opted out, pf_employee = 0
+    #   standard_12pct — 12% of basic (no cap), both halves
+    #   capped_15000   — 12% of min(basic, 15000) — statutory ceiling
+    pf_scheme: str = "none"
+    # ESI eligibility:
+    #   auto             — deduct 0.75% + 3.25% iff gross <= 21,000
+    #   force_eligible   — always deduct regardless of gross
+    #   force_ineligible — never deduct (employee has own cover, etc.)
+    esi_eligibility: str = "auto"
     notes: Optional[str] = None
 
 
@@ -94,6 +104,8 @@ class StructureUpdate(BaseModel):
     employer_esi: Optional[float] = None
     employer_other: Optional[float] = None
     tds_regime: Optional[str] = None
+    pf_scheme: Optional[str] = None
+    esi_eligibility: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -160,11 +172,73 @@ def _get_payslip(db: Session, pid: str) -> dict:
 _EARNINGS_COLS = ("basic", "hra", "conveyance", "medical", "lta", "special_allowance", "other_earnings")
 _DEDUCTION_COLS = ("pf_employee", "esi_employee", "pt_employee", "tds", "other_deductions")
 
+ALLOWED_PF_SCHEMES = {"none", "standard_12pct", "capped_15000"}
+ALLOWED_ESI_ELIGIBILITIES = {"auto", "force_eligible", "force_ineligible"}
+
+# ESI is statutorily applicable only when monthly gross is at or below
+# this threshold. ?21,000 is the current cap (?25,000 for disabled —
+# not modelled; HR uses force_eligible if needed).
+ESI_GROSS_CEILING = 21000.0
+ESI_EMPLOYEE_RATE = 0.0075   # 0.75%
+ESI_EMPLOYER_RATE = 0.0325   # 3.25%
+PF_RATE = 0.12               # 12% — both halves
+PF_STATUTORY_CAP_BASIC = 15000.0
+
 
 def _compute_totals(row: dict) -> tuple[float, float, float]:
     gross = sum(float(row.get(c) or 0) for c in _EARNINGS_COLS)
     deds = sum(float(row.get(c) or 0) for c in _DEDUCTION_COLS)
     return gross, deds, gross - deds
+
+
+def _compute_pf(basic: float, scheme: str | None) -> tuple[float, float]:
+    """Returns (employee_pf, employer_pf). Both halves use the same rate.
+
+    Schemes:
+      none           -> (0, 0)
+      standard_12pct -> 12% of basic
+      capped_15000   -> 12% of min(basic, 15000)
+    Unknown scheme falls back to 'none' so a bad row never breaks the run.
+    """
+    if scheme == "standard_12pct":
+        amt = round(float(basic or 0) * PF_RATE, 2)
+        return (amt, amt)
+    if scheme == "capped_15000":
+        capped = min(float(basic or 0), PF_STATUTORY_CAP_BASIC)
+        amt = round(capped * PF_RATE, 2)
+        return (amt, amt)
+    return (0.0, 0.0)
+
+
+def _compute_esi(gross: float, eligibility: str | None) -> tuple[float, float]:
+    """Returns (employee_esi, employer_esi)."""
+    if eligibility == "force_ineligible":
+        return (0.0, 0.0)
+    if eligibility == "force_eligible" or (
+        eligibility == "auto" and float(gross or 0) <= ESI_GROSS_CEILING
+    ):
+        emp = round(float(gross or 0) * ESI_EMPLOYEE_RATE, 2)
+        er = round(float(gross or 0) * ESI_EMPLOYER_RATE, 2)
+        return (emp, er)
+    return (0.0, 0.0)
+
+
+def _lookup_pt(db: Session, state: str | None, gross: float) -> float:
+    """Find the matching active PT slab for (state, gross). Returns 0
+    when no state is configured on the company or no slab matches."""
+    if not state:
+        return 0.0
+    found = db.execute(
+        text(
+            "SELECT amount FROM pt_slabs "
+            "WHERE is_active = true AND state = :s "
+            "  AND min_gross <= :g "
+            "  AND (max_gross IS NULL OR max_gross > :g) "
+            "ORDER BY min_gross DESC LIMIT 1"
+        ),
+        {"s": state, "g": float(gross or 0)},
+    ).first()
+    return float(found[0]) if found else 0.0
 
 
 # ----- Salary structures -----
@@ -220,6 +294,10 @@ def create_structure(
     _require_manage(user)
     if body.tds_regime not in ALLOWED_REGIMES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"tds_regime must be one of {sorted(ALLOWED_REGIMES)}")
+    if body.pf_scheme not in ALLOWED_PF_SCHEMES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"pf_scheme must be one of {sorted(ALLOWED_PF_SCHEMES)}")
+    if body.esi_eligibility not in ALLOWED_ESI_ELIGIBILITIES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"esi_eligibility must be one of {sorted(ALLOWED_ESI_ELIGIBILITIES)}")
     try:
         eff = dt.date.fromisoformat(body.effective_from)
     except ValueError:
@@ -239,12 +317,12 @@ def create_structure(
             "  id, user_id, effective_from, "
             "  basic, hra, conveyance, medical, lta, special_allowance, other_earnings, "
             "  employer_pf, employer_esi, employer_other, "
-            "  tds_regime, notes, created_by, updated_by"
+            "  tds_regime, pf_scheme, esi_eligibility, notes, created_by, updated_by"
             ") VALUES ("
             "  :id, :u, :ef, "
             "  :basic, :hra, :con, :med, :lta, :sa, :oe, "
             "  :epf, :eesi, :eo, "
-            "  :reg, :n, :cb, :cb"
+            "  :reg, :pfs, :esie, :n, :cb, :cb"
             ")"
         ),
         {
@@ -253,7 +331,8 @@ def create_structure(
             "med": body.medical, "lta": body.lta, "sa": body.special_allowance,
             "oe": body.other_earnings, "epf": body.employer_pf,
             "eesi": body.employer_esi, "eo": body.employer_other,
-            "reg": body.tds_regime, "n": body.notes, "cb": user.id,
+            "reg": body.tds_regime, "pfs": body.pf_scheme,
+            "esie": body.esi_eligibility, "n": body.notes, "cb": user.id,
         },
     )
     db.commit()
@@ -272,6 +351,10 @@ def update_structure(
     fields = patch.model_dump(exclude_unset=True)
     if "tds_regime" in fields and fields["tds_regime"] not in ALLOWED_REGIMES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"tds_regime must be one of {sorted(ALLOWED_REGIMES)}")
+    if "pf_scheme" in fields and fields["pf_scheme"] not in ALLOWED_PF_SCHEMES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"pf_scheme must be one of {sorted(ALLOWED_PF_SCHEMES)}")
+    if "esi_eligibility" in fields and fields["esi_eligibility"] not in ALLOWED_ESI_ELIGIBILITIES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"esi_eligibility must be one of {sorted(ALLOWED_ESI_ELIGIBILITIES)}")
     if not fields:
         return _get_structure(db, sid)
     set_parts: list[str] = ["updated_by = :u", "updated_at = now()"]
@@ -339,8 +422,25 @@ def create_run(
         {"co": body.company_id},
     ).mappings().all()
 
+    # Company-level PT state drives the Professional Tax slab lookup.
+    co_row = db.execute(
+        text("SELECT pt_state FROM companies WHERE id = :id"),
+        {"id": body.company_id},
+    ).mappings().first()
+    pt_state = (co_row or {}).get("pt_state")
+
     for r in rows:
         gross = sum(float(r.get(c) or 0) for c in _EARNINGS_COLS)
+        # Pre-compute PF / ESI / PT from the structure's scheme config.
+        # HR can still manually override any cell on the draft payslip
+        # before finalizing; this just primes it with the right numbers
+        # so they don't type 26 PF amounts every month.
+        pf_emp, pf_er = _compute_pf(float(r["basic"] or 0), r.get("pf_scheme"))
+        esi_emp, esi_er = _compute_esi(gross, r.get("esi_eligibility"))
+        pt = _lookup_pt(db, pt_state, gross)
+        total_ded = pf_emp + esi_emp + pt    # tds + other_deductions stay 0; HR fills
+        net = max(0.0, gross - total_ded)
+
         db.execute(
             text(
                 "INSERT INTO payslips ("
@@ -348,11 +448,15 @@ def create_run(
                 "  basic, hra, conveyance, medical, lta, special_allowance, other_earnings, "
                 "  gross_earnings, "
                 "  pf_employee, esi_employee, pt_employee, tds, other_deductions, "
+                "  employer_pf, employer_esi, "
                 "  total_deductions, net_pay"
                 ") VALUES ("
                 "  :id, :run, :u, :p, "
                 "  :basic, :hra, :con, :med, :lta, :sa, :oe, "
-                "  :gross, 0, 0, 0, 0, 0, 0, :gross"
+                "  :gross, "
+                "  :pf_emp, :esi_emp, :pt, 0, 0, "
+                "  :pf_er, :esi_er, "
+                "  :td, :net"
                 ")"
             ),
             {
@@ -361,6 +465,9 @@ def create_run(
                 "basic": r["basic"], "hra": r["hra"], "con": r["conveyance"],
                 "med": r["medical"], "lta": r["lta"], "sa": r["special_allowance"],
                 "oe": r["other_earnings"], "gross": gross,
+                "pf_emp": pf_emp, "esi_emp": esi_emp, "pt": pt,
+                "pf_er": pf_er, "esi_er": esi_er,
+                "td": total_ded, "net": net,
             },
         )
 

@@ -982,6 +982,33 @@ export const api = {
     return request(`/offices/${encodeURIComponent(officeId)}`, { method: "DELETE" });
   },
 
+  // ---------- PT slabs (Professional Tax reference table) ----------
+  listPtSlabs(): Promise<Array<Record<string, unknown>>> {
+    return request(`/pt-slabs`);
+  },
+  createPtSlab(payload: {
+    state: string;
+    min_gross: number;
+    max_gross?: number | null;
+    amount: number;
+  }): Promise<Record<string, unknown>> {
+    return request(`/pt-slabs`, { method: "POST", body: JSON.stringify(payload) });
+  },
+  updatePtSlab(slabId: string, patch: {
+    state?: string;
+    min_gross?: number;
+    max_gross?: number | null;
+    amount?: number;
+    is_active?: boolean;
+  }): Promise<Record<string, unknown>> {
+    return request(`/pt-slabs/${encodeURIComponent(slabId)}`, {
+      method: "PATCH", body: JSON.stringify(patch),
+    });
+  },
+  deactivatePtSlab(slabId: string): Promise<void> {
+    return request(`/pt-slabs/${encodeURIComponent(slabId)}`, { method: "DELETE" });
+  },
+
   /** Push a confirmed idle interval to the server. The client's
    *  useIdleDetector hook fires this after ≥30 min of inactivity (or
    *  on visibility change). Backend deduplicates by (user, started_at)
@@ -1444,6 +1471,9 @@ export interface FounderDueRow {
   rows: number;
 }
 
+export type PfScheme = "none" | "standard_12pct" | "capped_15000";
+export type EsiEligibility = "auto" | "force_eligible" | "force_ineligible";
+
 export interface SalaryStructureRow {
   id: string;
   user_id: string;
@@ -1454,6 +1484,8 @@ export interface SalaryStructureRow {
   other_earnings: number;
   employer_pf: number; employer_esi: number; employer_other: number;
   tds_regime: "old" | "new";
+  pf_scheme: PfScheme;
+  esi_eligibility: EsiEligibility;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -1484,6 +1516,7 @@ export interface PayslipRow {
   gross_earnings: number;
   pf_employee: number; esi_employee: number; pt_employee: number;
   tds: number; other_deductions: number;
+  employer_pf: number; employer_esi: number;
   total_deductions: number;
   net_pay: number;
   status: "draft" | "finalized" | "paid";

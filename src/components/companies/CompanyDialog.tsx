@@ -268,6 +268,7 @@ const FINANCE_PAYLOAD_KEYS = [
   "professional_tax_number", "shops_establishment_number",
   "shops_establishment_expires_at", "iec_number",
   "industry_licenses", "trademark_registrations",
+  "pt_state",
 ] as const;
 
 // ---------- Logo upload (file picker + preview, image/* only) ----------
@@ -408,6 +409,9 @@ type FormState = {
   shopsEstablishmentExpiresAt: string;  // YYYY-MM-DD
   iecNumber: string;
   industryLicences: IndustryLicence[];
+  /** Indian state code (e.g. 'AP', 'TG') that drives the PT slab lookup
+   *  at payroll-run time. Blank = no PT for this entity. */
+  ptState: string;
 };
 
 const blank = (): FormState => ({
@@ -427,6 +431,7 @@ const blank = (): FormState => ({
   shopsEstablishmentNumber: "", shopsEstablishmentExpiresAt: "",
   iecNumber: "",
   industryLicences: [],
+  ptState: "",
 });
 
 const fromCompany = (c: Company): FormState => ({
@@ -469,6 +474,7 @@ const fromCompany = (c: Company): FormState => ({
   shopsEstablishmentExpiresAt: c.profile.shopsEstablishmentExpiresAt ?? "",
   iecNumber: c.profile.iecNumber ?? "",
   industryLicences: c.profile.industryLicences,
+  ptState: c.profile.ptState ?? "",
 });
 
 /** Strip empty values from the form so the backend can NULL them, and
@@ -537,6 +543,7 @@ function toPayload(f: FormState): Record<string, unknown> {
     shops_establishment_expires_at: f.shopsEstablishmentExpiresAt || null,
     iec_number: f.iecNumber.trim() || null,
     industry_licenses: cleanLicences(f.industryLicences),
+    pt_state: f.ptState.trim().toUpperCase() || null,
   };
 }
 
@@ -837,6 +844,20 @@ export function CompanyDialog({ open, onOpenChange, mode, company, onSaved }: Pr
                   <div className="grid gap-1.5">
                     <Label htmlFor="cd-pt" className="text-xs">Professional Tax (PT) number</Label>
                     <Input id="cd-pt" disabled={!canEditFinance} value={form.professionalTaxNumber} onChange={(e) => set("professionalTaxNumber", e.target.value)} placeholder="State-specific" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="cd-pt-state" className="text-xs">PT state (for payroll)</Label>
+                    <Input
+                      id="cd-pt-state"
+                      disabled={!canEditFinance}
+                      value={form.ptState}
+                      onChange={(e) => set("ptState", e.target.value.toUpperCase())}
+                      placeholder="AP, TG, KA, MH…"
+                      maxLength={8}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Picks the matching PT slab in payroll. Leave blank to skip PT for this entity.
+                    </p>
                   </div>
                   <div className="grid gap-1.5">
                     <Label htmlFor="cd-iec" className="text-xs">IEC (Import-Export Code)</Label>

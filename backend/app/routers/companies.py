@@ -102,6 +102,8 @@ _WRITABLE_FINANCE = {
     "professional_tax_number", "shops_establishment_number",
     "shops_establishment_expires_at", "iec_number",
     "industry_licenses", "trademark_registrations",
+    # Payroll
+    "pt_state",
 }
 
 _WRITABLE = _WRITABLE_BASIC | _WRITABLE_FINANCE
@@ -163,6 +165,9 @@ class CompanyProfile(BaseModel):
     # contact_companies (migration 0011). Only the document-list stays here.
     certificates: Optional[list[str]] = None
     ca_documents_held: Optional[list[str]] = None
+    # Indian state code (e.g. 'AP', 'TG') used by the payroll generator
+    # to look up Professional Tax via pt_slabs. NULL = no PT for this entity.
+    pt_state: Optional[str] = None
 
 
 class CompanyCreate(CompanyProfile):

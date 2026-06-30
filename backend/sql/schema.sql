@@ -100,6 +100,10 @@ create table public.companies (
   managing_ca_phone     text,
   managing_ca_email     text,
   ca_documents_held     text[],
+  -- Indian state code (e.g. 'AP', 'TG', 'KA') used to look up the
+  -- Professional Tax slab when generating payroll runs. NULL = no PT
+  -- deduction for this entity.
+  pt_state              text,
   created_at timestamptz not null default now()
 );
 

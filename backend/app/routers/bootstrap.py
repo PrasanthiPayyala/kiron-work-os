@@ -215,6 +215,14 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "SELECT * FROM offices WHERE is_active = true ORDER BY company_id, name",
     )
 
+    # --- pt_slabs (active rows only; the salary structure editor uses
+    # them to render the live "would deduct ?X PT" hint). Tiny reference
+    # table — typically <10 rows per state.
+    pt_slabs = _rows(
+        db,
+        "SELECT * FROM pt_slabs WHERE is_active = true ORDER BY state, min_gross",
+    )
+
     # --- teams ---
     # Global-team viewers (super_admin / founder / founder_office_coordinator)
     # see every team; everyone else sees only the teams they belong to.
@@ -258,6 +266,7 @@ def bootstrap(user: CurrentUser = Depends(get_current_user), db: Session = Depen
         "notifications": notifications,
         "holidays": holidays,
         "offices": offices,
+        "pt_slabs": pt_slabs,
         "teams": teams_rows,
         "team_members": team_members,
     }
