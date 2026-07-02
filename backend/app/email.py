@@ -86,6 +86,10 @@ def send_email(
         if settings.smtp_username and settings.smtp_password:
             smtp.login(settings.smtp_username, settings.smtp_password)
         smtp.send_message(msg)
+        log.info(
+            "[email] sent to=%s subject=%s reply_to=%s",
+            to, subject, reply_to or "-",
+        )
     finally:
         try:
             smtp.quit()
