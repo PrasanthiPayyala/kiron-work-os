@@ -42,8 +42,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..authz import HR_ROLES, has_any_role
+from ..config import settings
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..notifications_email import notify_email
 from ..util import row
 from . import ws as ws_router
 
@@ -214,6 +216,31 @@ def create_permission(
                 "is_read": False, "created_at": now_iso,
             })
         db.commit()
+
+        # Email HR — deduped in notify_email so per-user IDs are fine.
+        email_targets = [uid for uid in hr_user_ids if uid != user.id]
+        if email_targets:
+            kind_label_upper = kind_label[:1].upper() + kind_label[1:]
+            email_subject = (
+                f"Attendance permission · {req_name} · {kind_label_upper} · "
+                f"{hours_part} · {body.date}"
+            )
+            email_body = (
+                f"{req_name} filed an attendance permission for {body.date}:\n"
+                f"  - Kind: {kind_label}\n"
+                f"  - Duration: {hours_part}\n"
+                f"  - Reason: {body.reason or '(none)'}\n\n"
+                f"Approve or reject: {settings.app_base_url}"
+                f"/team-attendance?tab=permissions"
+            )
+            notify_email(
+                background, db,
+                to_user_ids=email_targets,
+                subject=email_subject,
+                body_text=email_body,
+                reply_to_user_id=user.id,
+                from_name_user_id=user.id,
+            )
     return fresh
 
 
@@ -285,6 +312,35 @@ def decide_permission(
         "link": f"/attendance?permission={perm_id}",
         "is_read": False, "created_at": now_iso,
     })
+
+    # Email the applicant — Reply-To = deciding HR user.
+    applicant_id = str(existing["user_id"])
+    if applicant_id != user.id:
+        kind_label = {
+            "late_in": "Late arrival", "early_out": "Early leave",
+            "mid_out": "Mid-day step-out",
+        }.get(str(existing["kind"]), str(existing["kind"]))
+        mins = int(existing["minutes"])
+        hours_part = f"{mins // 60}h{mins % 60}m" if mins >= 60 else f"{mins}m"
+        verdict_label = "approved" if body.decision == "approved" else "rejected"
+        email_subject = (
+            f"Permission {verdict_label} · {kind_label} · {hours_part} · "
+            f"{existing['date']}"
+        )
+        note = f"\n\nNote: {body.note}" if body.note else ""
+        email_body = (
+            f"Your {kind_label.lower()} permission for {existing['date']} "
+            f"({hours_part}) was {verdict_label}.{note}\n\n"
+            f"See your attendance: {settings.app_base_url}/attendance"
+        )
+        notify_email(
+            background, db,
+            to_user_ids=[applicant_id],
+            subject=email_subject,
+            body_text=email_body,
+            reply_to_user_id=user.id,
+            from_name_user_id=user.id,
+        )
     return fresh
 
 

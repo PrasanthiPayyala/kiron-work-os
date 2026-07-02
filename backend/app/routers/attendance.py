@@ -9,8 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..authz import HR_ROLES, can_update_attendance, can_view_attendance_followup, has_any_role
+from ..config import settings
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..notifications_email import notify_email
 from ..util import row
 from . import ws as ws_router
 from .leave_balances import apply_balance_delta
@@ -116,7 +118,12 @@ def _is_off_day_for_user(db: Session, user_id: str, work_date: _dt.date) -> bool
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def check_in(body: CheckIn, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def check_in(
+    body: CheckIn,
+    background: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     new_id = str(uuid.uuid4())
 
     # Off-day check-in -> stamp pending comp-off. HR approves/denies from
@@ -195,6 +202,50 @@ def check_in(body: CheckIn, user: CurrentUser = Depends(get_current_user), db: S
     log_row = _get(db, new_id)
     if geo_warning:
         log_row["geo_warning"] = geo_warning
+
+    # Off-day work triggers a pending comp-off — email HR so they can
+    # approve/deny from Team Attendance -> Comp-off pending.
+    if comp_status == "pending":
+        hr_user_ids = [
+            str(r[0]) for r in db.execute(
+                text(
+                    "SELECT DISTINCT ur.user_id FROM user_roles ur "
+                    "JOIN profiles p ON p.id = ur.user_id "
+                    "WHERE p.is_active = true AND ur.role::text = ANY(:roles)"
+                ),
+                {"roles": list(HR_ROLES)},
+            ).all()
+            if str(r[0]) != user.id
+        ]
+        if hr_user_ids:
+            requester = db.execute(
+                text("SELECT full_name FROM profiles WHERE id = :id"),
+                {"id": user.id},
+            ).mappings().first()
+            req_name = (requester or {}).get("full_name") or "Someone"
+            earned_str = f"{comp_earned:g} day" + ("s" if comp_earned != 1 else "")
+            try:
+                weekday = _dt.date.fromisoformat(body.work_date).strftime("%a")
+            except ValueError:
+                weekday = ""
+            date_label = f"{weekday} {body.work_date}" if weekday else body.work_date
+            email_subject = (
+                f"Comp-off earned · {req_name} · {earned_str} · worked {date_label}"
+            )
+            email_body = (
+                f"{req_name} worked on {date_label} (an off-day) and is "
+                f"claiming a comp-off credit of {earned_str}.\n\n"
+                f"Approve or deny: {settings.app_base_url}"
+                f"/team-attendance?tab=comp_off"
+            )
+            notify_email(
+                background, db,
+                to_user_ids=hr_user_ids,
+                subject=email_subject,
+                body_text=email_body,
+                reply_to_user_id=user.id,
+                from_name_user_id=user.id,
+            )
     return log_row
 
 
@@ -312,6 +363,43 @@ def decide_comp_off(
     # Push the change so the employee's attendance page reflects the
     # new comp_off_status without a refresh.
     background.add_task(ws_router.attendance_changed, fresh)
+
+    # Email the applicant with the verdict. Reply-To = the deciding HR
+    # user so a Reply in Gmail lands with them.
+    applicant_id = str(log["user_id"])
+    if applicant_id != user.id:
+        earned_str = f"{earned:g} day" + ("s" if earned != 1 else "")
+        try:
+            weekday = _dt.date.fromisoformat(str(log["work_date"])).strftime("%a")
+        except ValueError:
+            weekday = ""
+        date_label = f"{weekday} {log['work_date']}" if weekday else str(log["work_date"])
+        verdict_label = "approved" if body.decision == "approved" else "denied"
+        email_subject = (
+            f"Comp-off {verdict_label} · {earned_str} · worked {date_label}"
+        )
+        note = f"\n\nNote: {body.note}" if body.note else ""
+        if body.decision == "approved":
+            body_line = (
+                f"Your comp-off credit of {earned_str} for {date_label} "
+                f"has been approved and added to your balance."
+            )
+        else:
+            body_line = (
+                f"Your comp-off request for {date_label} was denied."
+            )
+        email_body = (
+            f"{body_line}{note}\n\n"
+            f"See your leave balances: {settings.app_base_url}/leave"
+        )
+        notify_email(
+            background, db,
+            to_user_ids=[applicant_id],
+            subject=email_subject,
+            body_text=email_body,
+            reply_to_user_id=user.id,
+            from_name_user_id=user.id,
+        )
     return fresh
 
 

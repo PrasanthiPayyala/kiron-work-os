@@ -7,8 +7,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..authz import HR_ROLES, can_update_leave
+from ..config import settings
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
+from ..notifications_email import notify_email
 from ..util import row
 from . import ws as ws_router
 from .leave_balances import apply_balance_delta
@@ -128,6 +130,26 @@ def apply(
                 "is_read": False, "created_at": now_iso,
             })
         db.commit()
+
+        # Email channel — one message per HR / manager. Reply-To =
+        # applicant so Karunya's "Reply" lands in the requester's inbox.
+        email_subject = (
+            f"Leave request · {req_name} · {type_label} · {days_str} · {date_part}"
+        )
+        email_body = (
+            f"{req_name} filed a {type_label.lower()} request for {date_part} "
+            f"({days_str}).\n\n"
+            f"Reason: {body.reason or '(none)'}\n\n"
+            f"Approve or reject: {settings.app_base_url}{link}"
+        )
+        notify_email(
+            background, db,
+            to_user_ids=hr_user_ids,
+            subject=email_subject,
+            body_text=email_body,
+            reply_to_user_id=user.id,
+            from_name_user_id=user.id,
+        )
     return fresh
 
 
@@ -213,4 +235,24 @@ def update(
             "is_read": False, "created_at": now_iso,
         })
         db.commit()
+
+        # Email the applicant. Reply-To = deciding user so hitting Reply
+        # in Gmail lands with HR / the manager who decided.
+        days = float(leave.get("days") or 0)
+        days_str = f"{days:g} day" + ("s" if days != 1 else "")
+        email_subject = f"Leave {verdict} · {type_label} · {days_str}"
+        note = f"\n\nNote: {body.hr_comments}" if body.hr_comments else ""
+        email_body = (
+            f"Your {type_label.lower()} request for {date_part} "
+            f"({days_str}) was {verdict}.{note}\n\n"
+            f"See your leave history: {settings.app_base_url}/leave"
+        )
+        notify_email(
+            background, db,
+            to_user_ids=[applicant_id],
+            subject=email_subject,
+            body_text=email_body,
+            reply_to_user_id=user.id,
+            from_name_user_id=user.id,
+        )
     return _get(db, leave_id)

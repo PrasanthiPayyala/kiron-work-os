@@ -11,14 +11,47 @@ threadpool when invoked from a sync handler.
 import logging
 import smtplib
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 
 from .config import settings
 
 log = logging.getLogger("kiron.email")
 
 
-def send_email(to: str, subject: str, body_text: str, body_html: str | None = None) -> None:
-    """Send a plaintext (and optional HTML) email to a single recipient."""
+def _build_from_header(from_name_override: str | None) -> str:
+    """Return the From header value.
+
+    Default: settings.smtp_from verbatim (e.g. "Kiron Work OS <noreply@...>").
+    With override: replaces just the display-name portion so the mailbox
+    stays constant (SPF/DKIM/DMARC on `noreply@` domain), but the row in
+    Gmail reads as the applicant's name.
+    """
+    if not from_name_override:
+        return settings.smtp_from
+    name, addr = parseaddr(settings.smtp_from)
+    if not addr:
+        # smtp_from wasn't a proper address form — fall back to override.
+        return from_name_override
+    return formataddr((from_name_override, addr))
+
+
+def send_email(
+    to: str,
+    subject: str,
+    body_text: str,
+    body_html: str | None = None,
+    *,
+    reply_to: str | None = None,
+    from_name_override: str | None = None,
+) -> None:
+    """Send a plaintext (and optional HTML) email to a single recipient.
+
+    Optional kwargs:
+      - reply_to: sets the Reply-To header so hitting Reply in a client
+        goes to a different mailbox than the shared sender.
+      - from_name_override: swaps the display-name portion of the From
+        header (mailbox address is preserved).
+    """
     if not settings.smtp_host:
         log.warning(
             "[email] SMTP not configured — would send:\n  to=%s\n  subject=%s\n%s",
@@ -27,8 +60,10 @@ def send_email(to: str, subject: str, body_text: str, body_html: str | None = No
         return
 
     msg = EmailMessage()
-    msg["From"] = settings.smtp_from
+    msg["From"] = _build_from_header(from_name_override)
     msg["To"] = to
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg["Subject"] = subject
     msg.set_content(body_text)
     if body_html:
