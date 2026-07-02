@@ -2,7 +2,7 @@ import datetime as dt
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -30,7 +30,8 @@ class LeaveCreate(BaseModel):
     start_date: str
     end_date: str
     days: float = 1
-    reason: str | None = None
+    # Mandatory — HR needs context to approve. Trimmed non-empty enforced.
+    reason: str = Field(..., min_length=1)
     # Only meaningful for comp-off advances. Ignored for other types.
     # Planned date the employee will work an off-day to settle this advance.
     comp_off_repay_by: str | None = None

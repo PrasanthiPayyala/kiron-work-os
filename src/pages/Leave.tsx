@@ -111,8 +111,9 @@ export default function Leave() {
   const submit = async () => {
     if (!user || !from || !to) { toast.error("From and To dates required"); return; }
     const trimmed = reason.trim();
+    if (!trimmed) { toast.error("Reason is required"); return; }
     const finalReason = type === "comp_off_advance"
-      ? (COMP_OFF_ADVANCE_PREFIX + (trimmed || "—")).trim()
+      ? (COMP_OFF_ADVANCE_PREFIX + trimmed).trim()
       : trimmed;
     try {
       await api.applyLeave({
@@ -239,8 +240,8 @@ export default function Leave() {
                 <div><label className="text-xs text-muted-foreground">From</label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 mt-1" /></div>
                 <div><label className="text-xs text-muted-foreground">To</label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 mt-1" /></div>
               </div>
-              <div><label className="text-xs text-muted-foreground">Reason</label><textarea value={reason} onChange={(e) => setReason(e.target.value)} className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm" rows={3} /></div>
-              <Button onClick={submit}>Submit request</Button>
+              <div><label className="text-xs text-muted-foreground">Reason <span className="text-destructive">*</span></label><textarea required value={reason} onChange={(e) => setReason(e.target.value)} className="mt-1 w-full rounded-md border border-border bg-background p-2 text-sm" rows={3} placeholder="Why are you taking this leave? HR needs context to approve." /></div>
+              <Button onClick={submit} disabled={!from || !to || !reason.trim()}>Submit request</Button>
             </div>
           </div>
 

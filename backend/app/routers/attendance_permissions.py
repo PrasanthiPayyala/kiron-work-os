@@ -63,7 +63,8 @@ class PermissionCreate(BaseModel):
     date: str                          # YYYY-MM-DD
     kind: str                          # one of ALLOWED_KINDS
     minutes: int = Field(..., gt=0, le=720)
-    reason: Optional[str] = None
+    # Mandatory — HR needs context to approve.
+    reason: str = Field(..., min_length=1)
     # HR can create on behalf of someone else and pre-approve in one go.
     # Ignored for non-HR callers (they always get user_id = self, status =
     # pending).

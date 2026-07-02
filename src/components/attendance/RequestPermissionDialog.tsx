@@ -54,13 +54,15 @@ export function RequestPermissionDialog({
   const submit = async () => {
     if (!date) { toast.error("Pick a date"); return; }
     if (totalMinutes <= 0) { toast.error("Minutes must be > 0"); return; }
+    const trimmed = reason.trim();
+    if (!trimmed) { toast.error("Reason is required"); return; }
     setBusy(true);
     try {
       await api.createAttendancePermission({
         date,
         kind,
         minutes: totalMinutes,
-        reason: reason.trim() || null,
+        reason: trimmed,
       });
       toast.success("Permission requested — waiting on HR approval");
       onClose();
@@ -142,8 +144,9 @@ export function RequestPermissionDialog({
           </div>
 
           <div>
-            <Label className="text-xs">Reason (optional)</Label>
+            <Label className="text-xs">Reason <span className="text-destructive">*</span></Label>
             <Input
+              required
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Bank work, doctor visit, picking up kids..."
@@ -153,7 +156,7 @@ export function RequestPermissionDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button onClick={submit} disabled={busy || totalMinutes <= 0 || !date}>
+          <Button onClick={submit} disabled={busy || totalMinutes <= 0 || !date || !reason.trim()}>
             {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
             Request
           </Button>
