@@ -43,6 +43,14 @@ class CheckIn(BaseModel):
     check_in_lng: Optional[float] = None
     check_in_accuracy_m: Optional[int] = None
     geo_denied: bool = False
+    # Kiron Presence Client (desktop agent) identifiers. All optional so
+    # web check-ins (Attendance.tsx) continue to work without changes —
+    # only the desktop client sets these. HR sees hostname / version in
+    # Settings → Desktop agents; device_id disambiguates two devices per
+    # user.
+    device_id: Optional[str] = None
+    client_version: Optional[str] = None
+    hostname: Optional[str] = None
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -181,10 +189,12 @@ def check_in(
                 "  (id, user_id, work_date, check_in_at, status, source, "
                 "   comp_off_earned, comp_off_status, "
                 "   check_in_lat, check_in_lng, check_in_accuracy_m, "
-                "   geo_denied, geo_outside_office) "
+                "   geo_denied, geo_outside_office, "
+                "   device_id, client_version, hostname, last_heartbeat_at) "
                 "VALUES (:id, :uid, :work_date, :check_in_at, :status, :source, "
                 "        :co_earned, CAST(:co_status AS public.comp_off_status), "
-                "        :lat, :lng, :acc, :gd, :goo)"
+                "        :lat, :lng, :acc, :gd, :goo, "
+                "        :dev, :cv, :hn, :hb)"
             ),
             {
                 "id": new_id, "uid": user.id, "work_date": body.work_date,
@@ -193,6 +203,10 @@ def check_in(
                 "lat": body.check_in_lat, "lng": body.check_in_lng,
                 "acc": body.check_in_accuracy_m,
                 "gd": bool(body.geo_denied), "goo": geo_outside_office,
+                "dev": body.device_id, "cv": body.client_version, "hn": body.hostname,
+                # Stamp heartbeat=check_in on desktop-agent creates so the
+                # auto-close scheduler doesn't fire on a fresh row.
+                "hb": body.check_in_at if body.source == "desktop_agent" else None,
             },
         )
         db.commit()
@@ -247,6 +261,59 @@ def check_in(
                 from_name_user_id=user.id,
             )
     return log_row
+
+
+# -------------------- Desktop agent heartbeat --------------------
+
+class HeartbeatIn(BaseModel):
+    """Body posted by the Kiron Presence Client every ~5 minutes.
+
+    device_id + client_version are identity/observability aids —
+    device_id is what the agent generated at install (stable per install,
+    stored in the OS keychain), client_version is its semver. Both help
+    HR triage in the Desktop-agents settings tab; neither is required
+    for the heartbeat itself.
+    """
+    device_id: Optional[str] = None
+    client_version: Optional[str] = None
+
+
+@router.post("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+def heartbeat(
+    body: HeartbeatIn,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bump ``last_heartbeat_at`` on today's open attendance_logs row.
+
+    Called every ~5 minutes by the desktop agent so the auto-close
+    scheduler can distinguish a live session from one where the machine
+    died mid-day. A no-op (204) if there's no open row for today — the
+    agent's next unlock cycle will POST a fresh /attendance instead.
+
+    Also opportunistically updates client_version / device_id if the
+    caller supplies them, so upgrades to the desktop app surface in the
+    HR dashboard without waiting for the next check-in.
+    """
+    today = _dt.datetime.now(IST).date()
+    sets = ["last_heartbeat_at = now()"]
+    params: dict = {"uid": user.id, "d": today.isoformat()}
+    if body.client_version:
+        sets.append("client_version = :cv")
+        params["cv"] = body.client_version
+    if body.device_id:
+        sets.append("device_id = :dev")
+        params["dev"] = body.device_id
+    db.execute(
+        text(
+            f"UPDATE attendance_logs SET {', '.join(sets)} "
+            "WHERE user_id = :uid AND work_date = :d "
+            "  AND check_out_at IS NULL"
+        ),
+        params,
+    )
+    db.commit()
+    return None
 
 
 @router.patch("/{log_id}")

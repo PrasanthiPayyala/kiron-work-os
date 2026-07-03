@@ -51,6 +51,15 @@ _CALL_LOCK_KEY = 7301823462  # "KIRON_CALLS"
 _VENDOR_LOCK_KEY = 7301823463  # "KIRON_VENDORS"
 _COMPLIANCE_LOCK_KEY = 7301823464  # "KIRON_COMPLIANCE"
 _COMP_OFF_OVERDUE_LOCK_KEY = 7301823465  # "KIRON_COMPOFF"
+_DESKTOP_AUTO_CLOSE_LOCK_KEY = 7301823466  # "KIRON_DESKTOP_AUTOCLOSE"
+
+# Grace window after the last desktop-agent heartbeat before we
+# auto-close the session. Two 5-min heartbeats missed + a margin — long
+# enough that a brief network hiccup or laptop-lid nap doesn't close
+# someone's day prematurely, short enough that a killed process /
+# unclean shutdown is closed the same evening rather than lingering
+# open until the next morning's re-check-in.
+_DESKTOP_STALE_HEARTBEAT_MIN = 45
 
 # IST = UTC+5:30. Hard-coded because the rest of the app already assumes IST
 # (attendance grace, working hours). Don't introduce zoneinfo here.
@@ -1192,6 +1201,71 @@ async def run_comp_off_overdue_check() -> dict:
 
 
 # ------------------------------------------------------------------
+# Desktop-agent auto-close.
+#
+# The Kiron Presence Client heartbeats every ~5 min while a user is at
+# their machine, and PATCHes check_out_at on a clean shutdown. But
+# unclean exits happen (crash, kernel panic, force-power-off), and the
+# next-morning check-in stamps a new row — leaving yesterday's row
+# open forever with last_heartbeat_at frozen at the last successful ping.
+#
+# This job scans open attendance_logs rows whose last_heartbeat_at is
+# older than the stale threshold and sets check_out_at = last_heartbeat_at.
+# Only touches rows that were themselves stamped by the desktop agent
+# (source = 'desktop_agent') — we don't want to auto-close a plain web
+# check-in where the employee just forgot to hit Check Out (that's the
+# existing HR-review flow).
+#
+# Runs every 5 min. Partial index idx_attendance_logs_last_heartbeat_open
+# (migration 0037) keeps the scan cheap.
+# ------------------------------------------------------------------
+
+
+async def run_desktop_auto_close() -> dict:
+    """Async wrapper — DB work runs in a threadpool."""
+    return await asyncio.to_thread(_run_desktop_auto_close_sync)
+
+
+def _run_desktop_auto_close_sync() -> dict:
+    now = dt.datetime.now(dt.timezone.utc)
+    summary: dict = {
+        "ran_at": now.isoformat(),
+        "closed": 0,
+        "skipped_lock_busy": False,
+    }
+    with engine.begin() as conn:
+        got = conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"),
+            {"k": _DESKTOP_AUTO_CLOSE_LOCK_KEY},
+        ).scalar()
+        if not got:
+            summary["skipped_lock_busy"] = True
+            return summary
+        try:
+            result = conn.execute(
+                text(
+                    "UPDATE attendance_logs "
+                    "SET check_out_at = last_heartbeat_at "
+                    "WHERE check_out_at IS NULL "
+                    "  AND source = 'desktop_agent' "
+                    "  AND last_heartbeat_at IS NOT NULL "
+                    "  AND last_heartbeat_at < now() "
+                    f"      - interval '{_DESKTOP_STALE_HEARTBEAT_MIN} minutes' "
+                    "RETURNING id"
+                ),
+            )
+            summary["closed"] = result.rowcount or 0
+        finally:
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:k)"),
+                {"k": _DESKTOP_AUTO_CLOSE_LOCK_KEY},
+            )
+    if summary["closed"]:
+        log.info("Desktop auto-close: closed=%d", summary["closed"])
+    return summary
+
+
+# ------------------------------------------------------------------
 # Lifecycle hooks (called from main.py)
 # ------------------------------------------------------------------
 
@@ -1258,6 +1332,16 @@ def start_scheduler() -> None:
         coalesce=True,
         max_instances=1,
         next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=4),
+    )
+    # Desktop agent auto-close — 5-min cadence, cheap partial-index scan.
+    _scheduler.add_job(
+        run_desktop_auto_close,
+        trigger="interval",
+        minutes=5,
+        id="desktop_auto_close",
+        coalesce=True,
+        max_instances=1,
+        next_run_time=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1),
     )
     _scheduler.start()
     log.info(
