@@ -914,6 +914,30 @@ export const api = {
     const q = date ? `?date=${encodeURIComponent(date)}` : "";
     return request(`/attendance/followup${q}`);
   },
+  /** Heartbeat ping from the Kiron Presence Client (desktop agent).
+   *  Server bumps last_heartbeat_at on today's open attendance_logs row.
+   *  Web PWA never calls this — kept here for symmetry / future use. */
+  postAttendanceHeartbeat(payload: { device_id?: string; client_version?: string }): Promise<void> {
+    return request("/attendance/heartbeat", { method: "POST", body: JSON.stringify(payload) });
+  },
+  /** HR-only: latest desktop-agent snapshot per active employee.
+   *  Powers the Settings → Desktop agents dashboard. Employees who've
+   *  never run the agent still appear (with null fields). */
+  listDesktopAgents(): Promise<Array<{
+    id: string;
+    full_name: string;
+    email: string | null;
+    designation: string | null;
+    home_company_id: string | null;
+    device_id: string | null;
+    client_version: string | null;
+    hostname: string | null;
+    last_heartbeat_at: string | null;
+    check_in_at: string | null;
+    work_date: string | null;
+  }>> {
+    return request("/attendance/desktop-agents");
+  },
   /** HR marks an employee's missed check-in as an approved leave for the
    * day. Creates both an attendance_logs row (status=leave) and an
    * approved leave_requests row, plus the balance delta. The followup

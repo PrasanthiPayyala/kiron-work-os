@@ -55,6 +55,14 @@ type Row = {
   /** Sum of idle minutes today (≥30 min gaps detected by the client).
    *  Surfaced as a small "· idle Xm" suffix in the row metadata. */
   idle_minutes?: number;
+  /** Which client posted the check-in — surfaces as a "Web" / "Desktop"
+   *  chip so HR can spot rows that came from the presence agent vs.
+   *  someone tapping Check In in the PWA. */
+  source?: string | null;
+  /** Bumped by the desktop agent every ~5 min while it's running. Used
+   *  to render "🟢 Desktop" (live) vs "⚪ Desktop" (stale) — a stale
+   *  heartbeat > 15 min old means the agent stopped reporting mid-day. */
+  last_heartbeat_at?: string | null;
 };
 
 type FollowupResponse = {
@@ -796,6 +804,30 @@ function PersonList({
                   <Badge variant="destructive" className="gap-1 text-[10px]">
                     <MapPin className="h-2.5 w-2.5" /> outside office
                   </Badge>
+                )}
+                {r.source === "desktop_agent" && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 text-[10px]"
+                    title={
+                      r.last_heartbeat_at
+                        ? `Last heartbeat ${fmtTime(r.last_heartbeat_at)}`
+                        : "Presence client — no heartbeat yet"
+                    }
+                  >
+                    <span
+                      className={
+                        r.last_heartbeat_at &&
+                        Date.now() - new Date(r.last_heartbeat_at).getTime() < 15 * 60 * 1000
+                          ? "h-1.5 w-1.5 rounded-full bg-emerald-500"
+                          : "h-1.5 w-1.5 rounded-full bg-muted-foreground/40"
+                      }
+                    />
+                    Desktop
+                  </Badge>
+                )}
+                {r.check_in_at && r.source && r.source !== "desktop_agent" && (
+                  <Badge variant="outline" className="text-[10px]">Web</Badge>
                 )}
               </div>
               <p className="truncate text-xs text-muted-foreground">

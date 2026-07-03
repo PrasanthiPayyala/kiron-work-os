@@ -316,6 +316,57 @@ def heartbeat(
     return None
 
 
+# -------------------- HR: Desktop agents dashboard --------------------
+
+
+@router.get("/desktop-agents")
+def desktop_agents(
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """One row per active employee with their most recent desktop-agent
+    heartbeat + client version. HR uses this to spot machines whose
+    agent hasn't reported in 3+ days (uninstalled, offline, broken).
+
+    Left join so employees who've never run the desktop agent still
+    appear with nulls — HR can tell at a glance who's covered vs. who
+    needs the installer nudge.
+    """
+    if not has_any_role(user.roles, HR_ROLES):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only HR / super_admin / founder can see the desktop agents dashboard",
+        )
+
+    # Latest desktop_agent row per user via DISTINCT ON. Cheap even with
+    # the whole roster — the partial index on last_heartbeat_at only
+    # covers open sessions but the DISTINCT scan just sorts a few
+    # hundred rows.
+    rows = db.execute(
+        text(
+            "SELECT p.id, p.full_name, p.email, p.designation, "
+            "       p.home_company_id, "
+            "       a.device_id, a.client_version, a.hostname, "
+            "       a.last_heartbeat_at, a.check_in_at, a.work_date "
+            "FROM profiles p "
+            "LEFT JOIN LATERAL ("
+            "  SELECT device_id, client_version, hostname, "
+            "         last_heartbeat_at, check_in_at, work_date "
+            "  FROM attendance_logs "
+            "  WHERE user_id = p.id AND source = 'desktop_agent' "
+            "  ORDER BY work_date DESC, check_in_at DESC "
+            "  LIMIT 1"
+            ") a ON true "
+            "WHERE p.is_active = true "
+            "ORDER BY "
+            "  (a.last_heartbeat_at IS NULL), "
+            "  a.last_heartbeat_at DESC NULLS LAST, "
+            "  p.full_name ASC"
+        )
+    ).mappings().all()
+    return [row(r) for r in rows]
+
+
 @router.patch("/{log_id}")
 def update(
     log_id: str,
@@ -763,7 +814,8 @@ def followup(
     today_attendance = db.execute(
         text(
             "SELECT user_id, check_in_at, check_out_at, status, source, "
-            "       geo_outside_office, geo_denied, idle_minutes "
+            "       geo_outside_office, geo_denied, idle_minutes, "
+            "       last_heartbeat_at "
             "FROM attendance_logs WHERE work_date = :d"
         ),
         {"d": target.isoformat()},
@@ -828,6 +880,9 @@ def followup(
                 row_data["check_out_at"] = co.isoformat() if co else None
                 row_data["geo_outside_office"] = bool(att.get("geo_outside_office"))
                 row_data["idle_minutes"] = int(att.get("idle_minutes") or 0)
+                row_data["source"] = att.get("source")
+                hb = att.get("last_heartbeat_at")
+                row_data["last_heartbeat_at"] = hb.isoformat() if hb else None
                 present.append(row_data)
             else:
                 off_today.append(row_data)
@@ -859,6 +914,9 @@ def followup(
         row_data["check_in_status"] = att_status
         row_data["geo_outside_office"] = bool(att.get("geo_outside_office"))
         row_data["idle_minutes"] = int(att.get("idle_minutes") or 0)
+        row_data["source"] = att.get("source")
+        hb = att.get("last_heartbeat_at")
+        row_data["last_heartbeat_at"] = hb.isoformat() if hb else None
 
         # Early checkout follow-up — only meaningful if they have a
         # check_out and it's before the early_cutoff. Excused if the

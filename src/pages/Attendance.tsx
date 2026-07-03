@@ -629,6 +629,29 @@ export default function Attendance() {
                   {todayLog.checkOut
                     ? <> · Out <b className="text-foreground">{todayLog.checkOut}</b> · {formatHM(liveMinutes)} total</>
                     : <> · {formatHM(liveMinutes)} so far</>}
+                  {todayLog.source === "desktop_agent" && (
+                    <>
+                      {" · "}
+                      <span
+                        className="inline-flex items-center gap-1"
+                        title={
+                          todayLog.lastHeartbeatAt
+                            ? `Presence client heartbeat ${new Date(todayLog.lastHeartbeatAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                            : "Presence client is tracking this session"
+                        }
+                      >
+                        <span
+                          className={
+                            todayLog.lastHeartbeatAt &&
+                            Date.now() - new Date(todayLog.lastHeartbeatAt).getTime() < 15 * 60 * 1000
+                              ? "h-1.5 w-1.5 rounded-full bg-emerald-500"
+                              : "h-1.5 w-1.5 rounded-full bg-muted-foreground/40"
+                          }
+                        />
+                        Desktop agent
+                      </span>
+                    </>
+                  )}
                 </>
               ) : "Not checked in yet"}
             </div>

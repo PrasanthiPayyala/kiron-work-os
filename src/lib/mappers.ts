@@ -383,10 +383,17 @@ export function mapAttendance(r: DbAttendance): AttendanceLog {
     checkOut: r.check_out_at ? new Date(r.check_out_at).toTimeString().slice(0, 5) : undefined,
     status: attStatusIn(r.status),
     workedHours: r.worked_hours ?? undefined,
-    source: (r.source === "biometric" ? "biometric" : r.source === "system" ? "system" : "self"),
+    // Pass through the raw source string — the UI switches on the
+    // known values ("desktop_agent", "self_checkin", etc.) and the
+    // AttendanceSource type is union-with-string for forward-compat.
+    source: r.source ?? "self_checkin",
     compOffEarned: r.comp_off_earned != null ? Number(r.comp_off_earned) : undefined,
     compOffStatus: r.comp_off_status ?? undefined,
     compOffDecidedById: r.comp_off_decided_by ?? undefined,
+    deviceId: r.device_id ?? undefined,
+    clientVersion: r.client_version ?? undefined,
+    hostname: r.hostname ?? undefined,
+    lastHeartbeatAt: r.last_heartbeat_at ?? undefined,
   };
 }
 

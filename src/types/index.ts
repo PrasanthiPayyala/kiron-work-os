@@ -357,6 +357,24 @@ export type AttendanceStatus =
   | "field_work"
   | "leave";
 
+/**
+ * Where an attendance row came from. Backend stores this as free-form
+ * text (see backend/app/routers/attendance.py CheckIn.source) — we
+ * enumerate the concrete values we render for + fall back to string
+ * for forward-compat with sources we haven't taught the UI about yet
+ * (e.g. a future biometric integration).
+ *
+ * - `self_checkin` — employee clicked Check In in the PWA.
+ * - `desktop_agent` — Kiron Presence Client on their machine (auto).
+ * - `hr_marked_leave` — HR marked a missed day as leave from Team
+ *   Attendance follow-up. Renders as "Marked".
+ */
+export type AttendanceSource =
+  | "self_checkin"
+  | "desktop_agent"
+  | "hr_marked_leave"
+  | (string & {});
+
 export interface AttendanceLog {
   id: ID;
   userId: ID;
@@ -365,13 +383,22 @@ export interface AttendanceLog {
   checkOut?: string;
   status: AttendanceStatus;
   workedHours?: number;
-  source: "self" | "biometric" | "system";
+  source: AttendanceSource;
   /** Comp-off earned by working an off-day. 1.0 / 0.5 / undefined. */
   compOffEarned?: number;
   /** Workflow state for the credit. undefined on regular working days. */
   compOffStatus?: "pending" | "approved" | "denied";
   /** HR (or super_admin/founder) who approved/denied. */
   compOffDecidedById?: ID;
+  /**
+   * Desktop-agent identity, populated when source='desktop_agent'.
+   * Nullable on web check-ins.
+   */
+  deviceId?: string;
+  clientVersion?: string;
+  hostname?: string;
+  /** Bumped by /attendance/heartbeat every ~5 min while the agent runs. */
+  lastHeartbeatAt?: string;
 }
 
 export type LeaveType =
