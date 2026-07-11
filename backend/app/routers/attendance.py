@@ -316,6 +316,39 @@ def heartbeat(
     return None
 
 
+# -------------------- Caller's own today row (for the desktop agent) --------------------
+
+
+@router.get("/mine/today")
+def mine_today(
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the caller's attendance_logs row for today's IST date,
+    or null if they haven't checked in yet.
+
+    Used by the Kiron Presence Client at startup / on-unlock to decide
+    whether to auto-post a fresh check-in or resume an existing row.
+    Deliberately narrow — no leave data, no permission data, just the
+    single attendance row + the fields the client needs (id, source,
+    check_in_at, check_out_at, last_heartbeat_at). Auth-only, no HR
+    gate; each user only ever sees their own row.
+    """
+    today = _dt.datetime.now(IST).date()
+    row_data = db.execute(
+        text(
+            "SELECT id, work_date, source, check_in_at, check_out_at, "
+            "       last_heartbeat_at, status "
+            "FROM attendance_logs "
+            "WHERE user_id = :uid AND work_date = :d"
+        ),
+        {"uid": user.id, "d": today.isoformat()},
+    ).mappings().first()
+    if not row_data:
+        return None
+    return row(row_data)
+
+
 # -------------------- HR: Desktop agents dashboard --------------------
 
 

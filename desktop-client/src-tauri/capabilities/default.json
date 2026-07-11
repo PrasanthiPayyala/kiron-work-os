@@ -1,14 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities the sign-in webview needs — invoke the Rust `sign_in` command + store persistence for non-secret app state.",
+  "description": "Capabilities the sign-in webview + tray need — invoke the Rust commands, persist non-secret config, register autostart, log to stdout.",
   "windows": ["signin", "main"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-hide",
     "core:window:allow-show",
+    "core:window:allow-set-focus",
     "store:default",
-    "log:default"
+    "log:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }

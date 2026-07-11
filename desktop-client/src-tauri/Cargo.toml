@@ -20,6 +20,9 @@ tauri-plugin-shell = "2"
 # Persistent JSON store — used for non-secret app state (last-seen device_id,
 # base URL override, etc.). Tokens go to `keyring` below, not here.
 tauri-plugin-store = "2"
+# Register the client to run at user login. Employees see the tray icon on
+# every boot without a manual step; uninstall un-registers automatically.
+tauri-plugin-autostart = "2"
 
 # --- HTTP client for talking to the Kiron backend ---
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -27,6 +30,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # --- Serde for JSON payloads ---
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# --- Time — IST-aware timestamps for the wire ---
+chrono = { version = "0.4", features = ["serde"] }
+
+# --- Machine info for check-in payloads ---
+gethostname = "0.5"
 
 # --- OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service) ---
 # Access + refresh tokens land here. Never touch disk, never end up in a JSON
@@ -38,13 +47,26 @@ keyring = { version = "3", features = [
 ] }
 
 # --- Runtime + logging ---
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 log = "0.4"
 tauri-plugin-log = "2"
 
 # --- Errors ---
 anyhow = "1"
 thiserror = "2"
+
+# --- Windows: last-input-info + tick-count ---
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_SystemInformation",
+] }
+
+# --- macOS: CGEventSource for seconds-since-last-event ---
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+core-foundation = "0.10"
 
 [features]
 # Default: production build talks to the real Kiron backend.

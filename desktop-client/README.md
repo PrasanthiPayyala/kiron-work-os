@@ -96,11 +96,63 @@ src/
 
 ## What each session adds
 
-- **Session 3 (this):** scaffold + sign-in + keychain
-- **Session 4:** activity poller (`GetLastInputInfo` / `CGEventSource`),
-  idle interval detection, session unlock / shutdown hooks,
-  auto check-in / heartbeat / check-out, tray icon
+- **Session 3:** scaffold + sign-in + keychain
+- **Session 4 (this):** activity poller (`GetLastInputInfo` /
+  `CGEventSource`), idle interval detection, auto check-in on first
+  activity, heartbeat loop every 5 min, tray icon with menu, auto-launch
+  registration, best-effort check-out on quit
 - **Session 5:** code signing, auto-update manifest, real icons,
   installer testing on hardware
 - **Session 6:** coordinated deploy — backend + PWA + this client all
   cut together
+
+## Session 4 behavior detail
+
+**State machine (activity-poll driven, no OS message hooks):**
+
+- Every 30s: read OS "seconds since last input" via
+  `GetLastInputInfo` (Windows) or `CGEventSource::secondsSinceLastEventType`
+  (macOS).
+- `Active` = last input < 30 min ago. `Idle` = >= 30 min.
+- First `Active` tick of the process lifetime → auto check-in (POST
+  `/attendance` with `source=desktop_agent`, `device_id`, `hostname`,
+  `client_version`). If server already has today's row (e.g. PWA
+  already checked in), reuse it.
+- `Idle → Active` transition with a >45-min gap → treat as a fresh
+  unlock, re-check whether we need to auto-post again (handles
+  overnight sleep-and-boot).
+- `Idle → Active` transition with a >30-min gap → POST
+  `/attendance/idle-intervals` for the away window. Server dedups via
+  `ON CONFLICT (user_id, started_at)`.
+- Every 5 min while `Active`: POST `/attendance/heartbeat`.
+- App exit (RunEvent::ExitRequested, "Quit" from tray menu): PATCH
+  check-out. Backend auto-close scheduler is our safety net for
+  crashes we can't hook.
+
+**Tray icon:** static icon + menu with `Show status`, `Check out now`,
+`Sign out`, `Quit`. Left-click reopens the status window. Session 5
+adds per-state icons (green/yellow/gray).
+
+**Auto-launch:** registered via `tauri-plugin-autostart` on first run
+so employees don't have to remember to launch it every day.
+
+**Token refresh:** any 401 on an authed call triggers one
+`/auth/refresh` retry. If refresh itself fails, the tracker stops and
+the sign-in webview surfaces "Your session expired" so the user
+re-authenticates.
+
+## Manual test checklist (post-cargo-check, before Session 5)
+
+Once you have Rust + Node set up:
+
+1. `cargo tauri dev` — sign-in window opens, form works.
+2. Sign in with a real Kiron user — window drops into tray after ~1s.
+3. Wait 30-60s + move the mouse — check backend for a new
+   `attendance_logs` row with `source='desktop_agent'`.
+4. Right-click tray → Show status — window reappears with "Checked in
+   · Xh Ym active".
+5. Leave the machine idle 35+ min → move mouse → check backend for a
+   fresh `idle_intervals` row.
+6. Every 5 min: `last_heartbeat_at` should tick forward on the row.
+7. Right-click tray → Quit — row's `check_out_at` gets set to now.
+8. Reopen app — sign-in flow is skipped, tracker resumes today's row.
