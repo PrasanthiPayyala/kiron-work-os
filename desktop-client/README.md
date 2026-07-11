@@ -97,14 +97,64 @@ src/
 ## What each session adds
 
 - **Session 3:** scaffold + sign-in + keychain
-- **Session 4 (this):** activity poller (`GetLastInputInfo` /
-  `CGEventSource`), idle interval detection, auto check-in on first
-  activity, heartbeat loop every 5 min, tray icon with menu, auto-launch
-  registration, best-effort check-out on quit
-- **Session 5:** code signing, auto-update manifest, real icons,
-  installer testing on hardware
+- **Session 4:** activity poller (`GetLastInputInfo` / `CGEventSource`),
+  idle interval detection, auto check-in on first activity, heartbeat
+  loop every 5 min, tray icon with menu, auto-launch registration,
+  best-effort check-out on quit
+- **Session 5 (this):** auto-update wiring (`tauri-plugin-updater`),
+  single-instance guard, per-state tray icons (green/amber/grey via
+  15s poll), signed-build config, GitHub Actions release workflow,
+  `latest.json` manifest template, Apache config for `/desktop/*`,
+  detailed [`SIGNING.md`](SIGNING.md) runbook covering cert purchase +
+  notarization
 - **Session 6:** coordinated deploy — backend + PWA + this client all
   cut together
+
+## Session 5 additions detail
+
+**Auto-update:** [`src-tauri/src/updater.rs`](src-tauri/src/updater.rs)
+polls `https://crm.innomaxsol.com/desktop/latest.json` on boot + every
+4 hours. If a newer version is signed with the ed25519 key baked into
+`tauri.conf.json`, the client downloads it, fires a best-effort
+check-out, and restarts into the new build. Passive install on Windows
+(silent, brief installer flash), in-place bundle swap on macOS.
+
+**Single-instance guard:** [`tauri-plugin-single-instance`](https://v2.tauri.app/plugin/single-instance/)
+prevents two agents racing for check-in / heartbeat. Second launch
+raises the first instance's window and exits.
+
+**Per-state tray icons:** [`tray.rs::spawn_status_updater`](src-tauri/src/tray.rs)
+polls the tracker every 15s and swaps the tray icon between three
+baked-in PNGs — green (active), amber (idle), grey (offline / signed
+out). SVG source in [`src-tauri/icons/svg/`](src-tauri/icons/svg/);
+release builds require the rasterized PNGs to exist (dev builds fall
+back to the app icon).
+
+**GitHub Actions release pipeline:** [`.github/workflows/desktop-client.yml`](../.github/workflows/desktop-client.yml)
+triggers on `desktop-v*` tags. Builds MSI + DMG on their respective
+runners, signs both if the signing secrets are configured, notarizes
+the DMG via `xcrun notarytool`, attaches artifacts to the release.
+Icon rasterization runs in-workflow via `rsvg-convert` so releases
+never ship stale icons.
+
+**Signing runbook:** see [`SIGNING.md`](SIGNING.md) end-to-end — from
+"where do I buy the Windows OV cert" through the per-release checklist.
+The one-time setup takes 2-3 hours + ~₹8-25k/yr (Windows OV) + $99/yr
+(Apple Developer). All subsequent releases are `git tag && push`.
+
+**Update-manifest hosting:** Apache snippet in
+[`../deploy/apache-desktop.conf.snippet`](../deploy/apache-desktop.conf.snippet)
+mounts `/home/crminnomaxsol/desktop-artifacts/` at
+`https://crm.innomaxsol.com/desktop/*` with correct no-cache headers
+for `latest.json` and long immutable-cache for the installer blobs.
+
+## What's still deferred to Session 6
+
+Actual signing certs, actual notarization credentials, actual
+installer testing on real Windows + Mac hardware, and the coordinated
+production deploy (backend migration 0037 + PWA + agent installation).
+Everything code-side is ready — Session 6 is operational execution
+(buy certs, notarize, distribute, monitor).
 
 ## Session 4 behavior detail
 

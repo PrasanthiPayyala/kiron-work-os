@@ -1,0 +1,40 @@
+# Apache snippet — serve the Kiron Presence Client installers + update
+# manifest under https://crm.innomaxsol.com/desktop/*.
+#
+# Drop into the existing crm.innomaxsol.com VirtualHost block (probably
+# in /etc/httpd/conf.d/ or the cPanel-managed vhost include). Adjust
+# the Alias path to wherever you're storing the artifacts; the default
+# assumes a sibling directory to the docroot so a bad deploy of the
+# PWA can never clobber the installer directory.
+
+# Location on disk. Create with:
+#   sudo mkdir -p /home/crminnomaxsol/desktop-artifacts
+#   sudo chown crminnomaxsol:crminnomaxsol /home/crminnomaxsol/desktop-artifacts
+Alias /desktop /home/crminnomaxsol/desktop-artifacts
+
+<Directory /home/crminnomaxsol/desktop-artifacts>
+    Options -Indexes
+    AllowOverride None
+    Require all granted
+
+    # No caching for latest.json — the whole point of the manifest is
+    # to be fresh. If Cloudflare / CDN sits in front, add a rule to
+    # bypass cache for this exact path too.
+    <Files "latest.json">
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </Files>
+
+    # Long cache on the immutable artifacts. Each release has a new
+    # filename (KironPresence_0.2.0_...), so browsers can hold onto
+    # them forever without missing updates.
+    <FilesMatch "\.(msi|dmg|zip|tar\.gz|sig)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+
+    # Serve .msi / .dmg with proper mime types so browsers download
+    # rather than trying to render.
+    AddType application/x-msi .msi
+    AddType application/x-apple-diskimage .dmg
+</Directory>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kiron Presence — app icon (installer + About window).
+     Same K glyph as the tray but larger, no status dot. Source of
+     truth — regenerate every raster + platform-specific icon from
+     this via `npx @tauri-apps/cli icon icon.png` after rasterizing to
+     512x512. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Deep navy rounded-square base. -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="#0f172a"/>
+  <!-- Bold K glyph, centered. -->
+  <path d="M144 128h56v104l88-104h72l-101 117 105 139h-68l-72-107-24 28v79h-56z" fill="#f1f5f9"/>
+</svg>

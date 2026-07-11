@@ -23,6 +23,14 @@ tauri-plugin-store = "2"
 # Register the client to run at user login. Employees see the tray icon on
 # every boot without a manual step; uninstall un-registers automatically.
 tauri-plugin-autostart = "2"
+# In-place auto-update from a static latest.json manifest hosted on the
+# VM. Signed via the ed25519 key generated at first release; the public
+# key is baked into the binary + verified on every check.
+tauri-plugin-updater = "2"
+# Prevents two agent processes from racing to check in / heartbeat.
+# Second launch signals the first (which surfaces the tray icon) then
+# exits.
+tauri-plugin-single-instance = "2"
 
 # --- HTTP client for talking to the Kiron backend ---
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

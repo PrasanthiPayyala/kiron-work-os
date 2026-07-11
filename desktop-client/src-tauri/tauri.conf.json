@@ -48,11 +48,39 @@
     "windows": {
       "wix": {
         "language": "en-US"
+      },
+      "signCommand": {
+        "cmd": "signtool.exe",
+        "args": [
+          "sign",
+          "/fd", "SHA256",
+          "/tr", "http://timestamp.digicert.com",
+          "/td", "SHA256",
+          "/f", "%KIRON_CODE_SIGN_CERT%",
+          "/p", "%KIRON_CODE_SIGN_PASSWORD%",
+          "%1"
+        ]
       }
     },
     "macOS": {
-      "minimumSystemVersion": "11.0"
-    }
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "Developer ID Application: Innomax Solutions",
+      "hardenedRuntime": true,
+      "entitlements": null
+    },
+    "createUpdaterArtifacts": true
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://crm.innomaxsol.com/desktop/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "REPLACE_WITH_ED25519_PUBKEY_FROM_TAURI_SIGNER_GENERATE",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }

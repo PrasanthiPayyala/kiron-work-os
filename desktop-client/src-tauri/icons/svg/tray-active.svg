@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kiron Presence tray icon — ACTIVE state.
+     Green dot ⇒ user has typed / moved in the last minute. Used by
+     tray::update_icon(TrayState::Active). Render to 16x16, 22x22, 32x32
+     PNGs during the build (see icons/README.md). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Rounded square background — neutral, matches system dark/light. -->
+  <rect x="2" y="2" width="28" height="28" rx="6" fill="#0f172a"/>
+  <!-- Bold K glyph. -->
+  <path d="M9 8h3.5v6.5L18 8h4.3l-6.3 7.3L23 24h-4.2l-4.5-6.7L12.5 19V24H9z" fill="#f1f5f9"/>
+  <!-- Status dot: emerald 500. -->
+  <circle cx="24" cy="24" r="4.5" fill="#10b981" stroke="#0f172a" stroke-width="1.5"/>
+</svg>

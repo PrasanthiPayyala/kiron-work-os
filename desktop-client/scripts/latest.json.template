@@ -1,0 +1,39 @@
+{
+  "//": "Kiron Presence Client — update manifest served at",
+  "//": "https://crm.innomaxsol.com/desktop/latest.json.",
+  "//": "",
+  "//": "Every release, edit this template and upload to the VM at",
+  "//": "/home/crminnomaxsol/public_html/desktop/latest.json. See",
+  "//": "SIGNING.md → 'Release checklist' for the full flow.",
+  "//": "",
+  "//": "Fields:",
+  "//": "  version   — semver of the new build. tauri-plugin-updater",
+  "//": "              compares against the client's compile-time",
+  "//": "              CARGO_PKG_VERSION and only prompts on strict >.",
+  "//": "  notes     — surfaced in the passive installer UI on Windows.",
+  "//": "              Keep it a one-liner; users see it briefly.",
+  "//": "  pub_date  — ISO 8601 UTC. Only used for the HR dashboard so",
+  "//": "              stale clients show 'last-updated 12 days ago'.",
+  "//": "  platforms — one entry per target. `signature` is the ed25519",
+  "//": "              signature of the archive, generated at build",
+  "//": "              time by @tauri-apps/cli when TAURI_SIGNING_PRIVATE_KEY",
+  "//": "              is set. `url` MUST be https — plugin rejects http.",
+
+  "version": "0.2.0",
+  "notes": "Session 4 rollout — auto check-in + heartbeat + tray.",
+  "pub_date": "2026-07-15T10:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "REPLACE_WITH_CONTENTS_OF_MSI_ZIP_DOT_SIG_FILE",
+      "url": "https://crm.innomaxsol.com/desktop/KironPresence_0.2.0_x64_en-US.msi.zip"
+    },
+    "darwin-aarch64": {
+      "signature": "REPLACE_WITH_CONTENTS_OF_APP_TAR_GZ_DOT_SIG_FILE",
+      "url": "https://crm.innomaxsol.com/desktop/KironPresence.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "REPLACE_WITH_CONTENTS_OF_APP_TAR_GZ_DOT_SIG_FILE",
+      "url": "https://crm.innomaxsol.com/desktop/KironPresence-intel.app.tar.gz"
+    }
+  }
+}

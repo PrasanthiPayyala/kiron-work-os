@@ -29,6 +29,7 @@ mod config;
 mod keychain;
 mod tracker;
 mod tray;
+mod updater;
 
 use tauri::{Manager, RunEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -36,6 +37,17 @@ use tauri_plugin_autostart::MacosLauncher;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // Single-instance MUST be registered first — its handler runs
+        // synchronously on a second launch to raise the first
+        // instance's window instead of spawning a second tracker that
+        // would race for check-in / heartbeat.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            log::info!("[single-instance] second launch detected — raising tray window");
+            if let Some(w) = app.get_webview_window("signin") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -43,6 +55,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             // No args — the agent doesn't accept flags. Empty vec is
@@ -85,6 +98,9 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 commands::start_tracking_from_keychain(boot_handle).await;
             });
+
+            // Auto-update loop — runs indefinitely, checks every 4h.
+            updater::spawn(handle.clone());
 
             Ok(())
         })
