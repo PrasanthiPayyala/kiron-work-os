@@ -1,0 +1,17 @@
+{
+  "name": "kiron-presence-client",
+  "version": "0.1.0",
+  "description": "Kiron Work OS — desktop presence tracker. Auto check-in/out + activity heartbeats.",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.1"
+  }
+}

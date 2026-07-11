@@ -1,0 +1,62 @@
+[package]
+name = "kiron-presence-client"
+version = "0.1.0"
+description = "Kiron Work OS presence tracker"
+authors = ["Kiron Group"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "kiron_presence_client_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# --- Tauri core ---
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+# Persistent JSON store — used for non-secret app state (last-seen device_id,
+# base URL override, etc.). Tokens go to `keyring` below, not here.
+tauri-plugin-store = "2"
+
+# --- HTTP client for talking to the Kiron backend ---
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# --- Serde for JSON payloads ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- OS keychain (Windows Credential Manager / macOS Keychain / Linux Secret Service) ---
+# Access + refresh tokens land here. Never touch disk, never end up in a JSON
+# file the user could grep.
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
+
+# --- Runtime + logging ---
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+log = "0.4"
+tauri-plugin-log = "2"
+
+# --- Errors ---
+anyhow = "1"
+thiserror = "2"
+
+[features]
+# Default: production build talks to the real Kiron backend.
+default = ["custom-protocol"]
+# Tauri's Wry webview requires this on release builds for the asset:// protocol
+# that serves the sign-in webview bundled inside the binary.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+# Slim the binary — presence agent runs 24/7, footprint matters.
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

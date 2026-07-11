@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "productName": "Kiron Presence",
+  "version": "0.1.0",
+  "identifier": "in.innomaxsol.kiron.presence",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "signin",
+        "title": "Kiron Presence — Sign in",
+        "width": 420,
+        "height": 520,
+        "minWidth": 360,
+        "minHeight": 460,
+        "resizable": false,
+        "center": true,
+        "decorations": true,
+        "visible": true,
+        "focus": true,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://crm.innomaxsol.com http://localhost:8787"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "dmg"],
+    "publisher": "Innomax Solutions",
+    "shortDescription": "Presence tracker for Kiron Work OS",
+    "longDescription": "Auto check-in on unlock, auto check-out on shutdown, activity heartbeats to Kiron Work OS. Presence only — no screenshots, no keystrokes, no app names, no URLs.",
+    "category": "Productivity",
+    "copyright": "© 2026 Innomax Solutions",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
+  },
+  "plugins": {}
+}

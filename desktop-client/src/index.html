@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kiron Presence — Sign in</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="card">
+      <header>
+        <div class="logo" aria-hidden="true">K</div>
+        <h1>Kiron Presence</h1>
+        <p class="tagline">Auto check-in for Kiron Work OS</p>
+      </header>
+
+      <section id="signed-out">
+        <form id="signin-form" novalidate>
+          <label>
+            Email
+            <input
+              id="email"
+              type="email"
+              autocomplete="username"
+              required
+              autofocus
+              placeholder="you@innomaxsol.com"
+            />
+          </label>
+          <label>
+            Password
+            <input
+              id="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+          </label>
+          <button type="submit" id="submit">Sign in</button>
+          <p id="error" class="error" role="alert" aria-live="polite"></p>
+        </form>
+        <p class="hint">
+          Use the same email and password you use for
+          <span class="mono">crm.innomaxsol.com</span>.
+        </p>
+      </section>
+
+      <section id="signed-in" hidden>
+        <div class="check">✓</div>
+        <p class="signed-in-message">
+          Signed in as <span id="signed-in-email" class="mono"></span>.
+        </p>
+        <p class="hint">
+          Presence tracking will start automatically once the next update
+          lands. Until then, keep using Check In in your browser.
+        </p>
+        <button type="button" id="signout" class="secondary">Sign out</button>
+      </section>
+    </main>
+    <script type="module" src="sign-in.js"></script>
+  </body>
+</html>

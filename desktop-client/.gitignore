@@ -1,0 +1,32 @@
+# Rust / Cargo build output — regenerable, huge.
+src-tauri/target/
+src-tauri/gen/
+
+# Node — only used to invoke the tauri CLI, deps regenerable from package.json.
+node_modules/
+
+# Tauri build outputs.
+dist/
+src-tauri/WixTools/
+
+# Signing artefacts — never commit private keys.
+*.pfx
+*.p12
+*.key
+*.pem
+tauri-signing-key
+tauri-signing-key.pub
+
+# OS junk.
+.DS_Store
+Thumbs.db
+
+# Editor.
+.vscode/
+.idea/
+*.iml
+
+# Local dev overrides — where a developer points at a different backend host
+# without changing tracked config. Loaded by main.rs at startup if present.
+.env
+.env.local
