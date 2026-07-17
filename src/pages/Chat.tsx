@@ -82,14 +82,6 @@ export default function Chat() {
   const [newConvOpen, setNewConvOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Default-select the first conversation on mount, and re-select after a
-  // scope tab change (setActive(null) above triggers this). Uses
-  // `scopedConversations` so elevated users don't land on a "team chat"
-  // when they meant to see "your chats".
-  useEffect(() => {
-    if (!active && scopedConversations.length) setActive(scopedConversations[0].id);
-  }, [scopedConversations, active]);
-
   // For elevated roles, split conversations by membership so the sidebar
   // can render one tab per scope. `chatScope` only kicks in when
   // `isFounderAudit` — for everyone else, `scopedConversations` is just
@@ -114,6 +106,15 @@ export default function Chat() {
     }
     return { yours, team };
   }, [conversations, messages, isFounderAudit, user]);
+
+  // Default-select the first conversation on mount, and re-select after a
+  // scope tab change (setActive(null) above triggers this). Uses
+  // `scopedConversations` so elevated users don't land on a "team chat"
+  // when they meant to see "your chats". MUST be declared after
+  // scopedConversations — otherwise TDZ error on first render.
+  useEffect(() => {
+    if (!active && scopedConversations.length) setActive(scopedConversations[0].id);
+  }, [scopedConversations, active]);
 
   const conv = conversations.find((c) => c.id === active);
   const convMsgs = useMemo(
