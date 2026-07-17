@@ -23,6 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { AttachmentList } from "@/components/attachments/AttachmentList";
+import { ProjectDiscussion } from "@/components/projects/ProjectDiscussion";
 import type { Project, ProjectStatus, Risk } from "@/types";
 
 const GLOBAL_ROLES = new Set(["super_admin", "founder", "founder_office_coordinator", "founder_office_support"]);
@@ -208,7 +209,11 @@ export default function ProjectDetail() {
             <MilestonesPanel projectId={project.id} canManage={!!canManage} />
           </TabsContent>
 
-          {["discussion", "approvals", "reports"].map((k) => (
+          <TabsContent value="discussion" className="rounded-xl border border-border bg-surface shadow-card">
+            <ProjectDiscussion projectId={project.id} />
+          </TabsContent>
+
+          {["approvals", "reports"].map((k) => (
             <TabsContent key={k} value={k} className="rounded-xl border border-border bg-surface p-8 text-center text-sm text-muted-foreground shadow-card">
               {k.charAt(0).toUpperCase() + k.slice(1)} — coming next iteration.
             </TabsContent>

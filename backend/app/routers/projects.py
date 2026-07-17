@@ -49,6 +49,49 @@ def _get(db: Session, project_id: str) -> dict:
     return row(found)
 
 
+def _create_project_chat(
+    db: Session,
+    project_id: str,
+    title: str,
+    member_ids: list[str],
+    owner_id: str,
+) -> str | None:
+    """Spin up a project_group conversation for a new project. Mirrors
+    _create_team_chat in the teams router — same shape, same members,
+    same owner seed. Returns the new conversation id (or None if there
+    are no members yet — nothing to chat about).
+
+    Kept out of a shared helper module because the two callers
+    (`teams` and `projects`) each pass their own owner-derivation
+    logic, and the SQL is short enough that DRY-ing costs more clarity
+    than it saves.
+    """
+    if not member_ids:
+        return None
+    import uuid as _uuid
+    conv_id = str(_uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO conversations "
+            "  (id, channel_type, title, created_by, project_id) "
+            "VALUES (:id, 'project_group', :title, :uid, :pid)"
+        ),
+        {"id": conv_id, "title": title, "uid": owner_id, "pid": project_id},
+    )
+    for uid in member_ids:
+        member_role = "owner" if uid == owner_id else "member"
+        db.execute(
+            text(
+                "INSERT INTO conversation_members "
+                "  (conversation_id, user_id, member_role, last_read_at) "
+                "VALUES (:c, :u, :r, now()) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"c": conv_id, "u": uid, "r": member_role},
+        )
+    return conv_id
+
+
 # ---------- Create ----------
 
 class ProjectCreate(BaseModel):
@@ -129,6 +172,18 @@ def create_project(
             ),
             {"p": pid, "u": uid, "r": "owner" if uid == owner_id else "member"},
         )
+
+    # Auto-create the project group chat so the team can start
+    # discussing immediately. The chat lives in two places for the
+    # user: the ProjectDetail → Discussion tab (focused view) and the
+    # main /chat page under Project groups (quick access).
+    conv_id = _create_project_chat(db, pid, body.title.strip(), list(members), owner_id)
+    if conv_id:
+        db.execute(
+            text("UPDATE projects SET conversation_id = :c WHERE id = :id"),
+            {"c": conv_id, "id": pid},
+        )
+
     db.commit()
     return _get(db, pid)
 
@@ -201,6 +256,15 @@ def delete_project(
     project = _get(db, project_id)
     if not can_manage_project(project, user.id, user.roles):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed to delete this project")
+    # Explicitly kill the project's chat first — the FK on projects
+    # (conversation_id → conversations ON DELETE SET NULL) doesn't
+    # cascade the other direction, so without this the conversation
+    # would linger with no way to reach it from the UI.
+    conv_id = project.get("conversation_id")
+    if conv_id:
+        # messages + conversation_members cascade from conversations
+        # (see 0001_baseline + 0002_chat_realtime).
+        db.execute(text("DELETE FROM conversations WHERE id = :c"), {"c": conv_id})
     # project_members cascades; tasks.project_id is ON DELETE SET NULL so tasks
     # survive but become unattached.
     db.execute(text("DELETE FROM projects WHERE id = :id"), {"id": project_id})
@@ -232,6 +296,19 @@ def add_member(
         ),
         {"p": project_id, "u": body.user_id, "r": body.member_role},
     )
+    # Mirror into the project's chat so the new member sees the channel
+    # + history immediately. No-op if the project predates this feature
+    # (conversation_id is null) — backfill in migration 0038 handles that.
+    if project.get("conversation_id"):
+        db.execute(
+            text(
+                "INSERT INTO conversation_members "
+                "  (conversation_id, user_id, member_role, last_read_at) "
+                "VALUES (:c, :u, 'member', now()) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"c": project["conversation_id"], "u": body.user_id},
+        )
     db.commit()
     return {"project_id": project_id, "user_id": body.user_id, "member_role": body.member_role}
 
@@ -253,6 +330,16 @@ def remove_member(
         text("DELETE FROM project_members WHERE project_id = :p AND user_id = :u"),
         {"p": project_id, "u": user_id},
     )
+    # Mirror the removal into the project chat so the user can't keep
+    # reading conversations for a project they were removed from.
+    if project.get("conversation_id"):
+        db.execute(
+            text(
+                "DELETE FROM conversation_members "
+                "WHERE conversation_id = :c AND user_id = :u"
+            ),
+            {"c": project["conversation_id"], "u": user_id},
+        )
     db.commit()
     return None
 
