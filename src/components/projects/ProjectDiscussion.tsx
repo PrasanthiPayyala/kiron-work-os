@@ -57,15 +57,20 @@ export function ProjectDiscussion({ projectId }: { projectId: string }) {
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Mark the project conversation read while the tab is open — same
-  // semantics as the main Chat page (mark on open + on every new
-  // inbound message).
+  // Mark the project conversation read once when the tab opens (or the
+  // conversation changes). We deliberately do NOT re-mark on every new
+  // message + trigger refresh() — the ProjectDetail page has a scrollable
+  // outer main, and re-bootstrapping the entire dataStore on every
+  // arriving message reset the page's scroll position (visible as a
+  // "screen jump" after sending). The badge on other surfaces stays
+  // one-message-behind until the next natural bootstrap, which is fine.
   useEffect(() => {
-    if (!conv) return;
-    void api.markConversationRead(conv.id).then(refresh).catch(() => {});
-  }, [conv, convMsgs.length, refresh]);
+    if (!conv?.id) return;
+    void api.markConversationRead(conv.id).catch(() => {});
+  }, [conv?.id]);
 
-  // Auto-scroll on new content.
+  // Auto-scroll on new content. Scoped to the internal message list only
+  // (scrollRef points at the overflow-y-auto div, not the page).
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
