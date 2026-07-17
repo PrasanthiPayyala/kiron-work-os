@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { useUnreadChatCount } from "@/hooks/useUnreadChatCount";
 import { usePwaInstall, useOnlineStatus, useServiceWorkerUpdate } from "@/lib/pwa";
 import { SyncIndicator } from "@/components/SyncIndicator";
+import ChatDock from "@/components/ChatDock";
 import { Download, Wifi, WifiOff, RefreshCw } from "lucide-react";
 
 const navItems: { key: NavKey; label: string; to: string; icon: typeof LayoutDashboard }[] = [
@@ -350,6 +351,10 @@ export default function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {/* Floating chat dock — bottom-right bubble for quick replies without
+          navigating to /chat. Hides itself on the Chat page. */}
+      <ChatDock />
     </div>
   );
 }

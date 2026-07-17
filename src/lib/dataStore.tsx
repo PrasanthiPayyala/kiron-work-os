@@ -329,7 +329,28 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
         setStore((prev) => {
           // Avoid double-append if the sender's own POST already merged it.
           if (prev.messages.some((m) => m.id === msg.id)) return prev;
-          return { ...prev, messages: [...prev.messages, msg] };
+          const next = { ...prev, messages: [...prev.messages, msg] };
+          // OS-level toast when the tab is hidden and someone else sent
+          // the message. Hidden-tab check is inside showDesktopNotification
+          // (foreground tab → no-op). We look up sender + conversation
+          // here since we have the fresh store snapshot.
+          if (msg.senderId !== authUser.id) {
+            const sender = prev.users.find((u) => u.id === msg.senderId);
+            const conv = prev.conversations.find((c) => c.id === msg.conversationId);
+            const convLabel = conv?.kind === "dm"
+              ? sender?.name ?? "Direct message"
+              : conv?.name ?? "Team chat";
+            const senderLabel = sender?.name ?? "Someone";
+            showDesktopNotification({
+              title: conv?.kind === "dm" ? senderLabel : `${senderLabel} · ${convLabel}`,
+              body: msg.body?.slice(0, 140) || (msg.attachments?.length ? "Sent an attachment" : ""),
+              link: "/chat",
+              // Same conversation → same tag → repeated messages collapse
+              // into a single OS toast instead of stacking three per burst.
+              tag: `chat-${msg.conversationId}`,
+            });
+          }
+          return next;
         });
       } else if (ev.type === "message.deleted") {
         const msg = mapMessage(ev.data as Parameters<typeof mapMessage>[0]);
