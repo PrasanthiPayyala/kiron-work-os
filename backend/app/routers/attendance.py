@@ -827,12 +827,20 @@ def followup(
     else:
         reference_now = now_ist
 
+    # Founders are excluded from attendance tracking entirely — their
+    # schedule is set by the org, not by check-ins, and HR should never
+    # be chasing them for "missed check-in". Leave + salary work fine
+    # for them via the normal paths.
     profiles = db.execute(
         text(
             "SELECT id, full_name, email, designation, home_company_id, "
             "       reporting_manager_id, work_days, saturday_weeks_working, "
             "       work_start, work_end, phone "
-            "FROM profiles WHERE is_active = true"
+            "FROM profiles p WHERE p.is_active = true "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM user_roles ur "
+            "    WHERE ur.user_id = p.id AND ur.role = 'founder'"
+            "  )"
         )
     ).mappings().all()
 

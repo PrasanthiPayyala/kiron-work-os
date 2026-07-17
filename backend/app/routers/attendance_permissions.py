@@ -655,9 +655,15 @@ def hours_summary_roster(
             status.HTTP_403_FORBIDDEN,
             "Only HR / super_admin / founder can see the roster summary",
         )
+    # Founders excluded — their role isn't tracked against hours, and
+    # showing them here would just pollute the roster with zero-hour rows.
     profiles = db.execute(
         text(
-            "SELECT id FROM profiles WHERE is_active = true "
+            "SELECT id FROM profiles p WHERE p.is_active = true "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM user_roles ur "
+            "    WHERE ur.user_id = p.id AND ur.role = 'founder'"
+            "  ) "
             "ORDER BY full_name ASC"
         ),
     ).mappings().all()
@@ -719,9 +725,16 @@ def monthly_attendance_csv(
     if end_date > today_ist:
         end_date = today_ist
 
-    # Pull the roster (optionally filtered to one company).
+    # Pull the roster (optionally filtered to one company). Founders are
+    # excluded — payroll for them is handled outside this monthly rollup.
     params: dict = {}
-    where = ["p.is_active = true"]
+    where = [
+        "p.is_active = true",
+        "NOT EXISTS ("
+        "  SELECT 1 FROM user_roles ur "
+        "  WHERE ur.user_id = p.id AND ur.role = 'founder'"
+        ")",
+    ]
     if company_id:
         where.append("p.home_company_id = :co")
         params["co"] = company_id

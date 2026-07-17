@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { useDataStore } from "@/lib/dataStore";
 import { getEffectiveSchedule, isNonWorkingDate } from "@/lib/mappers";
 import { api, ApiError } from "@/lib/api";
-import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane, ChevronLeft, ChevronRight, History } from "lucide-react";
+import { CalendarCheck, LogIn, LogOut, Fingerprint, Loader2, Plane, ChevronLeft, ChevronRight, History, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
@@ -304,6 +304,10 @@ function HolidaysList({ year, holidayByDate }: { year: number; holidayByDate: Ma
 export default function Attendance() {
   const { user } = useAuth();
   const { attendance, users, leaveRequests, holidays, getCompany, refresh } = useDataStore();
+  // Founders aren't tracked against working hours — HR shouldn't be
+  // chasing them, reports shouldn't count them. They still get Leave +
+  // Salary + the calendar view (useful for spotting off-days).
+  const isFounder = user?.role === "founder";
   const [busy, setBusy] = useState<"checkin" | "checkout" | "resume" | null>(null);
   const [todayMode, setTodayMode] = useState<AttendanceStatus>("present");
   // Day drawer — opens when a calendar cell is clicked, scrolls to the
@@ -532,16 +536,39 @@ export default function Attendance() {
         icon={<CalendarCheck className="h-5 w-5" />}
       />
       <div className="space-y-6 p-6">
-        <div className="grid gap-3 md:grid-cols-4">
-          <StatCard label="Days present (30d)" value={present} accent="accent" />
-          <StatCard label="WFH days" value={myLogs.filter((l) => l.status === "wfh").length} accent="info" />
-          <StatCard label="Leaves" value={myLogs.filter((l) => l.status === "leave").length} accent="warning" />
-          <StatCard label="Avg hours" value={avgMins ? formatHM(avgMins) : "—"} accent="primary" />
-        </div>
+        {isFounder ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            <StatCard label="Leaves this month" value={myLogs.filter((l) => l.status === "leave").length} accent="warning" />
+            <StatCard label="Holidays this year" value={Array.from(holidayByDate.values()).filter((h) => h.date.startsWith(String(viewYear))).length} accent="accent" />
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-4">
+            <StatCard label="Days present (30d)" value={present} accent="accent" />
+            <StatCard label="WFH days" value={myLogs.filter((l) => l.status === "wfh").length} accent="info" />
+            <StatCard label="Leaves" value={myLogs.filter((l) => l.status === "leave").length} accent="warning" />
+            <StatCard label="Avg hours" value={avgMins ? formatHM(avgMins) : "—"} accent="primary" />
+          </div>
+        )}
 
-        <HoursSummaryCard onRequestPermission={() => setPermDialogOpen(true)} />
+        {!isFounder && <HoursSummaryCard onRequestPermission={() => setPermDialogOpen(true)} />}
 
         <div className="grid gap-4 lg:grid-cols-3">
+          {isFounder ? (
+            <div className="rounded-xl border border-border bg-surface p-5 shadow-card lg:col-span-1">
+              <h3 className="flex items-center gap-2 font-display text-sm font-semibold">
+                <Crown className="h-4 w-4 text-primary" /> Founder role
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">Attendance is not tracked</p>
+              <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs text-foreground">
+                Your working hours aren't clocked and you won't appear on HR's follow-up list.
+                Use <b>Leave</b> for time off and <b>Salary</b> for structure &amp; deductions —
+                both accept year-round changes.
+              </div>
+              <div className="mt-4 text-xs text-muted-foreground">
+                The calendar on the right still shows company holidays and any leave you've booked.
+              </div>
+            </div>
+          ) : (
           <div className="rounded-xl border border-border bg-surface p-5 shadow-card lg:col-span-1">
             <h3 className="font-display text-sm font-semibold">Today · {today}</h3>
             <p className="mt-1 text-xs text-muted-foreground">Self check-in</p>
@@ -660,6 +687,7 @@ export default function Attendance() {
               <Fingerprint className="mb-1 inline h-3.5 w-3.5" /> Biometric integration coming in next phase.
             </div>
           </div>
+          )}
 
           <div className="rounded-xl border border-border bg-surface p-5 shadow-card lg:col-span-2">
             <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
