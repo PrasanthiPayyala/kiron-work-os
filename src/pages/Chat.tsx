@@ -68,6 +68,12 @@ export default function Chat() {
   // employees hide, with a subtle marker on each hidden message. Everyone
   // else just gets "Delete" (per-viewer hide; no warning dialog).
   const isFounderAudit = role === "super_admin" || role === "founder";
+  // Elevated roles get a "Your chats" vs "Team chats" split — bootstrap
+  // returns every conversation for them (audit visibility), so without a
+  // tab the sidebar drowns their real conversations under everyone else's
+  // groups. Non-elevated roles only see conversations they're a member of
+  // so this scoping is a no-op for them.
+  const [chatScope, setChatScope] = useState<"yours" | "team">("yours");
   const [active, setActive] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<AttachmentRow[]>([]);
@@ -76,10 +82,38 @@ export default function Chat() {
   const [newConvOpen, setNewConvOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Default-select the first conversation on mount.
+  // Default-select the first conversation on mount, and re-select after a
+  // scope tab change (setActive(null) above triggers this). Uses
+  // `scopedConversations` so elevated users don't land on a "team chat"
+  // when they meant to see "your chats".
   useEffect(() => {
-    if (!active && conversations.length) setActive(conversations[0].id);
-  }, [conversations, active]);
+    if (!active && scopedConversations.length) setActive(scopedConversations[0].id);
+  }, [scopedConversations, active]);
+
+  // For elevated roles, split conversations by membership so the sidebar
+  // can render one tab per scope. `chatScope` only kicks in when
+  // `isFounderAudit` — for everyone else, `scopedConversations` is just
+  // the full list they already see.
+  const scopedConversations = useMemo(() => {
+    if (!isFounderAudit || !user) return conversations;
+    return conversations.filter((c) =>
+      chatScope === "yours" ? c.memberIds.includes(user.id) : !c.memberIds.includes(user.id),
+    );
+  }, [conversations, isFounderAudit, chatScope, user]);
+
+  // Unread counts per scope so we can badge the tab triggers. Non-elevated
+  // roles never see these badges (the tab strip is hidden for them).
+  const scopeUnread = useMemo(() => {
+    if (!isFounderAudit || !user) return { yours: 0, team: 0 };
+    let yours = 0, team = 0;
+    for (const c of conversations) {
+      const cMsgs = messages.filter((m) => m.conversationId === c.id);
+      const n = unreadCountFor(c, cMsgs, user.id);
+      if (n === 0) continue;
+      if (c.memberIds.includes(user.id)) yours += n; else team += n;
+    }
+    return { yours, team };
+  }, [conversations, messages, isFounderAudit, user]);
 
   const conv = conversations.find((c) => c.id === active);
   const convMsgs = useMemo(
@@ -195,11 +229,37 @@ export default function Chat() {
       <div className="grid flex-1 min-h-0 grid-cols-[260px_1fr_280px] divide-x divide-border bg-surface">
         {/* Left: conversation list */}
         <aside className="overflow-y-auto scrollbar-quiet p-3">
+          {isFounderAudit && (
+            <Tabs
+              value={chatScope}
+              onValueChange={(v) => { setChatScope(v as "yours" | "team"); setActive(null); }}
+              className="mb-3"
+            >
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="yours" className="gap-1.5 text-xs">
+                  Your chats
+                  {scopeUnread.yours > 0 && (
+                    <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                      {scopeUnread.yours}
+                    </span>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="team" className="gap-1.5 text-xs">
+                  Team chats
+                  {scopeUnread.team > 0 && (
+                    <span className="rounded-full bg-muted-foreground/60 px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                      {scopeUnread.team}
+                    </span>
+                  )}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
           {groupKinds.map(({ key, label, icon: Icon }) => {
             // Latest activity first per the user's expectation. Falls back
             // to created_at via name comparison if lastMessageAt is missing
             // (brand-new conversations with no messages yet).
-            const items = conversations
+            const items = scopedConversations
               .filter((c) => c.kind === key)
               .slice()
               .sort((a, b) => {
@@ -265,9 +325,13 @@ export default function Chat() {
               </div>
             );
           })}
-          {conversations.length === 0 && (
+          {scopedConversations.length === 0 && (
             <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-              No conversations yet. Click <b>New conversation</b> to start one.
+              {isFounderAudit && chatScope === "team"
+                ? "No team chats yet — this is where you'll audit conversations you aren't a member of."
+                : isFounderAudit && chatScope === "yours"
+                ? "You aren't in any conversations yet. Click New conversation to start one."
+                : <>No conversations yet. Click <b>New conversation</b> to start one.</>}
             </p>
           )}
         </aside>
