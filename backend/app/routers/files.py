@@ -26,6 +26,11 @@ from ..config import settings
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..util import row
+# Reuse the expense-claim visibility rule as-is instead of re-deriving it —
+# GLOBAL_ROLES (below) deliberately excludes hr_admin for task/project
+# cross-company visibility, but hr_admin approves expense claims and needs
+# to see the receipts. See _can_see_entity()'s "expense_claim" branch.
+from .expenses import _can_view as _can_view_expense, _get as _get_expense
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -230,6 +235,19 @@ def _can_see_entity(db: Session, user: CurrentUser, entity_type: str, entity_id:
             {"p": entity_id, "u": user.id},
         ).first()
         return is_member is not None
+    if entity_type == "expense_claim":
+        # The claimant, their reporting manager, and finance/HR (same set
+        # that can approve/reject) can see the receipts. Was previously
+        # falling through to `return False` for everyone outside
+        # GLOBAL_ROLES — which excludes hr_admin — so HR got a 403 trying
+        # to review attachments on a claim they didn't upload themselves,
+        # and a claimant re-opening their own submitted claim on a second
+        # device/session would too.
+        try:
+            exp = _get_expense(db, entity_id)
+        except HTTPException:
+            return False
+        return _can_view_expense(db, exp, user)
     return False
 
 
