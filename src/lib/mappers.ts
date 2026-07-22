@@ -409,6 +409,7 @@ export function mapLeave(r: DbLeave): LeaveRequest {
     status: r.status as LeaveStatus,
     compOffRepayBy: r.comp_off_repay_by ?? undefined,
     decidedById: r.hr_approver_id ?? undefined,
+    decidedAt: r.decided_at ?? undefined,
     createdAt: r.created_at?.slice(0, 10) ?? "",
   };
 }

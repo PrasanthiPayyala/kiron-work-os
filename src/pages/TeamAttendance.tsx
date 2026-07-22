@@ -315,6 +315,75 @@ export default function TeamAttendance() {
       .sort((a, b) => (a.fromDate < b.fromDate ? -1 : 1));
   }, [leaveRequests, getUser, companyFilter]);
 
+  // Decided history — every approved/rejected leave + permission, org-wide
+  // (any HR admin's decisions, not just the current viewer's), so nothing
+  // she acted on ever "disappears." Nothing is deleted server-side today —
+  // the pending tabs above simply filter to status==='pending'; this tab
+  // surfaces the rest of the same already-loaded data. Sorted newest
+  // decision first.
+  type DecidedItem = {
+    id: string;
+    kind: "leave" | "permission";
+    user_id: string;
+    name: string;
+    designation?: string;
+    home_company_id?: string;
+    status: "approved" | "rejected";
+    decided_at?: string;
+    decided_by_name?: string;
+    summary: string;
+  };
+  const decidedItems = useMemo(() => {
+    const items: DecidedItem[] = [];
+    for (const l of leaveRequests) {
+      if (l.status !== "approved" && l.status !== "rejected") continue;
+      const u = getUser(l.userId);
+      const decider = l.decidedById ? getUser(l.decidedById) : undefined;
+      const typeLabel = LEAVE_TYPE_OPTIONS.find((o) => o.value === l.type)?.label ?? l.type.replace(/_/g, " ");
+      const dateLabel = l.fromDate === l.toDate ? l.fromDate : `${l.fromDate} → ${l.toDate}`;
+      items.push({
+        id: l.id,
+        kind: "leave",
+        user_id: l.userId,
+        name: u?.name ?? "Unknown",
+        designation: u?.designation,
+        home_company_id: u?.homeCompanyId,
+        status: l.status,
+        decided_at: l.decidedAt,
+        decided_by_name: decider?.name,
+        summary: `${typeLabel} · ${dateLabel} · ${l.days} day${l.days === 1 ? "" : "s"}`,
+      });
+    }
+    for (const p of attendancePermissions) {
+      if (p.status !== "approved" && p.status !== "rejected") continue;
+      const u = getUser(p.userId);
+      const decider = p.decidedById ? getUser(p.decidedById) : undefined;
+      const kindLabel = p.kind === "late_in" ? "Late arrival" : p.kind === "early_out" ? "Early logout" : "Mid-day step-out";
+      const hours = Math.floor(p.minutes / 60);
+      const mins = p.minutes % 60;
+      const dur = hours ? (mins ? `${hours}h${mins}m` : `${hours}h`) : `${mins}m`;
+      items.push({
+        id: p.id,
+        kind: "permission",
+        user_id: p.userId,
+        name: u?.name ?? "Unknown",
+        designation: u?.designation,
+        home_company_id: u?.homeCompanyId,
+        status: p.status,
+        decided_at: p.decidedAt,
+        decided_by_name: decider?.name,
+        summary: `${kindLabel} · ${dur} · ${p.date}`,
+      });
+    }
+    return items
+      .filter((it) => companyFilter === "all" || it.home_company_id === companyFilter)
+      .sort((a, b) => {
+        const ta = a.decided_at ? new Date(a.decided_at).getTime() : 0;
+        const tb = b.decided_at ? new Date(b.decided_at).getTime() : 0;
+        return tb - ta;
+      });
+  }, [leaveRequests, attendancePermissions, getUser, companyFilter]);
+
   const decideLeave = async (
     leaveId: string, name: string, decision: "approved" | "rejected",
   ) => {
@@ -416,6 +485,10 @@ export default function TeamAttendance() {
               <Badge variant={pendingPermissions.length > 0 ? "destructive" : "secondary"} className="ml-1 text-[10px]">
                 {pendingPermissions.length}
               </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="decided" className="gap-1.5">
+              Decided
+              <Badge variant="secondary" className="ml-1 text-[10px]">{decidedItems.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="hours" className="gap-1.5">
               Hours
@@ -616,6 +689,45 @@ export default function TeamAttendance() {
                           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                           Approve
                         </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </TabsContent>
+
+          <TabsContent value="decided">
+            <p className="mt-4 mb-3 text-xs text-muted-foreground">
+              Every leave + permission decision, org-wide — approving or
+              rejecting doesn't remove it from here.
+            </p>
+            {decidedItems.length === 0 ? (
+              <p className="mt-4 text-center text-sm text-muted-foreground">No decisions yet.</p>
+            ) : (
+              <ul className="mt-4 divide-y divide-border rounded-lg border bg-surface">
+                {decidedItems.map((it) => {
+                  const co = it.home_company_id ? getCompany(it.home_company_id) : null;
+                  return (
+                    <li key={`${it.kind}-${it.id}`} className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium">{it.name}</p>
+                          <Badge variant="outline" className="text-[10px] capitalize">{it.kind}</Badge>
+                          <Badge
+                            variant={it.status === "approved" ? "secondary" : "destructive"}
+                            className="text-[10px] capitalize"
+                          >
+                            {it.status}
+                          </Badge>
+                          {co && <Badge variant="outline" className="text-[10px]">{co.shortName || co.name}</Badge>}
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {it.designation && <>{it.designation} · </>}
+                          {it.summary}
+                          {it.decided_by_name && <> · Decided by {it.decided_by_name}</>}
+                          {it.decided_at && <> · {new Date(it.decided_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</>}
+                        </p>
                       </div>
                     </li>
                   );
