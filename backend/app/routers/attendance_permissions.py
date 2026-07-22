@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..authz import HR_ROLES, has_any_role
+from ..authz import HR_ROLES, NOTIFY_HR_ROLES, has_any_role
 from ..config import settings
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
@@ -162,7 +162,10 @@ def create_permission(
 
     # Broadcast — the affected employee's tab refreshes their own list
     # via the existing notification.new path. For a pending request,
-    # also notify HR users so the bell pings them.
+    # also notify HR users so the bell pings them. NOTIFY_HR_ROLES (not
+    # HR_ROLES) — founder/super_admin can still decide anything from Team
+    # Attendance, they just don't get paged for every late-in/early-out/
+    # mid-day-step-out request.
     if init_status == "pending":
         hr_user_ids = [
             str(r[0]) for r in db.execute(
@@ -171,7 +174,7 @@ def create_permission(
                     "JOIN profiles p ON p.id = ur.user_id "
                     "WHERE p.is_active = true AND ur.role::text = ANY(:roles)"
                 ),
-                {"roles": list(HR_ROLES)},
+                {"roles": list(NOTIFY_HR_ROLES)},
             ).all()
         ]
         # Pull the requester's name for a friendly title.

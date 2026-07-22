@@ -13,7 +13,16 @@ GLOBAL_ROLES = {"super_admin", "founder", "founder_office_coordinator", "founder
 # the cross-company project-member exemption stay tight to founders.
 PROJECT_VIEW_ALL_ROLES = GLOBAL_ROLES | {"hr_admin"}
 # HR-style data (attendance, leave) added hr_admin to the elevated set.
+# Used for VIEW + DECIDE authorization (who can approve/reject/see the
+# pending queue) — Kiran and Prasanthi keep full authority here.
 HR_ROLES = {"super_admin", "founder", "hr_admin"}
+# Who gets PINGED (bell + email) when a leave / attendance-permission
+# request is filed. Deliberately narrower than HR_ROLES: founder and
+# super_admin can still open Team Attendance and decide anything, but
+# per-request push notifications are Karunya's job alone — founders
+# were getting paged for every late-arrival/early-out/leave request
+# even though they weren't expected to act on routine ones.
+NOTIFY_HR_ROLES = {"hr_admin"}
 # Who sees the company-wide attendance roster in /bootstrap. Wider than
 # HR_ROLES on purpose — founder's office (coordinators + support) need
 # the same view for follow-up, even though they don't approve leave.

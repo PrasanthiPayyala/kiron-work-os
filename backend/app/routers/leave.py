@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..authz import HR_ROLES, can_update_leave
+from ..authz import NOTIFY_HR_ROLES, can_update_leave
 from ..config import settings
 from ..db import get_db
 from ..deps import CurrentUser, get_current_user
@@ -81,7 +81,9 @@ def apply(
 
     # Notify HR + the requester's reporting manager so the bell pings them
     # (and the Team Attendance "Pending leave" tab updates in realtime).
-    # Mirrors the attendance_permissions pattern.
+    # Mirrors the attendance_permissions pattern. NOTIFY_HR_ROLES (not
+    # HR_ROLES) — founder/super_admin can still decide anything from Team
+    # Attendance, they just don't get paged for every routine request.
     hr_user_ids = {
         str(r[0]) for r in db.execute(
             text(
@@ -89,7 +91,7 @@ def apply(
                 "JOIN profiles p ON p.id = ur.user_id "
                 "WHERE p.is_active = true AND ur.role::text = ANY(:roles)"
             ),
-            {"roles": list(HR_ROLES)},
+            {"roles": list(NOTIFY_HR_ROLES)},
         ).all()
     }
     mgr_row = db.execute(
