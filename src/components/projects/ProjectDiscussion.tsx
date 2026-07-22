@@ -37,7 +37,7 @@ function formatTime(iso: string) {
 
 export function ProjectDiscussion({ projectId }: { projectId: string }) {
   const { user } = useAuth();
-  const { conversations, messages, getUser, refresh, addMessage } = useDataStore();
+  const { conversations, messages, getUser, addMessage, markConversationReadLocal } = useDataStore();
 
   // Look up the project's chat via projectId. Bootstrap already returns
   // conversations.project_id, so this is a local Map lookup — no fetch.
@@ -57,17 +57,19 @@ export function ProjectDiscussion({ projectId }: { projectId: string }) {
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Mark the project conversation read once when the tab opens (or the
-  // conversation changes). We deliberately do NOT re-mark on every new
-  // message + trigger refresh() — the ProjectDetail page has a scrollable
-  // outer main, and re-bootstrapping the entire dataStore on every
-  // arriving message reset the page's scroll position (visible as a
-  // "screen jump" after sending). The badge on other surfaces stays
-  // one-message-behind until the next natural bootstrap, which is fine.
+  // Mark the project conversation read on open and on every new inbound
+  // message, same as the main Chat page and the dock. Patches lastReadAt
+  // locally instead of calling refresh() — a full dataStore bootstrap
+  // on every message re-rendered the whole app, which on this page (an
+  // outer scrollable <main>) was visible as the page jumping back to
+  // the top every time a message arrived.
   useEffect(() => {
     if (!conv?.id) return;
-    void api.markConversationRead(conv.id).catch(() => {});
-  }, [conv?.id]);
+    const readAt = new Date().toISOString();
+    void api.markConversationRead(conv.id)
+      .then(() => markConversationReadLocal(conv.id, readAt))
+      .catch(() => {});
+  }, [conv?.id, convMsgs.length, markConversationReadLocal]);
 
   // Auto-scroll on new content. Scoped to the internal message list only
   // (scrollRef points at the overflow-y-auto div, not the page).

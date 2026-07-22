@@ -61,6 +61,14 @@ type Ctx = Store & {
    * disappears immediately while the server PATCH + refresh round-trips. */
   removeMessageLocal: (messageId: string) => void;
   removeConversationLocal: (conversationId: string) => void;
+  /** Optimistic local patch of a conversation's lastReadAt. Used instead
+   * of a full refresh() after POST /conversations/:id/read — refresh()
+   * re-bootstraps all 14 store slices, which re-renders every consumer
+   * (sidebar, topbar badges, other open pages) and was visible as a
+   * "blinking" flicker every time a message arrived in the open
+   * conversation. This keeps unread counts accurate with a single
+   * targeted state update. */
+  markConversationReadLocal: (conversationId: string, readAtISO: string) => void;
   getUser: (id?: string) => User | undefined;
   getCompany: (id?: string) => Company | undefined;
   getDepartment: (id?: string) => Department | undefined;
@@ -429,6 +437,16 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  const markConversationReadLocal = useCallback((conversationId: string, readAtISO: string) => {
+    setStore((prev) => {
+      const idx = prev.conversations.findIndex((c) => c.id === conversationId);
+      if (idx === -1) return prev;
+      const next = [...prev.conversations];
+      next[idx] = { ...next[idx], lastReadAt: readAtISO };
+      return { ...prev, conversations: next };
+    });
+  }, []);
+
   const value = useMemo<Ctx>(() => ({
     ...store,
     loading,
@@ -436,10 +454,11 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
     addMessage,
     removeMessageLocal,
     removeConversationLocal,
+    markConversationReadLocal,
     getUser: (id?: string) => store.users.find((u) => u.id === id),
     getCompany: (id?: string) => store.companies.find((c) => c.id === id),
     getDepartment: (id?: string) => store.departments.find((d) => d.id === id),
-  }), [store, loading, load, addMessage, removeMessageLocal, removeConversationLocal]);
+  }), [store, loading, load, addMessage, removeMessageLocal, removeConversationLocal, markConversationReadLocal]);
 
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }

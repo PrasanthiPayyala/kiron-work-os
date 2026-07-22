@@ -62,7 +62,7 @@ export default function Chat() {
   const { user, role } = useAuth();
   const {
     conversations, messages, users, getUser, refresh, addMessage,
-    removeMessageLocal, removeConversationLocal,
+    removeMessageLocal, removeConversationLocal, markConversationReadLocal,
   } = useDataStore();
   // Founder + super_admin keep the audit view — they see everything that
   // employees hide, with a subtle marker on each hidden message. Everyone
@@ -123,11 +123,18 @@ export default function Chat() {
   );
 
   // Mark this conversation read whenever the user looks at it (initial open
-  // and every time a new live message arrives in the active conv).
+  // and every time a new live message arrives in the active conv). Patches
+  // lastReadAt locally instead of calling refresh() — a full bootstrap
+  // re-render on every incoming message was visible as a "blinking"
+  // flicker across the whole app (sidebar counts, topbar badges, other
+  // open pages all re-render on every store swap).
   useEffect(() => {
     if (!active) return;
-    void api.markConversationRead(active).then(refresh).catch(() => {});
-  }, [active, convMsgs.length, refresh]);
+    const readAt = new Date().toISOString();
+    void api.markConversationRead(active)
+      .then(() => markConversationReadLocal(active, readAt))
+      .catch(() => {});
+  }, [active, convMsgs.length, markConversationReadLocal]);
 
   // Auto-scroll the message list to the bottom on new content.
   useEffect(() => {

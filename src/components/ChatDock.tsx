@@ -40,7 +40,7 @@ function unreadFor(conv: Conversation, msgs: { senderId: string; createdAt: stri
 
 export default function ChatDock() {
   const { user } = useAuth();
-  const { conversations, messages, getUser, refresh, addMessage } = useDataStore();
+  const { conversations, messages, getUser, addMessage, markConversationReadLocal } = useDataStore();
   const navigate = useNavigate();
   const location = useLocation();
   const online = useOnlineStatus();
@@ -92,12 +92,18 @@ export default function ChatDock() {
   );
 
   // Mark active conv read whenever the user opens it or a new message
-  // arrives while it's showing. Same behaviour as the full Chat page so
-  // the badge stays consistent across surfaces.
+  // arrives while it's showing. Patches lastReadAt locally rather than
+  // calling refresh() — a full dataStore bootstrap on every message was
+  // re-rendering the whole app (visible as a "blinking" flicker), and the
+  // dock in particular sits on top of whatever page is behind it, so the
+  // flicker was visible everywhere the dock was open.
   useEffect(() => {
     if (!activeConv || !open) return;
-    void api.markConversationRead(activeConv).then(refresh).catch(() => {});
-  }, [activeConv, convMsgs.length, open, refresh]);
+    const readAt = new Date().toISOString();
+    void api.markConversationRead(activeConv)
+      .then(() => markConversationReadLocal(activeConv, readAt))
+      .catch(() => {});
+  }, [activeConv, convMsgs.length, open, markConversationReadLocal]);
 
   // Auto-scroll on new content, but only while the thread view is
   // showing (avoids yanking the list view when a background message
