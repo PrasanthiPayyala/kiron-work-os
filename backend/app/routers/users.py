@@ -33,6 +33,7 @@ from ..db import get_db
 from ..deps import CurrentUser, get_current_user
 from ..security import hash_password
 from ..util import row
+from .auth import issue_password_reset
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -384,3 +385,41 @@ def reactivate_user(
     )
     db.commit()
     return _profile_or_404(db, user_id)
+
+
+@router.post("/{user_id}/send-reset-link", status_code=status.HTTP_202_ACCEPTED)
+def send_reset_link(
+    user_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """HR-triggered password reset — for an employee who's locked out and
+    can't reach their own forgot-password flow (e.g. can't get to their
+    email, or just doesn't know the option exists). Fires the exact same
+    reset-link email the self-service flow sends; HR never sees or sets
+    the password directly, they just get to be the one who initiates it.
+
+    Gated the same as the rest of the account lifecycle in this file
+    (super_admin + hr_admin)."""
+    _require_manager(user)
+    target = db.execute(
+        text("SELECT u.id, u.email, p.full_name FROM users u "
+             "JOIN profiles p ON p.id = u.id "
+             "WHERE u.id = :id"),
+        {"id": user_id},
+    ).mappings().first()
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    try:
+        issue_password_reset(
+            db, str(target["id"]), target["email"], target.get("full_name") or "",
+        )
+    except Exception:  # noqa: BLE001
+        # issue_password_reset already logged the SMTP failure — surface a
+        # clear error to HR here since (unlike self-service forgot-password)
+        # there's no anti-enumeration reason to stay silent.
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Couldn't send the reset email — check SMTP configuration",
+        )
+    return {"status": "sent", "email": target["email"]}

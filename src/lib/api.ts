@@ -873,6 +873,12 @@ export const api = {
   reactivateUser(id: string): Promise<Record<string, unknown>> {
     return request(`/users/${id}/reactivate`, { method: "POST" });
   },
+  /** HR-triggered password reset — fires the same email the self-service
+   * forgot-password flow sends, for an employee who's locked out and
+   * can't reach it themselves. HR never sees or sets the password. */
+  sendResetLink(id: string): Promise<{ status: string; email: string }> {
+    return request(`/users/${id}/send-reset-link`, { method: "POST" });
+  },
 
   // ---------- Companies (full profile + schedule) ----------
   /** Create a new group entity. Requires founder / founder_office_coordinator

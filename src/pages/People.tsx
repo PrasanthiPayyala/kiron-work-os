@@ -6,7 +6,7 @@ import { roleLabel, employmentLabel, can } from "@/lib/auth";
 import { useAuth } from "@/lib/auth";
 import { api, ApiError } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
-import { Users, LayoutGrid, Table as TableIcon, UserPlus, Pencil, UserMinus, UserCheck } from "lucide-react";
+import { Users, LayoutGrid, Table as TableIcon, UserPlus, Pencil, UserMinus, UserCheck, KeyRound, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -36,6 +36,26 @@ export default function People() {
   // Deactivate confirmation
   const [confirmUser, setConfirmUser] = useState<User | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deactivate" | "reactivate">("deactivate");
+
+  // HR-triggered reset link — fire-and-toast, no confirmation dialog needed
+  // (non-destructive, just sends an email). Per-user busy id disables the
+  // button on the row being sent so a double-click can't fire it twice.
+  const [sendingResetId, setSendingResetId] = useState<string | null>(null);
+  const sendResetLink = async (u: User) => {
+    setSendingResetId(u.id);
+    try {
+      const res = await api.sendResetLink(u.id);
+      toast({ title: "Reset link sent", description: `Emailed to ${res.email}` });
+    } catch (e) {
+      toast({
+        title: "Couldn't send reset link",
+        description: e instanceof ApiError ? e.message : "Try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSendingResetId(null);
+    }
+  };
 
   // Toggle is an exclusive switch — "Show deactivated" on means ONLY
   // deactivated; off means ONLY active. Previously it was OR (which
@@ -128,10 +148,23 @@ export default function People() {
                   <p className="mt-2 text-[10px] uppercase tracking-wide text-muted-foreground">{roleLabel(u.role)}</p>
                 </button>
                 {canManage && (
-                  <div className="mt-3 flex items-center gap-1.5 border-t border-border pt-2">
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
                     <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => openEdit(u)}>
                       <Pencil className="mr-1 h-3 w-3" /> Edit
                     </Button>
+                    {u.isActive && (
+                      <Button
+                        variant="ghost" size="sm" className="h-7 px-2 text-xs"
+                        disabled={sendingResetId === u.id}
+                        onClick={() => void sendResetLink(u)}
+                        title="Email this employee a password reset link"
+                      >
+                        {sendingResetId === u.id
+                          ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          : <KeyRound className="mr-1 h-3 w-3" />}
+                        Reset link
+                      </Button>
+                    )}
                     {u.isActive ? (
                       <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive" onClick={() => { setConfirmUser(u); setConfirmAction("deactivate"); }}>
                         <UserMinus className="mr-1 h-3 w-3" /> Deactivate
@@ -179,6 +212,18 @@ export default function People() {
                           <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openEdit(u)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
+                          {u.isActive && (
+                            <Button
+                              variant="ghost" size="sm" className="h-7 px-2"
+                              disabled={sendingResetId === u.id}
+                              onClick={() => void sendResetLink(u)}
+                              title="Email this employee a password reset link"
+                            >
+                              {sendingResetId === u.id
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <KeyRound className="h-3.5 w-3.5" />}
+                            </Button>
+                          )}
                           {u.isActive ? (
                             <Button variant="ghost" size="sm" className="h-7 px-2 text-destructive" onClick={() => { setConfirmUser(u); setConfirmAction("deactivate"); }}>
                               <UserMinus className="h-3.5 w-3.5" />

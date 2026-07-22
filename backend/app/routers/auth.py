@@ -126,6 +126,47 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def issue_password_reset(db: Session, user_id: str, email: str, full_name: str) -> None:
+    """Generate a reset token, store it, and email the link. Shared by the
+    self-service /forgot-password flow and the HR-triggered admin endpoint
+    (POST /users/{id}/send-reset-link) — same token lifecycle, same email,
+    the only difference is who initiates it and how the target is found."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_token(raw_token)
+    expires_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(
+        minutes=settings.password_reset_ttl_min,
+    )
+
+    # Invalidate any older outstanding tokens for this user, so only the
+    # most recent link works (defends against stale links + replay).
+    db.execute(
+        text("UPDATE password_reset_tokens SET used_at = now() "
+             "WHERE user_id = :u AND used_at IS NULL"),
+        {"u": user_id},
+    )
+    db.execute(
+        text("INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) "
+             "VALUES (:u, :h, :e)"),
+        {"u": user_id, "h": token_hash, "e": expires_at},
+    )
+    db.commit()
+
+    reset_url = f"{settings.app_base_url.rstrip('/')}/update-password?token={raw_token}"
+    try:
+        send_password_reset(
+            email=email,
+            full_name=full_name,
+            reset_url=reset_url,
+        )
+    except Exception as e:  # noqa: BLE001
+        # Don't leak SMTP failures to the caller; log + let the caller
+        # decide how to surface it (forgot_password swallows silently per
+        # its anti-enumeration contract; the admin endpoint re-raises).
+        import logging
+        logging.getLogger("kiron.auth").exception("Password reset email failed: %s", e)
+        raise
+
+
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
 def forgot_password(body: ForgotPasswordIn, db: Session = Depends(get_db)):
     """Generate a reset token + email the link. Always returns 202 so callers
@@ -138,37 +179,12 @@ def forgot_password(body: ForgotPasswordIn, db: Session = Depends(get_db)):
     ).mappings().first()
 
     if user_row:
-        raw_token = secrets.token_urlsafe(32)
-        token_hash = _hash_token(raw_token)
-        expires_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(
-            minutes=settings.password_reset_ttl_min,
-        )
-
-        # Invalidate any older outstanding tokens for this user, so only the
-        # most recent link works (defends against stale links + replay).
-        db.execute(
-            text("UPDATE password_reset_tokens SET used_at = now() "
-                 "WHERE user_id = :u AND used_at IS NULL"),
-            {"u": str(user_row["id"])},
-        )
-        db.execute(
-            text("INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) "
-                 "VALUES (:u, :h, :e)"),
-            {"u": str(user_row["id"]), "h": token_hash, "e": expires_at},
-        )
-        db.commit()
-
-        reset_url = f"{settings.app_base_url.rstrip('/')}/update-password?token={raw_token}"
         try:
-            send_password_reset(
-                email=body.email,
-                full_name=user_row.get("full_name") or "",
-                reset_url=reset_url,
+            issue_password_reset(
+                db, str(user_row["id"]), body.email, user_row.get("full_name") or "",
             )
-        except Exception as e:  # noqa: BLE001
-            # Don't leak SMTP failures to the caller; log + still 202.
-            import logging
-            logging.getLogger("kiron.auth").exception("Password reset email failed: %s", e)
+        except Exception:  # noqa: BLE001
+            pass  # already logged inside issue_password_reset; stay silent here
 
     return {"status": "ok"}
 
