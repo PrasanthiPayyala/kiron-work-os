@@ -12,9 +12,16 @@ export function useUnreadChatCount(): number {
 
   return useMemo(() => {
     if (!user) return 0;
+    // Founders / super_admin can see every conversation for audit purposes
+    // but were never meant to be pinged like an active participant — this
+    // badge (sidebar nav + ChatDock bubble) should only nag them about DMs
+    // addressed to them personally. Group-chat traffic (team/company/
+    // project/announcement) is browse-when-needed via the Team Chat page.
+    const isElevatedAudit = user.role === "founder" || user.role === "super_admin";
     let unread = 0;
     for (const conv of conversations) {
       if (!conv.memberIds.includes(user.id)) continue;
+      if (isElevatedAudit && conv.kind !== "dm") continue;
       const lastReadTs = conv.lastReadAt ? new Date(conv.lastReadAt).getTime() : 0;
       for (const m of messages) {
         if (m.conversationId !== conv.id) continue;

@@ -119,9 +119,34 @@ def send(
         ),
         {"c": body.conversation_id, "u": user.id},
     ).all()
+
+    # Elevated roles (founder / super_admin) get audit visibility into every
+    # conversation so they CAN monitor employee chats, but they were never
+    # meant to be pinged like an active participant. Only a direct message
+    # (someone messaging them personally) generates a bell notification for
+    # these roles — group-chat traffic (team/company/project/announcement)
+    # is browse-when-needed via the Team Chat page, not a push. Applies even
+    # when they hold real membership (e.g. they own the project the group
+    # chat belongs to) — the exclusion is by role + conversation kind, not
+    # by membership type.
+    recipient_ids = [str(r[0]) for r in other_member_ids]
+    suppressed_ids: set[str] = set()
+    if is_group and recipient_ids:
+        elevated_rows = db.execute(
+            text(
+                "SELECT DISTINCT user_id FROM user_roles "
+                "WHERE user_id = ANY(:ids) AND role = ANY(:roles)"
+            ),
+            {"ids": recipient_ids, "roles": list(CONV_ELEVATED)},
+        ).all()
+        suppressed_ids = {str(r[0]) for r in elevated_rows}
+
     new_notif_rows: list[dict] = []
     now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
     for r in other_member_ids:
+        uid = str(r[0])
+        if uid in suppressed_ids:
+            continue
         nid = str(uuid.uuid4())
         db.execute(
             text(
@@ -129,11 +154,11 @@ def send(
                 "  (id, user_id, notification_type, title, body, link) "
                 "VALUES (:id, :u, 'general', :t, :b, :l)"
             ),
-            {"id": nid, "u": str(r[0]), "t": notif_title, "b": notif_body, "l": notif_link},
+            {"id": nid, "u": uid, "t": notif_title, "b": notif_body, "l": notif_link},
         )
         new_notif_rows.append({
             "id": nid,
-            "user_id": str(r[0]),
+            "user_id": uid,
             "notification_type": "general",
             "title": notif_title,
             "body": notif_body,

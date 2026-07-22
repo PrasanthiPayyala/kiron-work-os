@@ -342,9 +342,19 @@ export function DataStoreProvider({ children }: { children: ReactNode }) {
           // the message. Hidden-tab check is inside showDesktopNotification
           // (foreground tab → no-op). We look up sender + conversation
           // here since we have the fresh store snapshot.
-          if (msg.senderId !== authUser.id) {
+          //
+          // Founders / super_admin see every conversation for audit
+          // purposes but were never meant to be pinged like an active
+          // participant — group chats (team/company/project/announcement)
+          // are browse-when-needed, not a push. Only a DM addressed to
+          // them personally toasts. Mirrors the backend's notification
+          // suppression in POST /messages (chat.py).
+          const conv = prev.conversations.find((c) => c.id === msg.conversationId);
+          const isElevatedAudit = authUser.role === "founder" || authUser.role === "super_admin";
+          const shouldToast = msg.senderId !== authUser.id
+            && (!isElevatedAudit || conv?.kind === "dm");
+          if (shouldToast) {
             const sender = prev.users.find((u) => u.id === msg.senderId);
-            const conv = prev.conversations.find((c) => c.id === msg.conversationId);
             const convLabel = conv?.kind === "dm"
               ? sender?.name ?? "Direct message"
               : conv?.name ?? "Team chat";
